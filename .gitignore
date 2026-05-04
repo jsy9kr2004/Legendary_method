@@ -1,0 +1,60 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.Python
+build/
+dist/
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Data (실데이터는 커밋 X, .gitkeep만 유지)
+data/daily/*
+data/intraday/*
+data/meta/*
+!data/daily/.gitkeep
+!data/intraday/.gitkeep
+!data/meta/.gitkeep
+
+# Local DB / parquet
+*.sqlite
+*.sqlite3
+*.db
+*.parquet
+
+# Notebook
+.ipynb_checkpoints/
