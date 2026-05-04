@@ -1,0 +1,38 @@
+# 데이터 수집
+pykrx>=1.0.40
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# 한국투자증권 API (커뮤니티 라이브러리)
+# 또는 직접 REST 호출 (requests로 충분)
+# python-kis>=2.0.0  # 선택
+
+# 데이터 처리
+pandas>=2.1.0
+numpy>=1.26.0
+pyarrow>=14.0.0           # parquet I/O
+
+# 스토리지
+# sqlite3는 표준 라이브러리
+
+# 알림
+python-telegram-bot>=20.7  # or use raw requests
+
+# 환경설정
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+# 스케줄링
+apscheduler>=3.10.0
+
+# 로깅
+loguru>=0.7.0
+
+# 시간대
+pytz>=2023.3
+
+# 테스트 (개발용)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
