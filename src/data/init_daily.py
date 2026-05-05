@@ -39,6 +39,11 @@ def _parse_args() -> argparse.Namespace:
         help="콤마 구분 (KOSPI / KOSDAQ / KOSPI,KOSDAQ)",
     )
     p.add_argument("--limit", type=int, default=0, help="종목 수 상한 (0=무제한)")
+    p.add_argument(
+        "--exclude-preferred",
+        action="store_true",
+        help="우선주(코드 끝자리 != 0) 제외",
+    )
     return p.parse_args()
 
 
@@ -67,7 +72,7 @@ def _last_dates_per_code(data_dir) -> dict[str, date]:
 
 def _select_tickers(args: argparse.Namespace) -> pd.DataFrame:
     markets = {m.strip().upper() for m in args.markets.split(",") if m.strip()}
-    df = master.fetch_stock_master()
+    df = master.fetch_stock_master(include_preferred=not args.exclude_preferred)
     df = df[df["market"].isin(markets)].reset_index(drop=True)
     if args.limit > 0:
         df = df.head(args.limit)

@@ -77,6 +77,35 @@ def test_parse_mst_kosdaq_uses_222_part2():
     assert df.iloc[0]["name"] == "셀트리온제약"
 
 
+def test_is_preferred_stock():
+    assert master.is_preferred_stock("005930") is False
+    assert master.is_preferred_stock("005935") is True   # 1우
+    assert master.is_preferred_stock("005937") is True   # 2우
+    assert master.is_preferred_stock("005939") is True   # 3우
+    assert master.is_preferred_stock("12345") is False   # 6자리 아님
+
+
+def test_parse_mst_include_preferred_default_true():
+    content = (
+        _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
+        + _make_mst_line("005935", "삼성전자우", "KOSPI", "ST")
+        + _make_mst_line("005937", "삼성전자2우B", "KOSPI", "ST")
+    )
+    df = master._parse_mst(content, "KOSPI")  # default include_preferred=True
+    assert len(df) == 3
+
+
+def test_parse_mst_exclude_preferred():
+    content = (
+        _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
+        + _make_mst_line("005935", "삼성전자우", "KOSPI", "ST")
+        + _make_mst_line("005937", "삼성전자2우B", "KOSPI", "ST")
+    )
+    df = master._parse_mst(content, "KOSPI", include_preferred=False)
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "005930"
+
+
 def test_parse_mst_skips_short_lines():
     content = b"shortline\n" + _make_mst_line("005930", "삼성전자")
     df = master._parse_mst(content, "KOSPI")

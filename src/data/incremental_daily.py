@@ -23,6 +23,11 @@ from src.logging_setup import setup_logging
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="KIS API 기반 일봉 incremental")
     p.add_argument("--markets", type=str, default="KOSPI,KOSDAQ")
+    p.add_argument(
+        "--exclude-preferred",
+        action="store_true",
+        help="우선주(코드 끝자리 != 0) 제외",
+    )
     return p.parse_args()
 
 
@@ -51,7 +56,9 @@ def main() -> None:
         return
 
     markets = {m.strip().upper() for m in args.markets.split(",") if m.strip()}
-    tickers_df = master.fetch_stock_master()
+    tickers_df = master.fetch_stock_master(
+        include_preferred=not args.exclude_preferred
+    )
     tickers_df = tickers_df[tickers_df["market"].isin(markets)].reset_index(drop=True)
     logger.info(f"대상 종목: {len(tickers_df)}")
 
