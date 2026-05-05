@@ -1,29 +1,29 @@
 """KIS 종목 마스터 다운로드 / 파싱.
 
-KIS 가 제공하는 KOSPI/KOSDAQ 마스터 zip 을 받아서 보통주(주권 ST)만 필터링한
+KIS 가 제공하는 KOSPI/KOSDAQ 마스터 zip 을 받아서 보통주(주권 ST) 만 필터링한
 DataFrame 을 반환한다.
 
-mst 파일 구조 (KIS Open API GitHub `open-trading-api` 참조):
+mst 파일 구조 (KIS Open API GitHub `open-trading-api` 참조,
+**문자 단위(char)** 슬라이스):
     | offset | length | content                                                  |
     | ------ | ------ | -------------------------------------------------------- |
     | 0      | 9      | 단축코드 (좌측 0 패딩, 마지막 6자가 KRX 종목코드)           |
     | 9      | 12     | 표준코드 (KR + ...)                                       |
     | 21     | 가변   | 한글종목명 (line 끝 - part2_len 까지)                     |
-    | (line 끝 - part2_len) | 2 | 그룹코드 (ST/EF/EW/EN/...)                  |
+    | (len - part2_len) | 2 | 그룹코드 (ST/EF/EW/EN/...)                       |
 
-    part2_len: KOSPI=228, KOSDAQ=222
+    part2_len(char): KOSPI=228, KOSDAQ=222
 
-그룹코드:
-    ST  주권 (보통주/우선주)  ← 우리가 받을 것
+그룹코드(파트2 첫 2 chars):
+    ST  주권 (보통주/우선주)  ← default 필터
     EF  ETF
     EW  ELW
     EN  ETN
     DR  신주인수권증권
     SC  수익증권
-    IF  인프라투융자회사
-    ...
 
-인코딩: CP949 (한글 2 bytes)
+인코딩: CP949. 한글 1자 = 1 char = 2 bytes 라 byte 슬라이스 X, 반드시
+**decode 후 char 단위 슬라이스**.
 """
 from __future__ import annotations
 
@@ -38,8 +38,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 KOSPI_URL = "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip"
 KOSDAQ_URL = "https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip"
 
-_KOSPI_PART2_LEN = 228
-_KOSDAQ_PART2_LEN = 222
+_KOSPI_PART2_LEN = 228   # char 단위
+_KOSDAQ_PART2_LEN = 222  # char 단위
 
 _SHORTCODE_LEN = 9
 _STDCODE_LEN = 12
@@ -62,26 +62,27 @@ def _part2_len(market: str) -> int:
 
 
 def _parse_mst(content: bytes, market: str, group_filter: str | None = "ST") -> pd.DataFrame:
-    """KIS mst 바이너리 → DataFrame.
+    """KIS mst → DataFrame.
 
-    `group_filter` 가 주어지면 그 그룹코드만 통과 (default: ST=주권).
-    None 으로 주면 전체 반환.
+    `content` 는 raw bytes 지만 cp949 로 decode 후 char 단위로 슬라이스.
+    `group_filter`: 그룹코드 필터 (default: ST=주권). None 이면 전체.
     """
+    text = content.decode("cp949", errors="replace")
     part2_len = _part2_len(market)
-    min_len = _KORNAME_OFFSET + part2_len + 1  # 한글명 최소 1byte
+    min_len = _KORNAME_OFFSET + part2_len + 1  # 한글명 최소 1 char
 
     rows: list[dict] = []
-    for line in content.split(b"\n"):
+    for line in text.split("\n"):
+        # \r 제거 (windows 줄바꿈 대응)
+        line = line.rstrip("\r")
         if len(line) < min_len:
             continue
-        try:
-            short_code = line[0:_SHORTCODE_LEN].decode("cp949", errors="replace").strip()
-            kor_name_end = len(line) - part2_len
-            kor_name = line[_KORNAME_OFFSET:kor_name_end].decode("cp949", errors="replace").strip()
-            part2 = line[-part2_len:]
-            group_code = part2[0:2].decode("cp949", errors="replace").strip()
-        except UnicodeDecodeError:
-            continue
+
+        short_code = line[0:_SHORTCODE_LEN].strip()
+        kor_name_end = len(line) - part2_len
+        kor_name = line[_KORNAME_OFFSET:kor_name_end].strip()
+        part2 = line[-part2_len:]
+        group_code = part2[0:2].strip()
 
         krx_code = short_code[-6:] if len(short_code) >= 6 else short_code
         if len(krx_code) != 6 or not krx_code.isalnum():
