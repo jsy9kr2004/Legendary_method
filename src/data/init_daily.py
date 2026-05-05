@@ -1,34 +1,44 @@
-"""5년치 일봉 초기 적재 스크립트.
+"""5년치 일봉 초기 적재 (KIS Open API).
 
-날짜 단위로 KOSPI+KOSDAQ 전종목을 받아 단일 parquet에 누적.
-이미 적재된 날짜는 자동 skip → 중간 실패해도 resume 가능.
+종목 마스터(KIS mst) → 종목별로 90일 청크 단위로 일봉 받아 누적.
+이미 적재된 (code, date) 는 storage upsert 가 dedup 처리.
+
+종목별로 last_loaded_date 을 보고 그 다음 영업일부터 받으면 resume 됨.
 
 사용:
-    python -m src.data.init_daily                     # 오늘 기준 5년치
-    python -m src.data.init_daily --years 3
-    python -m src.data.init_daily --from 20200101 --to 20250503
-    python -m src.data.init_daily --throttle 1.5      # 호출 간격 조정
+    python -m src.data.init_daily                    # 오늘 기준 5년치
+    python -m src.data.init_daily --years 1
+    python -m src.data.init_daily --from 20240101 --to 20250503
+    python -m src.data.init_daily --markets KOSPI    # 시장 한정
+    python -m src.data.init_daily --limit 50         # 종목 수 한정 (smoke test)
 """
 from __future__ import annotations
 
 import argparse
-import time
 from datetime import date, timedelta
 
+import pandas as pd
 from loguru import logger
 from tqdm import tqdm
 
 from src.config import load_settings, today_kst
-from src.data import daily, storage
+from src.data import daily, master, storage
+from src.kis.client import KISApiError, KISClient
 from src.logging_setup import setup_logging
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="5년치 일봉 초기 적재")
-    p.add_argument("--years", type=int, default=5, help="오늘 기준 N년치 (기본 5)")
+    p = argparse.ArgumentParser(description="KIS API 기반 일봉 초기 적재")
+    p.add_argument("--years", type=int, default=5)
     p.add_argument("--from", dest="fromdate", type=str, help="YYYYMMDD")
     p.add_argument("--to", dest="todate", type=str, help="YYYYMMDD")
-    p.add_argument("--throttle", type=float, default=1.0, help="요청 간 sleep (초)")
+    p.add_argument(
+        "--markets",
+        type=str,
+        default="KOSPI,KOSDAQ",
+        help="콤마 구분 (KOSPI / KOSDAQ / KOSPI,KOSDAQ)",
+    )
+    p.add_argument("--limit", type=int, default=0, help="종목 수 상한 (0=무제한)")
     return p.parse_args()
 
 
@@ -36,20 +46,32 @@ def _yyyymmdd_to_date(s: str) -> date:
     return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
 
 
-def _date_range(fromdate: date, todate: date):
-    cur = fromdate
-    while cur <= todate:
-        yield cur
-        cur += timedelta(days=1)
-
-
 def _resolve_range(args: argparse.Namespace) -> tuple[date, date]:
     today = today_kst()
     if args.fromdate and args.todate:
         return _yyyymmdd_to_date(args.fromdate), _yyyymmdd_to_date(args.todate)
     fromdate = today.replace(year=today.year - args.years)
-    todate = today - timedelta(days=1)  # 어제까지 (오늘 데이터는 16시 이후)
-    return fromdate, todate
+    return fromdate, today - timedelta(days=1)
+
+
+def _last_dates_per_code(data_dir) -> dict[str, date]:
+    df = storage.read_daily_ohlcv(data_dir)
+    if df.empty:
+        return {}
+    grp = df.groupby("code")["date"].max()
+    out: dict[str, date] = {}
+    for code, val in grp.items():
+        out[code] = val.date() if hasattr(val, "date") else val
+    return out
+
+
+def _select_tickers(args: argparse.Namespace) -> pd.DataFrame:
+    markets = {m.strip().upper() for m in args.markets.split(",") if m.strip()}
+    df = master.fetch_stock_master()
+    df = df[df["market"].isin(markets)].reset_index(drop=True)
+    if args.limit > 0:
+        df = df.head(args.limit)
+    return df
 
 
 def main() -> None:
@@ -58,35 +80,42 @@ def main() -> None:
     setup_logging(settings)
 
     fromdate, todate = _resolve_range(args)
-    logger.info(f"초기 적재 범위: {fromdate} ~ {todate}")
+    logger.info(f"적재 범위: {fromdate} ~ {todate}")
 
-    already = storage.loaded_dates(settings.data_dir)
-    logger.info(f"기존 적재된 날짜 수: {len(already)}")
+    tickers_df = _select_tickers(args)
+    logger.info(f"대상 종목: {len(tickers_df)} (markets={args.markets}, limit={args.limit})")
 
-    targets = [
-        d
-        for d in _date_range(fromdate, todate)
-        if d.weekday() < 5 and d not in already
-    ]
-    logger.info(f"적재할 평일 수 (휴장일/기존 제외 전): {len(targets)}")
+    last_dates = _last_dates_per_code(settings.data_dir)
+    logger.info(f"기존 적재된 종목 수: {len(last_dates)}")
 
-    failed: list[date] = []
-    for d in tqdm(targets, desc="일봉 적재"):
-        try:
-            df = daily.fetch_all_market_for_date(d)
-            if df.empty:
-                logger.debug(f"{d}: 데이터 없음 (휴장일 추정)")
-            else:
-                total = storage.upsert_daily_ohlcv(df, settings.data_dir)
-                logger.debug(f"{d}: {len(df)} rows 추가 (누적 {total})")
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"{d}: 실패 — {e}")
-            failed.append(d)
-        time.sleep(args.throttle)
+    failed: list[str] = []
+    skipped = 0
+    with KISClient(settings) as kis:
+        for _, row in tqdm(tickers_df.iterrows(), total=len(tickers_df), desc="종목"):
+            code = row["code"]
+            code_from = fromdate
+            if code in last_dates:
+                code_from = last_dates[code] + timedelta(days=1)
+                if code_from > todate:
+                    skipped += 1
+                    continue
+            try:
+                df = daily.fetch_one_ticker(kis, code, code_from, todate, adjusted=True)
+                if df.empty:
+                    continue
+                storage.upsert_daily_ohlcv(df, settings.data_dir)
+            except KISApiError as e:
+                logger.error(f"{code}: KIS 에러 — {e}")
+                failed.append(code)
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"{code}: 실패 — {e}")
+                failed.append(code)
 
-    logger.info(f"완료. 성공 {len(targets) - len(failed)} / 실패 {len(failed)}")
+    logger.info(
+        f"완료. 처리={len(tickers_df)}, 건너뜀(이미최신)={skipped}, 실패={len(failed)}"
+    )
     if failed:
-        logger.warning(f"실패 일자 (재실행 시 자동 재시도): {failed}")
+        logger.warning(f"실패 종목 (재실행 시 자동 재시도): {failed[:20]}{'...' if len(failed) > 20 else ''}")
 
 
 if __name__ == "__main__":
