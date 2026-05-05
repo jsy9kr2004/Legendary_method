@@ -1,16 +1,21 @@
-"""5년치 일봉 초기 적재 (KIS Open API).
+"""일봉 초기 적재 (KIS Open API).
 
 종목 마스터(KIS mst) → 종목별로 90일 청크 단위로 일봉 받아 누적.
 이미 적재된 (code, date) 는 storage upsert 가 dedup 처리.
 
 종목별로 last_loaded_date 을 보고 그 다음 영업일부터 받으면 resume 됨.
 
+default 1 년치. 한국 시장은 사이클 변화가 빨라 옛 패턴 가치가 낮고,
+incremental 로 매일 자연 누적되므로 5 년치 backfill 은 분석 단계에서
+표본 부족 확인 후 추가로 받는 편이 합리적.
+
 사용:
-    python -m src.data.init_daily                    # 오늘 기준 5년치
-    python -m src.data.init_daily --years 1
+    python -m src.data.init_daily                       # default 1 년치
+    python -m src.data.init_daily --years 5             # 5년치 backfill
     python -m src.data.init_daily --from 20240101 --to 20250503
-    python -m src.data.init_daily --markets KOSPI    # 시장 한정
-    python -m src.data.init_daily --limit 50         # 종목 수 한정 (smoke test)
+    python -m src.data.init_daily --markets KOSPI       # 시장 한정
+    python -m src.data.init_daily --limit 50            # smoke test
+    python -m src.data.init_daily --exclude-preferred   # 우선주 제외
 """
 from __future__ import annotations
 
@@ -29,7 +34,7 @@ from src.logging_setup import setup_logging
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="KIS API 기반 일봉 초기 적재")
-    p.add_argument("--years", type=int, default=5)
+    p.add_argument("--years", type=int, default=1, help="오늘 기준 N년치 (default 1)")
     p.add_argument("--from", dest="fromdate", type=str, help="YYYYMMDD")
     p.add_argument("--to", dest="todate", type=str, help="YYYYMMDD")
     p.add_argument(
@@ -39,6 +44,11 @@ def _parse_args() -> argparse.Namespace:
         help="콤마 구분 (KOSPI / KOSDAQ / KOSPI,KOSDAQ)",
     )
     p.add_argument("--limit", type=int, default=0, help="종목 수 상한 (0=무제한)")
+    p.add_argument(
+        "--exclude-preferred",
+        action="store_true",
+        help="우선주(코드 끝자리 != 0) 제외",
+    )
     return p.parse_args()
 
 
@@ -67,7 +77,7 @@ def _last_dates_per_code(data_dir) -> dict[str, date]:
 
 def _select_tickers(args: argparse.Namespace) -> pd.DataFrame:
     markets = {m.strip().upper() for m in args.markets.split(",") if m.strip()}
-    df = master.fetch_stock_master()
+    df = master.fetch_stock_master(include_preferred=not args.exclude_preferred)
     df = df[df["market"].isin(markets)].reset_index(drop=True)
     if args.limit > 0:
         df = df.head(args.limit)

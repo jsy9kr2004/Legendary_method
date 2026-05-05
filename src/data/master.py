@@ -62,11 +62,29 @@ def _part2_len(market: str) -> int:
     return _KOSPI_PART2_LEN if market == "KOSPI" else _KOSDAQ_PART2_LEN
 
 
-def _parse_mst(content: bytes, market: str, group_prefix: str | None = "S") -> pd.DataFrame:
+def is_preferred_stock(code: str) -> bool:
+    """KRX 종목코드 휴리스틱: 끝자리가 0 이 아니면 우선주(또는 변형 주권).
+
+    - 0: 보통주 (default 종배 대상)
+    - 5: 1우선주 / 7: 2우선주 / 9: 3우선주 등
+    - 그 외(1,2,3,4,6,8): 분할 / 리츠 / 변형 — 매우 드뭄
+    """
+    if len(code) != 6:
+        return False
+    return code[-1] != "0"
+
+
+def _parse_mst(
+    content: bytes,
+    market: str,
+    group_prefix: str | None = "S",
+    include_preferred: bool = True,
+) -> pd.DataFrame:
     """KIS mst → DataFrame.
 
     `content` 는 raw bytes. cp949 로 decode 후 char 단위로 슬라이스.
     `group_prefix`: 그룹코드 첫 글자 매칭 (default 'S'=주권). None 이면 전체.
+    `include_preferred`: False 면 우선주(끝자리 != 0) 제외.
     """
     text = content.decode("cp949", errors="replace")
     part2_len = _part2_len(market)
@@ -82,7 +100,7 @@ def _parse_mst(content: bytes, market: str, group_prefix: str | None = "S") -> p
         kor_name_end = len(line) - part2_len
         kor_name = line[_KORNAME_OFFSET:kor_name_end].strip()
         part2 = line[-part2_len:]
-        group_code = part2[0:2].strip()  # KOSPI 'ST' / KOSDAQ 'S' 등
+        group_code = part2[0:2].strip()
 
         krx_code = short_code[-6:] if len(short_code) >= 6 else short_code
         if len(krx_code) != 6 or not krx_code.isalnum():
@@ -90,6 +108,8 @@ def _parse_mst(content: bytes, market: str, group_prefix: str | None = "S") -> p
         if group_prefix is not None:
             if not group_code or not group_code.startswith(group_prefix):
                 continue
+        if not include_preferred and is_preferred_stock(krx_code):
+            continue
 
         rows.append(
             {
@@ -103,18 +123,34 @@ def _parse_mst(content: bytes, market: str, group_prefix: str | None = "S") -> p
     return pd.DataFrame(rows, columns=_OUTPUT_COLS)
 
 
-def fetch_stock_master(group_prefix: str | None = "S") -> pd.DataFrame:
-    """KOSPI + KOSDAQ 합본. 기본은 주권(S 시작 — KOSPI 'ST', KOSDAQ 'S').
+def fetch_stock_master(
+    group_prefix: str | None = "S",
+    include_preferred: bool = True,
+) -> pd.DataFrame:
+    """KOSPI + KOSDAQ 합본.
 
-    `group_prefix=None` 이면 ETF/ETN 등 모두 포함.
+    Args:
+        group_prefix: 그룹코드 첫글자 ('S'=주권 default, None=전체).
+        include_preferred: 우선주 포함 여부 (default True).
+
     매일 16:30 갱신 권장.
     """
     logger.info("KIS 종목 마스터 다운로드 (KOSPI)")
-    kospi = _parse_mst(_download_mst(KOSPI_URL), "KOSPI", group_prefix)
-    logger.info(f"KOSPI {len(kospi)} 종목 (group_prefix={group_prefix or 'ALL'})")
+    kospi = _parse_mst(
+        _download_mst(KOSPI_URL), "KOSPI", group_prefix, include_preferred
+    )
+    logger.info(
+        f"KOSPI {len(kospi)} 종목 (group_prefix={group_prefix or 'ALL'}, "
+        f"preferred={'IN' if include_preferred else 'OUT'})"
+    )
 
     logger.info("KIS 종목 마스터 다운로드 (KOSDAQ)")
-    kosdaq = _parse_mst(_download_mst(KOSDAQ_URL), "KOSDAQ", group_prefix)
-    logger.info(f"KOSDAQ {len(kosdaq)} 종목 (group_prefix={group_prefix or 'ALL'})")
+    kosdaq = _parse_mst(
+        _download_mst(KOSDAQ_URL), "KOSDAQ", group_prefix, include_preferred
+    )
+    logger.info(
+        f"KOSDAQ {len(kosdaq)} 종목 (group_prefix={group_prefix or 'ALL'}, "
+        f"preferred={'IN' if include_preferred else 'OUT'})"
+    )
 
     return pd.concat([kospi, kosdaq], ignore_index=True)
