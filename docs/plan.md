@@ -20,15 +20,19 @@
 
 **목표:** 일봉 + 종목 메타 + 테마 매핑 데이터를 안정적으로 매일 적재한다.
 
-- [ ] pykrx 환경 설정 + 의존성 정리
-- [ ] KOSPI/KOSDAQ 전종목 일봉 5년치 초기 적재 (parquet/SQLite)
-- [ ] 매일 16:00 cron으로 일봉 incremental 업데이트
-- [ ] 종목 마스터 파일 (코드, 종목명, 시총, 상장일)
-- [ ] WICS 섹터 매핑 크롤링 (월 1회)
-- [ ] 네이버 금융 테마 매핑 크롤링 (월 1회)
-- [ ] KRX 휴장일 캘린더 통합
+- [x] ~~pykrx~~ → **KIS Open API 단일 출처**로 통일. requirements 정리. `.env.example` 작성. (2026-05-06)
+- [x] KOSPI/KOSDAQ 전종목 일봉 적재 (parquet, single file `data/daily/ohlcv.parquet`). default 1년치, `--years 5`로 backfill. (2026-05-06)
+- [x] `python -m src.data.incremental_daily` — 종목별 last_loaded_date 기준 매일 갱신.
+- [x] 종목 마스터 (`src/data/master.py`, `update_master.py`). KIS mst zip 파싱, 보통주(주권 'S' prefix) 필터, 우선주 토글. **시총/상장일은 미수집 (TODO)**.
+- [ ] WICS 섹터 매핑 크롤링 (월 1회) — 미착수
+- [ ] 네이버 금융 테마 매핑 크롤링 (월 1회) — 미착수
+- [x] KRX 휴장일 — v0 는 weekday 기반 단순화 (`src/calendar_kr.py`). 공휴일은 fetcher 빈응답으로 자연 처리.
+- [x] KIS Open API 인프라 (`src/kis/`): 토큰 발급/캐시/갱신, rate limiter (real 20cps / mock 2cps), KISClient.
+- [x] 적재 데이터 무결성 체크 (`src/data/integrity_check.py`). 종목수 임계, 가격 이상치(±50%), 주말 적재 검증.
 
 **완료 기준:** 임의 종목/날짜에 대해 일봉 데이터 즉시 조회 가능, 종목별 테마 리스트 조회 가능.
+
+**현재 상태(2026-05-06):** 일봉 / 마스터 / 무결성 라인 완성. 테마/섹터 크롤러는 M2 진입 직전 작업 예정.
 
 ### Milestone 1: 장중 데이터 수집 (Week 2~3)
 
@@ -144,11 +148,18 @@
 
 코드 작성하면서 발견되는 것 누적:
 
-- [ ] 수정주가 vs 원주가 일관성 (분할/배당 시)
+- [x] KIS API 토큰 만료 (24시간) 자동 갱신 — `src/kis/auth.py` 만료 5분전 갱신
+- [ ] 수정주가 vs 원주가 일관성 (분할/배당 시) — daily fetcher 는 `adjusted=True` 일관 사용
 - [ ] 종목 코드 변경 (액면분할, 합병) 처리
 - [ ] 테마 매핑 변경 시 historical 데이터 재계산 필요한지
-- [ ] KIS API 토큰 만료 (24시간) 자동 갱신
 - [ ] 텔레그램 메시지 길이 제한 (4096자) 분할 발송
+- [ ] **종목 마스터 시가총액 / 상장일 미수집** — KIS mst part2 추가 필드 파싱 필요. 현재 0 / None
+- [ ] **`100030` 등 1XXXXX 주권형 펀드/리츠** — KIS 그룹코드 'S' 에 포함되어 보통주 필터로 안 걸러짐. 종목명 패턴 또는 part2 필드 분기 필요
+- [ ] **WICS / 네이버 테마 크롤러** — M2 진입 직전 작업
+- [ ] **무결성 체크 알림 채널** — 현재 stderr/exit code 만, 텔레그램은 M4 이후 통합
+- [ ] **KRX 정밀 휴장일 캘린더** — v0 는 weekday 기반. 정밀화는 KIS 인덱스 OHLCV 또는 정적 테이블
+- [ ] **`change_rate` 적재 시 NaN** — 분석 단계에서 `groupby('code')['close'].pct_change()` 로 계산
+- [ ] **모의투자(mock) 일봉 endpoint 동작 검증 미완** — 현재 real 모드로만 검증됨
 
 ---
 
