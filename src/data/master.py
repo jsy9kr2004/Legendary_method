@@ -15,12 +15,13 @@ mst 파일 구조 (KIS Open API GitHub `open-trading-api` 참조,
     part2_len(char): KOSPI=228, KOSDAQ=222
 
 그룹코드(파트2 첫 2 chars):
-    ST  주권 (보통주/우선주)  ← default 필터
-    EF  ETF
-    EW  ELW
-    EN  ETN
-    DR  신주인수권증권
-    SC  수익증권
+    KOSPI 는 보통 'ST' 2자, KOSDAQ 는 'S '/'F '/'D ' 등 1자 + 공백.
+    그래서 첫 1 char 만 비교한다.
+
+    S  주권 (보통주/우선주, 종배 룰 대상)  ← default 필터
+    E  ETF / ETN / ELW
+    F  펀드 / 수익증권
+    D  DR (신주인수권증권)
 
 인코딩: CP949. 한글 1자 = 1 char = 2 bytes 라 byte 슬라이스 X, 반드시
 **decode 후 char 단위 슬라이스**.
@@ -61,19 +62,18 @@ def _part2_len(market: str) -> int:
     return _KOSPI_PART2_LEN if market == "KOSPI" else _KOSDAQ_PART2_LEN
 
 
-def _parse_mst(content: bytes, market: str, group_filter: str | None = "ST") -> pd.DataFrame:
+def _parse_mst(content: bytes, market: str, group_prefix: str | None = "S") -> pd.DataFrame:
     """KIS mst → DataFrame.
 
-    `content` 는 raw bytes 지만 cp949 로 decode 후 char 단위로 슬라이스.
-    `group_filter`: 그룹코드 필터 (default: ST=주권). None 이면 전체.
+    `content` 는 raw bytes. cp949 로 decode 후 char 단위로 슬라이스.
+    `group_prefix`: 그룹코드 첫 글자 매칭 (default 'S'=주권). None 이면 전체.
     """
     text = content.decode("cp949", errors="replace")
     part2_len = _part2_len(market)
-    min_len = _KORNAME_OFFSET + part2_len + 1  # 한글명 최소 1 char
+    min_len = _KORNAME_OFFSET + part2_len + 1
 
     rows: list[dict] = []
     for line in text.split("\n"):
-        # \r 제거 (windows 줄바꿈 대응)
         line = line.rstrip("\r")
         if len(line) < min_len:
             continue
@@ -82,13 +82,14 @@ def _parse_mst(content: bytes, market: str, group_filter: str | None = "ST") -> 
         kor_name_end = len(line) - part2_len
         kor_name = line[_KORNAME_OFFSET:kor_name_end].strip()
         part2 = line[-part2_len:]
-        group_code = part2[0:2].strip()
+        group_code = part2[0:2].strip()  # KOSPI 'ST' / KOSDAQ 'S' 등
 
         krx_code = short_code[-6:] if len(short_code) >= 6 else short_code
         if len(krx_code) != 6 or not krx_code.isalnum():
             continue
-        if group_filter is not None and group_code != group_filter:
-            continue
+        if group_prefix is not None:
+            if not group_code or not group_code.startswith(group_prefix):
+                continue
 
         rows.append(
             {
@@ -102,18 +103,18 @@ def _parse_mst(content: bytes, market: str, group_filter: str | None = "ST") -> 
     return pd.DataFrame(rows, columns=_OUTPUT_COLS)
 
 
-def fetch_stock_master(group_filter: str | None = "ST") -> pd.DataFrame:
-    """KOSPI + KOSDAQ 합본. 기본은 보통주(ST)만.
+def fetch_stock_master(group_prefix: str | None = "S") -> pd.DataFrame:
+    """KOSPI + KOSDAQ 합본. 기본은 주권(S 시작 — KOSPI 'ST', KOSDAQ 'S').
 
-    `group_filter=None` 이면 ETF/ETN 등 모두 포함.
+    `group_prefix=None` 이면 ETF/ETN 등 모두 포함.
     매일 16:30 갱신 권장.
     """
     logger.info("KIS 종목 마스터 다운로드 (KOSPI)")
-    kospi = _parse_mst(_download_mst(KOSPI_URL), "KOSPI", group_filter)
-    logger.info(f"KOSPI {len(kospi)} 종목 (group={group_filter or 'ALL'})")
+    kospi = _parse_mst(_download_mst(KOSPI_URL), "KOSPI", group_prefix)
+    logger.info(f"KOSPI {len(kospi)} 종목 (group_prefix={group_prefix or 'ALL'})")
 
     logger.info("KIS 종목 마스터 다운로드 (KOSDAQ)")
-    kosdaq = _parse_mst(_download_mst(KOSDAQ_URL), "KOSDAQ", group_filter)
-    logger.info(f"KOSDAQ {len(kosdaq)} 종목 (group={group_filter or 'ALL'})")
+    kosdaq = _parse_mst(_download_mst(KOSDAQ_URL), "KOSDAQ", group_prefix)
+    logger.info(f"KOSDAQ {len(kosdaq)} 종목 (group_prefix={group_prefix or 'ALL'})")
 
     return pd.concat([kospi, kosdaq], ignore_index=True)

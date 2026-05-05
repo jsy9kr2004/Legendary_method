@@ -30,16 +30,25 @@ def _make_mst_line(
     return line.encode("cp949")
 
 
-def test_parse_mst_default_filters_to_ST():
+def test_parse_mst_default_filters_to_S_prefix():
+    """KOSPI 'ST' / KOSDAQ 'S' 모두 prefix='S' 로 통과."""
     content = (
         _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
         + _make_mst_line("100030", "한투ETF", "KOSPI", "EF")
         + _make_mst_line("000660", "SK하이닉스", "KOSPI", "ST")
     )
-    df = master._parse_mst(content, "KOSPI")
+    df = master._parse_mst(content, "KOSPI")  # default 'S'
     assert len(df) == 2
     assert set(df["code"]) == {"005930", "000660"}
     assert df.loc[df["code"] == "005930", "name"].iloc[0] == "삼성전자"
+
+
+def test_parse_mst_kosdaq_single_char_S_passes():
+    """KOSDAQ 그룹코드는 'S '(공백 패딩 1자)로 저장됨."""
+    content = _make_mst_line("091990", "셀트리온제약", "KOSDAQ", "S")
+    df = master._parse_mst(content, "KOSDAQ")  # default 'S'
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "091990"
 
 
 def test_parse_mst_no_filter_returns_all():
@@ -47,26 +56,24 @@ def test_parse_mst_no_filter_returns_all():
         _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
         + _make_mst_line("100030", "한투ETF", "KOSPI", "EF")
     )
-    df = master._parse_mst(content, "KOSPI", group_filter=None)
+    df = master._parse_mst(content, "KOSPI", group_prefix=None)
     assert len(df) == 2
 
 
-def test_parse_mst_custom_filter():
+def test_parse_mst_custom_prefix():
     content = (
         _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
         + _make_mst_line("100030", "한투ETF", "KOSPI", "EF")
     )
-    df = master._parse_mst(content, "KOSPI", group_filter="EF")
+    df = master._parse_mst(content, "KOSPI", group_prefix="E")
     assert len(df) == 1
     assert df.iloc[0]["code"] == "100030"
 
 
 def test_parse_mst_kosdaq_uses_222_part2():
-    """KOSDAQ part2 길이 222 (KOSPI 228 과 다름)."""
-    content = _make_mst_line("091990", "셀트리온제약", "KOSDAQ", "ST")
+    content = _make_mst_line("091990", "셀트리온제약", "KOSDAQ", "S")
     df = master._parse_mst(content, "KOSDAQ")
     assert len(df) == 1
-    assert df.iloc[0]["code"] == "091990"
     assert df.iloc[0]["name"] == "셀트리온제약"
 
 
