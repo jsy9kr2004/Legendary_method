@@ -71,7 +71,10 @@ def upsert_daily_ohlcv(new_rows: pd.DataFrame, data_dir: Path) -> int:
         return len(read_daily_ohlcv(data_dir))
 
     existing = read_daily_ohlcv(data_dir)
-    combined = pd.concat([existing, new_rows], ignore_index=True)
+    if existing.empty:
+        combined = new_rows.copy()
+    else:
+        combined = pd.concat([existing, new_rows], ignore_index=True)
     combined = combined.drop_duplicates(subset=["code", "date"], keep="last")
     write_daily_ohlcv(combined, data_dir)
     return len(combined)

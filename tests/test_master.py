@@ -6,25 +6,63 @@ from unittest.mock import patch
 from src.data import master
 
 
-def _make_mst_line(short_code: str, kor_name: str) -> bytes:
-    """0~8 단축코드(9) + 9~20 표준코드(12) + 21~60 한글명(40, CP949) + padding."""
+def _make_mst_line(
+    short_code: str,
+    kor_name: str,
+    market: str = "KOSPI",
+    group_code: str = "ST",
+) -> bytes:
+    """KIS mst 한 라인 모킹.
+
+    구조: 단축코드(9) + 표준코드(12) + 한글명(가변) + part2(228 KOSPI / 222 KOSDAQ)
+    part2 의 첫 2 byte = 그룹코드.
+    """
     short = short_code.zfill(9).encode("cp949")
     std = ("KR" + short_code.zfill(10)).encode("cp949")[:12].ljust(12, b" ")
     kor_bytes = kor_name.encode("cp949")
-    kor_padded = kor_bytes + b" " * (40 - len(kor_bytes))
-    padding = b" " * 200
-    return short + std + kor_padded + padding + b"\n"
+    part2_len = 228 if market == "KOSPI" else 222
+    group = group_code.ljust(2).encode("cp949")[:2]
+    part2 = group + b" " * (part2_len - 2)
+    return short + std + kor_bytes + part2 + b"\n"
 
 
-def test_parse_mst_extracts_code_and_name():
-    content = _make_mst_line("005930", "삼성전자") + _make_mst_line("000660", "SK하이닉스")
-    df = master._parse_mst(content, "KOSPI")
-
+def test_parse_mst_default_filters_to_ST():
+    content = (
+        _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
+        + _make_mst_line("100030", "한투ETF", "KOSPI", "EF")
+        + _make_mst_line("000660", "SK하이닉스", "KOSPI", "ST")
+    )
+    df = master._parse_mst(content, "KOSPI")  # default ST
     assert len(df) == 2
     assert set(df["code"]) == {"005930", "000660"}
-    assert df.loc[df["code"] == "005930", "name"].iloc[0] == "삼성전자"
-    assert df.loc[df["code"] == "000660", "name"].iloc[0] == "SK하이닉스"
-    assert (df["market"] == "KOSPI").all()
+
+
+def test_parse_mst_no_filter_returns_all():
+    content = (
+        _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
+        + _make_mst_line("100030", "한투ETF", "KOSPI", "EF")
+    )
+    df = master._parse_mst(content, "KOSPI", group_filter=None)
+    assert len(df) == 2
+
+
+def test_parse_mst_custom_filter():
+    content = (
+        _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
+        + _make_mst_line("100030", "한투ETF", "KOSPI", "EF")
+    )
+    df = master._parse_mst(content, "KOSPI", group_filter="EF")
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "100030"
+
+
+def test_parse_mst_kosdaq_uses_222_part2():
+    """KOSDAQ 은 part2 길이 222. 모킹 라인도 222 로 만들어야 한다."""
+    content = _make_mst_line("091990", "셀트리온제약", "KOSDAQ", "ST")
+    df = master._parse_mst(content, "KOSDAQ")
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "091990"
+    assert df.iloc[0]["name"] == "셀트리온제약"
 
 
 def test_parse_mst_skips_short_lines():
@@ -33,15 +71,14 @@ def test_parse_mst_skips_short_lines():
     assert len(df) == 1
 
 
-def test_parse_mst_columns_match_storage_schema():
-    content = _make_mst_line("005930", "삼성전자")
-    df = master._parse_mst(content, "KOSPI")
+def test_parse_mst_columns_match_schema():
+    df = master._parse_mst(_make_mst_line("005930", "삼성전자"), "KOSPI")
     assert list(df.columns) == ["code", "name", "market", "market_cap", "listed_at"]
 
 
 def test_fetch_stock_master_concatenates_markets():
-    kospi_bytes = _make_mst_line("005930", "삼성전자")
-    kosdaq_bytes = _make_mst_line("091990", "셀트리온제약")
+    kospi_bytes = _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
+    kosdaq_bytes = _make_mst_line("091990", "셀트리온제약", "KOSDAQ", "ST")
 
     def fake_download(url: str) -> bytes:
         return kospi_bytes if "kospi" in url else kosdaq_bytes

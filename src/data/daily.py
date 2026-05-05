@@ -52,7 +52,7 @@ def _parse_output2(rows: list[dict], code: str) -> pd.DataFrame:
             "close": pd.to_numeric(df["stck_clpr"], errors="coerce").astype("Int64"),
             "volume": pd.to_numeric(df["acml_vol"], errors="coerce").astype("Int64"),
             "trading_value": pd.to_numeric(df["acml_tr_pbmn"], errors="coerce").astype("Int64"),
-            "change_rate": pd.NA,
+            "change_rate": pd.array([pd.NA] * len(df), dtype="Float64"),
         }
     )
     return out[_OUTPUT_COLS]
