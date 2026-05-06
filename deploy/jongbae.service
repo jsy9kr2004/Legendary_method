@@ -1,0 +1,23 @@
+[Unit]
+Description=Jongbae Signal Scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/Legendary_method
+EnvironmentFile=/home/%i/Legendary_method/.env
+ExecStart=/home/%i/Legendary_method/.venv/bin/python -m src.scheduler
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jongbae
+
+# 크래시 루프 방지: 10분 안에 5회 재시작 초과 시 중단
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

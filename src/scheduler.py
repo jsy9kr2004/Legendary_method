@@ -25,6 +25,7 @@ import sys
 from apscheduler.schedulers.blocking import BlockingScheduler
 from loguru import logger
 
+from src.calendar_kr import is_business_day
 from src.config import KST, load_settings, now_kst
 from src.data.intraday import fetch_volume_rank
 from src.data.snapshot import save_snapshot
@@ -44,6 +45,9 @@ _watch_codes: list[str] = []
 def _collect_snapshot(client: KISClient, data_dir, label: str) -> None:
     """거래대금 순위 스냅샷 수집 및 저장."""
     dt = now_kst()
+    if not is_business_day(dt.date()):
+        logger.debug(f"[스냅샷] {label} 스킵 — 주말/휴장일 ({dt.date()})")
+        return
     logger.info(f"[스냅샷] {label} 수집 시작 ({dt.strftime('%H:%M:%S')})")
     try:
         df = fetch_volume_rank(client, top_n=_WATCH_TOP_N)
@@ -76,6 +80,8 @@ def _collect_snapshot(client: KISClient, data_dir, label: str) -> None:
 def _poll_limit_up(client: KISClient) -> None:
     """감시 종목 상한가 폴링."""
     global _already_limit_up, _watch_codes
+    if not is_business_day(now_kst().date()):
+        return
     if not _watch_codes:
         return
     try:

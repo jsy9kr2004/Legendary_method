@@ -89,11 +89,11 @@
 
 **목표:** 데몬으로 띄워놓고 손 안 가는 상태로 만든다.
 
-- [ ] systemd 서비스 등록 (`Restart=always`)
-- [ ] 로그 로테이션 설정
-- [ ] Disk 사용량 모니터링
-- [ ] 실수로 휴장일에 발송하지 않도록 캘린더 체크
-- [ ] 1주일간 dry-run (실제 매매 X, 알림만 받음) 검증
+- [x] systemd 서비스 등록 (`Restart=always`) — `deploy/jongbae.service` + `deploy/install.sh`. `StartLimitBurst=5/600s` 크래시 루프 방지. (2026-05-06)
+- [x] 로그 로테이션 설정 — `deploy/logrotate.conf`. daily, rotate 30, compress, dateext. (2026-05-06)
+- [x] Disk 사용량 모니터링 — `src/ops/health.py`. 디스크/일봉/테마/로그 크기 체크. `--send` 시 이상 항목 텔레그램 발송. `--json` cron 통합 지원. `tests/test_health.py` 22개 테스트. (2026-05-06)
+- [x] 실수로 휴장일에 발송하지 않도록 캘린더 체크 — `src/scheduler.py` 각 잡 실행 직전 `is_business_day()` 가드. (2026-05-06)
+- [ ] 1주일간 dry-run (실제 매매 X, 알림만 받음) 검증 — `deploy/dry-run-guide.md` 체크리스트 작성 완료. 실제 검증은 운영 투입 전 사용자가 수행.
 
 **완료 기준:** 1주일간 사람 개입 없이 정상 동작.
 
