@@ -174,3 +174,101 @@ def test_identify_leading_stocks_dedup_across_themes():
 def test_identify_leading_stocks_empty_themes():
     snap = _snapshot_with_lup([(1, "A", True)])
     assert identify_leading_stocks(snap, []) == []
+
+
+# ── identify_early_morning_leaders ───────────────────────────────────────────
+
+from src.jongbae.leading_theme import identify_early_morning_leaders
+
+
+def _snap(rows: list[tuple[int, str, float, bool]]) -> pd.DataFrame:
+    """rank, code, daily_return, is_limit_up."""
+    return pd.DataFrame([
+        {"rank": r, "code": c, "name": f"종목{c}",
+         "price": 1000, "prev_close": 800, "daily_return": ret,
+         "intraday_high": 1100, "intraday_low": 900,
+         "volume": 1, "trading_value": 1, "is_limit_up": lup}
+        for r, c, ret, lup in rows
+    ])
+
+
+def test_em_leaders_volume_and_return_separately():
+    """거래대금 1위와 상승률 1위가 다르면 둘 다 주도주."""
+    snap = _snap([
+        (1, "A", 5.0,  False),   # 거래대금 1위, 상승률 낮음
+        (2, "B", 25.0, False),   # 거래대금 2위, 상승률 1위
+        (3, "C", 10.0, False),
+        (4, "D", 15.0, False),
+    ])
+    leading = [{"theme": "T", "count": 3, "codes": ["A", "B", "C", "D"]}]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
+    codes = sorted([l["code"] for l in leaders])
+    assert codes == ["A", "B"]
+    a = next(l for l in leaders if l["code"] == "A")
+    b = next(l for l in leaders if l["code"] == "B")
+    assert a["criterion"] == "volume"
+    assert b["criterion"] == "return"
+
+
+def test_em_leaders_both_criteria():
+    """거래대금 + 상승률 1위가 동일 종목이면 criterion='both'."""
+    snap = _snap([
+        (1, "A", 28.0, False),   # 둘 다 1위
+        (2, "B", 5.0,  False),
+    ])
+    leading = [{"theme": "T", "count": 3, "codes": ["A", "B"]}]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
+    a = next(l for l in leaders if l["code"] == "A")
+    assert a["criterion"] == "both"
+
+
+def test_em_leaders_multi_theme_stock_dedup():
+    """한 종목이 여러 주도섹터에 속하면 themes 리스트에 합쳐서 한 번만."""
+    snap = _snap([(1, "A", 25.0, False), (2, "B", 20.0, False), (3, "C", 15.0, False)])
+    leading = [
+        {"theme": "T1", "count": 3, "codes": ["A", "B", "C"]},
+        {"theme": "T2", "count": 3, "codes": ["A", "B"]},
+    ]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
+    a_entries = [l for l in leaders if l["code"] == "A"]
+    assert len(a_entries) == 1
+    assert sorted(a_entries[0]["themes"]) == ["T1", "T2"]
+
+
+def test_em_leaders_criterion_promotion_across_themes():
+    """T1 에선 volume 만, T2 에선 return 만 → 통합 criterion='both'.
+
+    설계:
+        X: rank 5, return 10%
+        Y: rank 8, return 30%   (T1 에서 X 보다 rank 크고 return 높음)
+        Z: rank 3, return 5%    (T2 에서 X 보다 rank 작고 return 낮음)
+        T1 = [X, Y]: X 는 volume top, Y 는 return top → X criterion='volume'
+        T2 = [X, Z]: Z 는 volume top, X 는 return top → X criterion='return'
+        → X 가 두 테마 통합 시 'both' 로 격상되어야 함
+    """
+    snap = _snap([
+        (3, "Z", 5.0,  False),
+        (5, "X", 10.0, False),
+        (8, "Y", 30.0, False),
+    ])
+    leading = [
+        {"theme": "T1", "count": 3, "codes": ["X", "Y"]},
+        {"theme": "T2", "count": 3, "codes": ["X", "Z"]},
+    ]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
+    x = next(l for l in leaders if l["code"] == "X")
+    assert x["criterion"] == "both"
+    assert sorted(x["themes"]) == ["T1", "T2"]
+
+
+def test_em_leaders_includes_limit_up_flag():
+    snap = _snap([(1, "A", 30.0, True), (2, "B", 25.0, False)])
+    leading = [{"theme": "T", "count": 3, "codes": ["A", "B"]}]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
+    a = next(l for l in leaders if l["code"] == "A")
+    assert a["is_limit_up"] is True
+
+
+def test_em_leaders_empty_inputs():
+    assert identify_early_morning_leaders(_snap([]), [{"theme": "T", "count": 3, "codes": ["A"]}]) == []
+    assert identify_early_morning_leaders(_snap([(1, "A", 10.0, False)]), []) == []

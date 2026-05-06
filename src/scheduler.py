@@ -48,6 +48,7 @@ from src.jongbae.historical import (
 )
 from src.jongbae.leading_theme import (
     codes_in_leading_themes,
+    identify_early_morning_leaders,
     identify_leading_stocks,
     identify_leading_themes,
 )
@@ -245,9 +246,11 @@ def _early_morning_check(
     _watch_codes = df["code"].tolist()
     theme_df = read_naver_themes(settings.data_dir)
     leading = identify_leading_themes(df, theme_df)
-    leaders = identify_leading_stocks(df, leading)
+    # 고주파 모니터링용 주도주 (pre-limit-up 진입 후보):
+    # 주도섹터 내 거래대금 상위 + 상승률 상위 종목.
+    leaders = identify_early_morning_leaders(df, leading, top_per_theme=2)
 
-    # 주도주 신규 진입은 본인이 곧 신규 상한가이므로 동일 시점 limit-up 이벤트도 발송.
+    # 신규 상한가는 그대로 limit-up 이벤트로 발송 (주도주 여부와 별개)
     lup_df = filter_limit_up_from_snapshot(df)
     if not lup_df.empty:
         for _, row in lup_df.iterrows():

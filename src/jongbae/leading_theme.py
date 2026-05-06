@@ -121,7 +121,11 @@ def identify_leading_stocks(
     snapshot_df: pd.DataFrame,
     leading_themes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """주도주 식별 — 주도테마 내 first-mover 상한가 종목.
+    """주도주 식별 (post-limit-up) — 주도테마 내 first-mover 상한가 종목.
+
+    이 함수는 ★ 결정 레포트 / 사후 분석용. 상한가 도달 후의 주도주 정의.
+    장초반 고주파 모니터링용 (상한가 도달 *전* 매수 후보) 은
+    `identify_early_morning_leaders` 사용.
 
     정량 정의 (CLAUDE.md):
         주도주 = 주도테마 내에서 가장 빨리 상한가에 도달한 종목 (first-mover).
@@ -170,3 +174,96 @@ def identify_leading_stocks(
         })
 
     return leaders
+
+
+def identify_early_morning_leaders(
+    snapshot_df: pd.DataFrame,
+    leading_themes: list[dict[str, Any]],
+    top_per_theme: int = 2,
+) -> list[dict[str, Any]]:
+    """장초반 고주파 모니터링용 주도주 식별 (pre-limit-up).
+
+    목적 (사용자 명시):
+        상한가는 거래정지(매수/매도 불가) 이므로, 상한가 도달 *전* 진입을
+        노린다. 따라서 주도주 = 곧 상한가에 도달할 가능성이 높은 종목.
+
+    정의:
+        (1) 주도섹터 내,
+        (2) 주도섹터 내 거래대금 상위 (rank 가 좋은) top_per_theme 종목, OR
+        (3) 주도섹터 내 상승률(daily_return) 상위 top_per_theme 종목.
+
+    (2)와 (3)이 일시적으로 다를 수 있어 한 테마에서 둘 이상의 주도주가
+    나올 수 있고, 각 주도섹터 ↔ 주도주 가 1:1 매핑이 아니다.
+    한 종목이 여러 주도섹터에 속하면 themes 리스트에 합쳐서 한 번만 등장.
+
+    Args:
+        snapshot_df: SNAPSHOT_COLUMNS DataFrame (rank, code, daily_return, ...).
+        leading_themes: identify_leading_themes() 결과.
+        top_per_theme: 각 테마에서 거래대금/상승률 각각 상위 몇 개 볼지.
+
+    Returns:
+        [{
+            "code", "name", "themes": [...], "rank", "price",
+            "daily_return", "is_limit_up",
+            "criterion": "volume" | "return" | "both",
+        }, ...]
+        같은 종목이 여러 테마/기준에 걸치면 한 번만 등장 (themes 합치고
+        criterion 은 'both' 로 격상).
+    """
+    if snapshot_df.empty or not leading_themes:
+        return []
+
+    # 종목별 누적 정보
+    by_code: dict[str, dict[str, Any]] = {}
+
+    for theme_info in leading_themes:
+        theme = theme_info["theme"]
+        theme_codes = set(theme_info.get("codes", []))
+        if not theme_codes:
+            continue
+
+        in_theme = snapshot_df[snapshot_df["code"].astype(str).isin(theme_codes)].copy()
+        if in_theme.empty:
+            continue
+
+        # 거래대금 상위 (rank 작을수록 좋음)
+        vol_top = in_theme.sort_values("rank").head(top_per_theme)
+        vol_codes = set(vol_top["code"].astype(str).tolist())
+
+        # 상승률 상위 (NaN 은 -inf 처리해서 끝으로 보냄)
+        ret_top = in_theme.assign(
+            _ret_key=in_theme["daily_return"].fillna(float("-inf"))
+        ).sort_values("_ret_key", ascending=False).head(top_per_theme)
+        ret_codes = set(ret_top["code"].astype(str).tolist())
+
+        union_codes = vol_codes | ret_codes
+
+        for _, row in in_theme[in_theme["code"].astype(str).isin(union_codes)].iterrows():
+            code = str(row["code"])
+            in_vol = code in vol_codes
+            in_ret = code in ret_codes
+            new_criterion = "both" if (in_vol and in_ret) else ("volume" if in_vol else "return")
+
+            if code in by_code:
+                # 기존 항목 업데이트 — 테마 합치기, criterion 격상
+                entry = by_code[code]
+                if theme not in entry["themes"]:
+                    entry["themes"].append(theme)
+                if entry["criterion"] != "both" and entry["criterion"] != new_criterion:
+                    entry["criterion"] = "both"
+                # rank/price 등은 첫 등장 값 유지 (스냅샷 기준 동일)
+            else:
+                by_code[code] = {
+                    "code": code,
+                    "name": str(row.get("name", "")),
+                    "themes": [theme],
+                    "rank": int(row.get("rank", 0)),
+                    "price": int(row.get("price", 0)),
+                    "daily_return": float(row.get("daily_return", 0.0))
+                        if pd.notna(row.get("daily_return")) else 0.0,
+                    "is_limit_up": bool(row.get("is_limit_up", False)),
+                    "criterion": new_criterion,
+                }
+
+    # rank 순 정렬 (가장 거래대금 상위 종목 먼저)
+    return sorted(by_code.values(), key=lambda x: x["rank"])
