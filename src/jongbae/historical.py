@@ -152,6 +152,12 @@ def historical_4layer(
     주의:
         Layer 4 는 분봉 히스토리 부재로 v0 미구현.
         결과 dict 에 {"n": 0, "note": "v1: 분봉 데이터 적재 후 구현"} 으로 채워 넣음.
+
+    설계 결정 (D2, v0):
+        Layer 1~3 은 cross-stock pool 로 매칭한다 — 즉 모든 종목의 historical
+        사례를 한 풀로 섞어서 갭상 통계를 계산. 표본 확보엔 유리하지만 종목별
+        고유 패턴(테마 의존성, 유동성 차이 등)은 못 잡는다.
+        v1 에서 종목별 Layer 추가 + 표본 충분할 때만 사용하는 hybrid 검토.
     """
     if daily_ohlcv.empty:
         empty = {"n": 0, "p": float("nan"), "avg_gap": float("nan"),

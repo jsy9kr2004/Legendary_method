@@ -7,13 +7,64 @@
     - 금액: 억 단위 (1,234,567,890 → 12.3억)
     - 시각: KST HH:MM
     - 종목코드: 6자리
-    - 텔레그램 고정폭 표: 코드블록(```) 안에 정렬
+    - 텔레그램 고정폭 표: 코드블록(```) 안에 정렬 (한글=2셀 폭 인식)
 """
 from __future__ import annotations
 
 from datetime import datetime, date
 
 KST_WEEKDAYS = "월화수목금토일"
+
+
+def _display_width(s: str) -> int:
+    """텔레그램 고정폭 폰트 기준 표시 너비 추정.
+
+    CJK / 한글 / 전각 문자 = 2셀, ASCII = 1셀.
+    유니코드 코드포인트 범위 기반 단순 휴리스틱 (wcwidth 의존성 회피).
+    """
+    w = 0
+    for c in s:
+        cp = ord(c)
+        if (
+            0x1100 <= cp <= 0x115F                      # Hangul Jamo
+            or 0x2E80 <= cp <= 0x303E                   # CJK Radicals · Kangxi
+            or 0x3041 <= cp <= 0x33FF                   # Hiragana · Katakana · CJK Symbols
+            or 0x3400 <= cp <= 0x4DBF                   # CJK Ext A
+            or 0x4E00 <= cp <= 0x9FFF                   # CJK Unified Ideographs
+            or 0xA000 <= cp <= 0xA4CF                   # Yi
+            or 0xAC00 <= cp <= 0xD7A3                   # Hangul Syllables
+            or 0xF900 <= cp <= 0xFAFF                   # CJK Compatibility Ideographs
+            or 0xFE30 <= cp <= 0xFE4F                   # CJK Compatibility Forms
+            or 0xFF00 <= cp <= 0xFF60                   # Fullwidth Forms
+            or 0xFFE0 <= cp <= 0xFFE6                   # Fullwidth signs
+        ):
+            w += 2
+        else:
+            w += 1
+    return w
+
+
+def _pad(s: str, width: int, align: str = "left") -> str:
+    """`s` 를 `width` 셀에 맞춰 한글 인지 패딩.
+
+    align: 'left' | 'right'
+    """
+    deficit = max(0, width - _display_width(s))
+    pad = " " * deficit
+    return s + pad if align == "left" else pad + s
+
+
+def _truncate_to_width(s: str, max_width: int) -> str:
+    """`max_width` 셀을 넘지 않도록 잘라냄 (한글 인지)."""
+    out = []
+    w = 0
+    for c in s:
+        cw = _display_width(c)
+        if w + cw > max_width:
+            break
+        out.append(c)
+        w += cw
+    return "".join(out)
 
 
 def fmt_pct(value: float, digits: int = 2, sign: bool = True) -> str:
@@ -111,15 +162,31 @@ def fmt_sizing_table(candidates: list[dict]) -> str:
         candidates: 각 dict에 name, p_gap, avg_gap, kelly, sharpe, equal 키 포함.
 
     Returns:
-        코드블록 안에 넣을 텍스트.
+        코드블록 안에 넣을 텍스트. 한글 종목명 wide-char 인지 정렬.
     """
     if not candidates:
         return "종배 후보 없음"
 
-    header = f"{'종목':<10} {'P(갭상)':>7} {'E[갭]':>7} {'Kelly':>7} {'Sharpe':>7} {'균등':>7}"
-    lines = [header, "-" * len(header)]
+    # 컬럼 너비 (display cell 기준)
+    name_w, p_w, gap_w, k_w, s_w, e_w = 12, 7, 7, 7, 7, 7
+
+    def row(name: str, p: str, gap: str, k: str, s: str, e: str) -> str:
+        return (
+            f"{_pad(name, name_w, 'left')} "
+            f"{_pad(p, p_w, 'right')} "
+            f"{_pad(gap, gap_w, 'right')} "
+            f"{_pad(k, k_w, 'right')} "
+            f"{_pad(s, s_w, 'right')} "
+            f"{_pad(e, e_w, 'right')}"
+        )
+
+    header = row("종목", "P(갭상)", "E[갭]", "Kelly", "Sharpe", "균등")
+    sep_line = "-" * _display_width(header)
+    lines = [header, sep_line]
+
     for c in candidates:
-        name = str(c.get("name", ""))[:9]
+        raw_name = str(c.get("name", ""))
+        name = _truncate_to_width(raw_name, name_w)
         p_str = f"{c['p_gap']*100:.0f}%" if c.get("p_gap") == c.get("p_gap") else "N/A"
         gap_str = fmt_pct(c["avg_gap"]) if c.get("avg_gap") == c.get("avg_gap") else "N/A"
 
@@ -128,9 +195,7 @@ def fmt_sizing_table(candidates: list[dict]) -> str:
         sharpe_str = f"{c['sharpe']*100:.1f}%" if c.get("sharpe") is not None else "N/A"
         equal_str = f"{c['equal']*100:.1f}%"
 
-        lines.append(
-            f"{name:<10} {p_str:>7} {gap_str:>7} {kelly_str:>7} {sharpe_str:>7} {equal_str:>7}"
-        )
+        lines.append(row(name, p_str, gap_str, kelly_str, sharpe_str, equal_str))
     return "\n".join(lines)
 
 

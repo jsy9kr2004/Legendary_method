@@ -9,10 +9,14 @@ import pytz
 import pytest
 
 from src.report.formatting import (
+    _display_width,
+    _pad,
+    _truncate_to_width,
     fmt_billion,
     fmt_pct,
     fmt_price,
     fmt_layer_stats,
+    fmt_sizing_table,
     fmt_sizing_table,
     fmt_date,
 )
@@ -81,6 +85,55 @@ def test_fmt_sizing_table_kelly_none():
              "kelly": None, "sharpe": 0.5, "equal": 1.0}]
     result = fmt_sizing_table(rows)
     assert "제외" in result
+
+
+# ── H3: wide-char 정렬 ───────────────────────────────────────────────────────
+
+def test_display_width_ascii():
+    assert _display_width("hello") == 5
+    assert _display_width("ABC123") == 6
+
+
+def test_display_width_korean():
+    assert _display_width("제룡전기") == 8     # 4글자 × 2셀
+    assert _display_width("SK하이닉스") == 10  # 2 + 4×2
+
+
+def test_pad_korean_left():
+    """한글 종목명 왼쪽 정렬: 시각 너비 기준으로 패딩."""
+    out = _pad("제룡전기", 12, "left")
+    assert _display_width(out) == 12
+    assert out.startswith("제룡전기")
+
+
+def test_pad_korean_right():
+    out = _pad("100%", 7, "right")
+    assert _display_width(out) == 7
+    assert out.endswith("100%")
+
+
+def test_truncate_to_width_korean():
+    assert _truncate_to_width("제룡전기홀딩스", 8) == "제룡전기"
+    assert _truncate_to_width("제룡전기홀딩스", 10) == "제룡전기홀"
+
+
+def test_fmt_sizing_table_aligned_with_korean_names():
+    """한글/영문 혼합 종목명에서도 각 행이 동일한 시각 너비를 가져야 한다."""
+    rows = [
+        {"name": "제룡전기", "p_gap": 1.0, "avg_gap": 8.9,
+         "kelly": 0.20, "sharpe": 0.42, "equal": 0.33},
+        {"name": "SK하이닉스", "p_gap": 0.7, "avg_gap": 3.0,
+         "kelly": 0.10, "sharpe": 0.30, "equal": 0.33},
+        {"name": "AAPL", "p_gap": 0.6, "avg_gap": 2.0,
+         "kelly": 0.05, "sharpe": 0.20, "equal": 0.33},
+    ]
+    result = fmt_sizing_table(rows)
+    lines = result.split("\n")
+    # 헤더 + 구분선 + 3행 = 5줄
+    assert len(lines) == 5
+    # 모든 데이터 행의 시각 너비가 동일
+    data_widths = [_display_width(line) for line in lines[2:]]
+    assert len(set(data_widths)) == 1, f"행 너비 불일치: {data_widths}"
 
 
 # ── decision report ──────────────────────────────────────────────────────────

@@ -82,9 +82,18 @@ def test_demo_snapshot_columns():
     """demo 스냅샷이 파이프라인에 필요한 컬럼을 갖춰야 한다."""
     from src.demo_fixtures import make_snapshot
     required = {"code", "price", "prev_close", "daily_return",
-                "intraday_high", "volume", "trading_value", "is_limit_up"}
+                "intraday_high", "intraday_low", "volume", "trading_value", "is_limit_up"}
     snap = make_snapshot(TARGET_DATE)
     assert required.issubset(set(snap.columns))
+
+
+def test_demo_snapshot_intraday_low_present():
+    """H1: intraday_low 가 0보다 크고 intraday_high 보다 작아야 한다."""
+    from src.demo_fixtures import make_snapshot
+    snap = make_snapshot(TARGET_DATE)
+    for _, row in snap.iterrows():
+        assert row["intraday_low"] > 0, f"{row['code']}: low={row['intraday_low']}"
+        assert row["intraday_low"] <= row["intraday_high"]
 
 
 def test_demo_daily_ohlcv_shape():

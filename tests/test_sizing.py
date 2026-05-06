@@ -72,11 +72,21 @@ def test_kelly_fraction_n_5_uses_03_factor():
     assert f == pytest.approx(0.075, abs=0.001)
 
 
-def test_kelly_fraction_no_loss_history_caps():
-    """갭하 사례 0건이면 캡까지."""
+def test_kelly_fraction_no_loss_history_applies_sample_factor():
+    """갭하 사례 0건 — 캡 × sample factor (H2 수정).
+
+    n=30 (>= 20) → factor=0.8 → 0.25 * 0.8 = 0.20
+    """
     stats = {"n": 30, "p": 1.0, "avg_gap_when_up": 3.0, "avg_gap_when_dn": float("nan")}
     f = kelly_fraction(stats)
-    assert f == KELLY_MAX_FRACTION
+    assert f == pytest.approx(0.20, rel=1e-9)
+
+
+def test_kelly_fraction_no_loss_history_small_sample():
+    """L=0 + n<10 → factor=0.3 적용. 0.25 * 0.3 = 0.075"""
+    stats = {"n": 5, "p": 1.0, "avg_gap_when_up": 3.0, "avg_gap_when_dn": float("nan")}
+    f = kelly_fraction(stats)
+    assert f == pytest.approx(0.075, rel=1e-9)
 
 
 def test_kelly_fraction_zero_W_returns_zero():

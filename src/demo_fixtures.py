@@ -220,6 +220,7 @@ def make_snapshot(target_date: date) -> pd.DataFrame:
             "prev_close": prev_close,
             "daily_return": round(daily_return, 2),
             "intraday_high": int(row["high"]),
+            "intraday_low": int(row["low"]),
             "volume": int(row["volume"]),
             "trading_value": int(row["trading_value"]) * rank,  # 1위가 더 크도록
             "is_limit_up": is_lup,

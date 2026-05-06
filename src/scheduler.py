@@ -64,6 +64,9 @@ _SNAPSHOT_TIMES = ["11:00", "13:00", "14:00", "14:50"]
 _POLL_INTERVAL_SEC = int(os.getenv("LIMIT_UP_POLL_INTERVAL_SEC", "60"))
 _WATCH_TOP_N = int(os.getenv("LIMIT_UP_WATCH_TOP_N", "30"))
 
+# 9~9:30 고주파 변화감지 폴링 (장초반 주도섹터/주도주 변동에 민감 반응)
+_EARLY_INTERVAL_SEC = int(os.getenv("EARLY_MORNING_INTERVAL_SEC", "60"))
+
 
 # ── 일별 글로벌 상태 ─────────────────────────────────────────────────────────
 # 매일 08:30에 _reset_state() 로 초기화.
@@ -204,6 +207,54 @@ def _send_morning(settings: Settings, dispatcher: Dispatcher) -> None:
     dispatcher.send_morning(report)
 
 
+def _within_early_morning(dt: datetime) -> bool:
+    """장초반 고주파 변화감지 시간대 (09:00~09:30 KST)."""
+    t = dt.time()
+    return (t >= datetime.strptime("09:00", "%H:%M").time()
+            and t < datetime.strptime("09:30", "%H:%M").time())
+
+
+@_business_day_only("장초반 변화감지")
+def _early_morning_check(
+    client: KISClient,
+    settings: Settings,
+    dispatcher: Dispatcher,
+) -> None:
+    """09:00~09:30 동안 거래대금 상위 + 주도테마 변화 감지.
+
+    이전 호출 대비 변화(신규 테마/탈락/신규 상한가) 가 있을 때만 짧은 알림 발송.
+    """
+    global _watch_codes, _already_limit_up, _prev_leading_themes
+    dt = now_kst()
+    if not _within_early_morning(dt):
+        return
+
+    df = fetch_volume_rank(client, top_n=_WATCH_TOP_N)
+    if df.empty:
+        return
+
+    _watch_codes = df["code"].tolist()
+    theme_df = read_naver_themes(settings.data_dir)
+    leading = identify_leading_themes(df, theme_df)
+
+    # 신규 상한가 즉시 알림
+    lup_df = filter_limit_up_from_snapshot(df)
+    new_lup_records: list[dict[str, Any]] = []
+    if not lup_df.empty:
+        for _, row in lup_df.iterrows():
+            code = str(row["code"])
+            if code not in _already_limit_up:
+                _already_limit_up.add(code)
+                new_lup_records.append(row.to_dict())
+                _send_limit_up_alert(row.to_dict(), settings, dispatcher, dt)
+
+    # 테마 변화 / 신규 상한가 둘 다 없으면 알림 skip
+    from src.report.periodic import build_early_morning_alert
+    alert = build_early_morning_alert(df, leading, _prev_leading_themes, new_lup_records, dt)
+    dispatcher.send_early_morning(alert)
+    _prev_leading_themes = leading
+
+
 @_business_day_only("사후")
 def _send_afterhours(settings: Settings, dispatcher: Dispatcher) -> None:
     """16:00 사후 레포트 이메일 발송."""
@@ -275,11 +326,12 @@ def _send_decision_report(
         code = str(row["code"])
         close = int(row.get("price", 0))
         high = int(row.get("intraday_high", close))
-        low_est = int(close * 0.85)
+        low_raw = int(row.get("intraday_low", 0) or 0)
+        low = low_raw if low_raw > 0 else int(close * 0.85)
         cp = close_position(
             open_p=float(row.get("prev_close", close)),
             high=float(high),
-            low=float(low_est),
+            low=float(low),
             close=float(close),
         )
         layers = historical_4layer(daily_ohlcv, today_close_pos=cp, today=today)
@@ -388,6 +440,19 @@ def run() -> None:
         misfire_grace_time=600,
     )
 
+    # 09:00~09:30 장초반 고주파 변화감지 (테마/주도주 변동 즉시 알림)
+    from apscheduler.triggers.interval import IntervalTrigger
+    scheduler.add_job(
+        _early_morning_check,
+        trigger=IntervalTrigger(seconds=_EARLY_INTERVAL_SEC),
+        args=[client, settings, dispatcher],
+        id="early_morning_poll",
+        name="장초반 변화감지",
+        misfire_grace_time=30,
+        max_instances=1,
+        coalesce=True,
+    )
+
     # 4시점 스냅샷 + 정기/결정 레포트
     for t in _SNAPSHOT_TIMES:
         hh, mm = t.split(":")
@@ -412,7 +477,6 @@ def run() -> None:
 
     # 상한가 폴링 — IntervalTrigger 기반, 함수 내부에서 시간창 가드.
     # start_date/end_date 미지정 → 매일 영구 동작 (이전 버그 수정).
-    from apscheduler.triggers.interval import IntervalTrigger
     scheduler.add_job(
         _poll_limit_up,
         trigger=IntervalTrigger(seconds=_POLL_INTERVAL_SEC),

@@ -63,6 +63,13 @@ def kelly_fraction(stats: dict[str, Any]) -> float | None:
 
     Returns:
         분할 비율 (0.0~0.25). 표본 부족 시 None. 음수면 0.
+
+    구현 노트 (D1):
+        고전 Kelly 는 W, L 을 "단위 베팅당 손익 비율(decimal)" 로 다룬다.
+        본 코드는 historical 의 % 값을 그대로 (W=2.5 → 2.5) 대입해 결과가
+        대략 [0, 0.25] 범위로 떨어지도록 한 휴리스틱이다. 이는 정통 Kelly
+        와 결과 스케일이 다르며, 향후 데이터 누적 후 정통 식 (W, L 을 /100)
+        과 비교 검증할 것.
     """
     n = int(stats.get("n", 0))
     factor = _kelly_sample_factor(n)
@@ -77,8 +84,9 @@ def kelly_fraction(stats: dict[str, Any]) -> float | None:
         return 0.0
 
     if math.isnan(L) or L <= 0:
-        # 갭하 사례 0건 → 우호적이지만 Kelly 공식 정의 안 됨. 캡 직행.
-        return KELLY_MAX_FRACTION
+        # 갭하 사례 0건 → 우호적이지만 Kelly 공식이 정의 불가능.
+        # sample factor 는 적용해서 표본 보정 철학 유지 (H2 수정).
+        return min(KELLY_MAX_FRACTION * factor, KELLY_MAX_FRACTION)
 
     q = 1.0 - p
     raw = (p / L) - (q / W)

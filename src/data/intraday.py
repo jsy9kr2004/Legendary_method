@@ -17,7 +17,6 @@
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import pandas as pd
@@ -39,6 +38,7 @@ SNAPSHOT_COLUMNS = [
     "prev_close",
     "daily_return",
     "intraday_high",
+    "intraday_low",
     "volume",
     "trading_value",
     "is_limit_up",
@@ -102,6 +102,7 @@ def fetch_volume_rank(
         prev_close = _to_int(row.get("stck_prdy_clpr"))
         daily_return = _to_float(row.get("prdy_ctrt"))
         intraday_high = _to_int(row.get("stck_hgpr"))
+        intraday_low = _to_int(row.get("stck_lwpr"))
         volume = _to_int(row.get("acml_vol"))
         trading_value = _to_int(row.get("acml_tr_pbmn"))
         lup = _is_limit_up_price(price, prev_close) if prev_close > 0 else False
@@ -114,6 +115,7 @@ def fetch_volume_rank(
                 "prev_close": prev_close,
                 "daily_return": daily_return,
                 "intraday_high": intraday_high,
+                "intraday_low": intraday_low,
                 "volume": volume,
                 "trading_value": trading_value,
                 "is_limit_up": lup,
@@ -152,6 +154,7 @@ def fetch_quote(client: KISClient, code: str) -> dict[str, Any] | None:
     prev_close = _to_int(out.get("stck_prdy_clpr"))
     daily_return = _to_float(out.get("prdy_ctrt"))
     intraday_high = _to_int(out.get("stck_hgpr"))
+    intraday_low = _to_int(out.get("stck_lwpr"))
     volume = _to_int(out.get("acml_vol"))
     trading_value = _to_int(out.get("acml_tr_pbmn"))
     lup = _is_limit_up_price(price, prev_close) if prev_close > 0 else False
@@ -163,6 +166,7 @@ def fetch_quote(client: KISClient, code: str) -> dict[str, Any] | None:
         "prev_close": prev_close,
         "daily_return": daily_return,
         "intraday_high": intraday_high,
+        "intraday_low": intraday_low,
         "volume": volume,
         "trading_value": trading_value,
         "is_limit_up": lup,
@@ -190,23 +194,6 @@ def fetch_quotes_bulk(
     return pd.DataFrame(records)
 
 
-def _is_limit_up_price(price: int, prev_close: int) -> bool:
-    """현재가가 상한가에 도달했는지 판단.
-
-    상한가 = floor(전일종가 * 1.30) 이상.
-    KRX 규정: 상한가 = 전일종가 × 1.30 (소수점 이하 절사, 원 단위).
-    """
-    if prev_close <= 0:
-        return False
-    limit = math.floor(prev_close * 1.30)
-    return price >= limit
-
-
-def limit_up_price(prev_close: int) -> int:
-    """전일종가로부터 상한가 계산.
-
-    정량 정의:
-        상한가 = floor(전일종가 × 1.30)
-        KOSPI/KOSDAQ 공통 ±30% 가격제한폭 (2015-06-15 이후).
-    """
-    return math.floor(prev_close * 1.30)
+# 상한가 계산은 src.jongbae.limit_up 의 단일 정의를 사용 (M1: SSoT 통합).
+from src.jongbae.limit_up import is_limit_up as _is_limit_up_price  # noqa: E402
+from src.jongbae.limit_up import limit_up_price  # noqa: E402, F401

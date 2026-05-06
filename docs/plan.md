@@ -159,7 +159,7 @@
 - [ ] **무결성 체크 알림 채널** — 현재 stderr/exit code 만, 텔레그램은 M4 이후 통합
 - [ ] **R5 Layer 4 (고점 도달 시각 매칭)** — 분봉 히스토리 부재로 v0 미구현. 매일 분봉 적재 후 v1에서 구현
 - [x] **종배 시그널 통합 파이프라인** — `src/pipeline.py` `run_pipeline()`. demo 모드 (--demo), 저장 (--save), 발송 (--send). `src/demo_fixtures.py` 제룡전기 2025-05-04 mock. `tests/test_pipeline.py` 13개 E2E 테스트. (2026-05-06)
-- [ ] **09:00~09:30 장 초반 고주파 모니터링** — 장 개시 직후 30초~1분 간격으로 거래대금 상위 + 주도섹터 변화 감지. 변화 있을 때만 텔레그램 알림. 9:30 이후엔 정규 11/13/14 스냅샷 주기로 복귀. (M3/M4 완료 후 스케줄러에 추가)
+- [x] **09:00~09:30 장 초반 고주파 모니터링** — `src/scheduler.py` `_early_morning_check`. IntervalTrigger 60초(기본, `EARLY_MORNING_INTERVAL_SEC` env로 조정), `_within_early_morning()` 시간창 가드, `build_early_morning_alert` 가 변화 없으면 None 반환 → 발송 안 함. (2026-05-06)
 - [ ] **KRX 정밀 휴장일 캘린더** — v0 는 weekday 기반. 정밀화는 KIS 인덱스 OHLCV 또는 정적 테이블
 - [ ] **`change_rate` 적재 시 NaN** — 분석 단계에서 `groupby('code')['close'].pct_change()` 로 계산
 - [ ] **모의투자(mock) 일봉 endpoint 동작 검증 미완** — 현재 real 모드로만 검증됨

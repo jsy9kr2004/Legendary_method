@@ -112,12 +112,15 @@ def run_pipeline(
         code = str(row["code"])
         close = int(row.get("price", 0))
         high = int(row.get("intraday_high", close))
-        low_est = int(close * 0.85)  # 당일 저가는 스냅샷에 없으므로 추정
+        # 일중 저가는 KIS API stck_lwpr 에서 받음 (H1 수정).
+        # 스냅샷에 없거나 0이면 보수적 추정값 사용.
+        low_raw = int(row.get("intraday_low", 0) or 0)
+        low = low_raw if low_raw > 0 else int(close * 0.85)
 
         cp = close_position(
             open_p=float(row.get("prev_close", close)),
             high=float(high),
-            low=float(low_est),
+            low=float(low),
             close=float(close),
         )
 

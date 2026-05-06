@@ -161,14 +161,15 @@ def themes_are_fresh(data_dir: Path, max_age_days: int = 7) -> bool:
     """최근 max_age_days 이내에 크롤링된 테마 데이터가 있으면 True.
 
     정량 정의:
-        today - last_crawled_date <= max_age_days 이면 신선(fresh).
+        today_kst - last_crawled_date <= max_age_days 이면 신선(fresh).
         신선하면 재크롤링 불필요.
     """
     last = themes_last_crawled(data_dir)
     if last is None:
         return False
-    from datetime import date as date_cls
-    return (date_cls.today() - last).days <= max_age_days
+    # KST 기준 오늘 (M2: 시스템 로컬 date.today() 사용 회피)
+    from src.config import today_kst
+    return (today_kst() - last).days <= max_age_days
 
 
 def themes_for_code(data_dir: Path, code: str) -> list[str]:

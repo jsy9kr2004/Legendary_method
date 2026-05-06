@@ -178,19 +178,22 @@ def test_themes_last_crawled_empty(tmp_path):
 
 
 def test_themes_are_fresh_within_7_days(tmp_path):
-    today = date.today()
+    from src.config import today_kst
+    today = today_kst()
     _write_sample(tmp_path, today - timedelta(days=6))
     assert themes_are_fresh(tmp_path, max_age_days=7) is True
 
 
 def test_themes_are_fresh_exactly_7_days(tmp_path):
-    today = date.today()
+    from src.config import today_kst
+    today = today_kst()
     _write_sample(tmp_path, today - timedelta(days=7))
     assert themes_are_fresh(tmp_path, max_age_days=7) is True
 
 
 def test_themes_are_fresh_stale(tmp_path):
-    today = date.today()
+    from src.config import today_kst
+    today = today_kst()
     _write_sample(tmp_path, today - timedelta(days=8))
     assert themes_are_fresh(tmp_path, max_age_days=7) is False
 
