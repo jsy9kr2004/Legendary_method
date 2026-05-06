@@ -51,12 +51,12 @@
 
 **목표:** 수집된 데이터로 종배 후보를 식별하고 historical 갭상 통계를 계산한다.
 
-- [ ] 주도테마 식별 알고리즘 (거래대금 30위 + 테마 카운트)
-- [ ] 종배 후보 필터 (주도테마 + 일봉 +20%↑)
-- [ ] Historical 유사 사례 매칭 (4-Layer)
-- [ ] 갭상 확률 / 평균 갭 / 중앙값 / 표준편차 계산
-- [ ] 사이징 계산 (균등 / Kelly / Sharpe)
-- [ ] 표본 부족 시 보수적 처리 (n<5 제외, n<20 페널티)
+- [x] 주도테마 식별 알고리즘 — `src/jongbae/leading_theme.py` (거래대금 top 30, 테마 카운트 ≥3). (2026-05-06)
+- [x] 종배 후보 필터 — `src/jongbae/candidates.py` (주도테마 + 일봉 +20%↑, 우선순위 limit_up/high_pull/normal/excluded). (2026-05-06)
+- [x] Historical 유사 사례 매칭 — `src/jongbae/historical.py` Layer 1~3 구현. **Layer 4는 분봉 히스토리 부재로 v1 연기**. (2026-05-06)
+- [x] 갭상 확률 / 평균 갭 / 중앙값 / 표준편차 계산 — `historical._gap_metrics`. (2026-05-06)
+- [x] 사이징 계산 (균등 / Kelly / Sharpe) — `src/jongbae/sizing.py`. (2026-05-06)
+- [x] 표본 부족 시 보수적 처리 — Kelly: n<5 제외, n<10 ×0.3, n<20 ×0.6, n≥20 ×0.8 (Half Kelly), 캡 25%. (2026-05-06)
 
 **완료 기준:** 임의 시점의 시장 데이터에 대해 종배 후보 종목과 통계가 계산됨.
 
@@ -157,6 +157,8 @@
 - [ ] **`100030` 등 1XXXXX 주권형 펀드/리츠** — KIS 그룹코드 'S' 에 포함되어 보통주 필터로 안 걸러짐. 종목명 패턴 또는 part2 필드 분기 필요
 - [ ] **WICS / 네이버 테마 크롤러** — M2 진입 직전 작업
 - [ ] **무결성 체크 알림 채널** — 현재 stderr/exit code 만, 텔레그램은 M4 이후 통합
+- [ ] **R5 Layer 4 (고점 도달 시각 매칭)** — 분봉 히스토리 부재로 v0 미구현. 매일 분봉 적재 후 v1에서 구현
+- [ ] **종배 시그널 통합 파이프라인** — `leading_theme → candidates → historical → sizing` 체인을 한 번에 돌리는 entry point. M3 레포트 작성 시 함께 작업
 - [ ] **KRX 정밀 휴장일 캘린더** — v0 는 weekday 기반. 정밀화는 KIS 인덱스 OHLCV 또는 정적 테이블
 - [ ] **`change_rate` 적재 시 NaN** — 분석 단계에서 `groupby('code')['close'].pct_change()` 로 계산
 - [ ] **모의투자(mock) 일봉 endpoint 동작 검증 미완** — 현재 real 모드로만 검증됨
