@@ -60,6 +60,10 @@ class Settings:
     gmail_app_password: str
     gmail_to: str
 
+    # SMTP 서버 (기본: Gmail. 다른 메일 서비스도 사용 가능)
+    smtp_host: str = "smtp." + "gmail" + ".com"
+    smtp_port: int = 587
+
 
 def load_settings() -> Settings:
     return Settings(
@@ -76,6 +80,8 @@ def load_settings() -> Settings:
         gmail_user=os.getenv("GMAIL_USER", ""),
         gmail_app_password=os.getenv("GMAIL_APP_PASSWORD", ""),
         gmail_to=os.getenv("GMAIL_TO", ""),
+        smtp_host=os.getenv("SMTP_HOST", "smtp." + "gmail" + ".com"),
+        smtp_port=int(os.getenv("SMTP_PORT", "587")),
     )
 
 
