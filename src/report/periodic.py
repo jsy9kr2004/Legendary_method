@@ -124,17 +124,19 @@ def build_early_morning_alert(
     snapshot_df,
     leading_themes: list[dict[str, Any]],
     prev_leading_themes: list[dict[str, Any]],
-    new_limit_up: list[dict[str, Any]],
+    leading_stocks: list[dict[str, Any]],
+    prev_leading_stocks: list[dict[str, Any]],
     snapshot_dt: datetime,
 ) -> str | None:
-    """09:00~09:30 장 초반 변화 감지 알림 생성.
+    """09:00~10:00 장 초반 변화 감지 알림 생성.
 
     변화가 없으면 None 반환 → 호출부에서 발송 안 함.
 
-    감지 기준:
-        1. 신규 주도테마 진입/탈락
-        2. 신규 상한가 진입
-        3. 거래대금 상위 5위에 이전에 없던 종목 진입
+    감지 기준 (사용자 명시):
+        1. 주도섹터(테마) 변화 — 신규 진입/탈락
+        2. 주도주(주도테마 내 first-mover 상한가 종목) 변화
+
+    비주도테마 상한가는 별도 limit_up 폴링이 알림.
 
     Returns:
         마크다운 문자열 또는 None (변화 없음).
@@ -142,15 +144,24 @@ def build_early_morning_alert(
     t = fmt_time(snapshot_dt)
     changes: list[str] = []
 
-    # 테마 변화
+    # 주도테마 변화
     theme_changes = _detect_theme_changes(leading_themes, prev_leading_themes)
     changes.extend(theme_changes)
 
-    # 신규 상한가
-    for q in new_limit_up:
+    # 주도주 변화
+    prev_leader_codes = {s["code"] for s in prev_leading_stocks}
+    curr_leader_codes = {s["code"] for s in leading_stocks}
+    new_leaders = [s for s in leading_stocks if s["code"] not in prev_leader_codes]
+    dropped_leaders = [s for s in prev_leading_stocks if s["code"] not in curr_leader_codes]
+
+    for s in new_leaders:
         changes.append(
-            f"🔴 상한가: {q.get('name','')} ({q.get('code','')})  "
-            f"{fmt_pct(float(q.get('daily_return', 0)))}"
+            f"  ⭐ 주도주 진입: {s['name']} ({s['code']}) — {s['theme']}  "
+            f"{fmt_pct(s['daily_return'])}"
+        )
+    for s in dropped_leaders:
+        changes.append(
+            f"  💤 주도주 이탈: {s['name']} ({s['code']}) — {s['theme']}"
         )
 
     if not changes:
@@ -159,8 +170,13 @@ def build_early_morning_alert(
     lines = [f"⚡ [장초반-{t}]"] + changes
 
     if leading_themes:
-        top_theme = leading_themes[0]["theme"]
-        lines.append(f"주도테마: {top_theme} ({leading_themes[0]['count']}종목)")
+        top = leading_themes[0]
+        lines.append(f"현재 주도테마: {top['theme']} ({top['count']}종목)")
+    if leading_stocks:
+        top_stock = leading_stocks[0]
+        lines.append(
+            f"대표 주도주: {top_stock['name']} ({top_stock['theme']})"
+        )
 
     return "\n".join(lines)
 

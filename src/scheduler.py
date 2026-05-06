@@ -48,6 +48,7 @@ from src.jongbae.historical import (
 )
 from src.jongbae.leading_theme import (
     codes_in_leading_themes,
+    identify_leading_stocks,
     identify_leading_themes,
 )
 from src.jongbae.limit_up import detect_new_limit_up, filter_limit_up_from_snapshot
@@ -74,14 +75,16 @@ _EARLY_INTERVAL_SEC = int(os.getenv("EARLY_MORNING_INTERVAL_SEC", "60"))
 _already_limit_up: set[str] = set()
 _watch_codes: list[str] = []
 _prev_leading_themes: list[dict[str, Any]] = []
+_prev_leading_stocks: list[dict[str, Any]] = []
 
 
 def _reset_state() -> None:
     """매일 장 시작 전 글로벌 상태 초기화."""
-    global _already_limit_up, _watch_codes, _prev_leading_themes
+    global _already_limit_up, _watch_codes, _prev_leading_themes, _prev_leading_stocks
     _already_limit_up = set()
     _watch_codes = []
     _prev_leading_themes = []
+    _prev_leading_stocks = []
     logger.info("[리셋] 일별 글로벌 상태 초기화 완료")
 
 
@@ -208,10 +211,13 @@ def _send_morning(settings: Settings, dispatcher: Dispatcher) -> None:
 
 
 def _within_early_morning(dt: datetime) -> bool:
-    """장초반 고주파 변화감지 시간대 (09:00~09:30 KST)."""
+    """장초반 고주파 변화감지 시간대 (09:00 ≤ t < 10:00 KST).
+
+    사용자 요청에 따라 09:00~10:00 1시간 동안 동작.
+    """
     t = dt.time()
     return (t >= datetime.strptime("09:00", "%H:%M").time()
-            and t < datetime.strptime("09:30", "%H:%M").time())
+            and t < datetime.strptime("10:00", "%H:%M").time())
 
 
 @_business_day_only("장초반 변화감지")
@@ -220,11 +226,14 @@ def _early_morning_check(
     settings: Settings,
     dispatcher: Dispatcher,
 ) -> None:
-    """09:00~09:30 동안 거래대금 상위 + 주도테마 변화 감지.
+    """09:00~10:00 동안 주도섹터 / 주도주 변화 감지 + 신규 상한가 알림.
 
-    이전 호출 대비 변화(신규 테마/탈락/신규 상한가) 가 있을 때만 짧은 알림 발송.
+    감지 대상:
+        - 주도섹터(테마) 변화: 신규 진입/탈락
+        - 주도주(주도테마 내 first-mover 상한가 종목) 변화
+    비주도테마 상한가는 별도 limit-up 폴링이 처리.
     """
-    global _watch_codes, _already_limit_up, _prev_leading_themes
+    global _watch_codes, _already_limit_up, _prev_leading_themes, _prev_leading_stocks
     dt = now_kst()
     if not _within_early_morning(dt):
         return
@@ -236,23 +245,25 @@ def _early_morning_check(
     _watch_codes = df["code"].tolist()
     theme_df = read_naver_themes(settings.data_dir)
     leading = identify_leading_themes(df, theme_df)
+    leaders = identify_leading_stocks(df, leading)
 
-    # 신규 상한가 즉시 알림
+    # 주도주 신규 진입은 본인이 곧 신규 상한가이므로 동일 시점 limit-up 이벤트도 발송.
     lup_df = filter_limit_up_from_snapshot(df)
-    new_lup_records: list[dict[str, Any]] = []
     if not lup_df.empty:
         for _, row in lup_df.iterrows():
             code = str(row["code"])
             if code not in _already_limit_up:
                 _already_limit_up.add(code)
-                new_lup_records.append(row.to_dict())
                 _send_limit_up_alert(row.to_dict(), settings, dispatcher, dt)
 
-    # 테마 변화 / 신규 상한가 둘 다 없으면 알림 skip
     from src.report.periodic import build_early_morning_alert
-    alert = build_early_morning_alert(df, leading, _prev_leading_themes, new_lup_records, dt)
+    alert = build_early_morning_alert(
+        df, leading, _prev_leading_themes,
+        leaders, _prev_leading_stocks, dt,
+    )
     dispatcher.send_early_morning(alert)
     _prev_leading_themes = leading
+    _prev_leading_stocks = leaders
 
 
 @_business_day_only("사후")

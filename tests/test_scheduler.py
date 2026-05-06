@@ -46,6 +46,20 @@ def test_within_polling_window(hh, mm, expected):
     assert scheduler._within_polling_window(dt) is expected
 
 
+@pytest.mark.parametrize("hh,mm,expected", [
+    (8, 59, False),
+    (9, 0, True),      # 시작
+    (9, 30, True),     # 사용자 요청 확장 영역
+    (9, 59, True),     # 종료 직전
+    (10, 0, False),    # 종료
+    (10, 30, False),
+])
+def test_within_early_morning_extended(hh, mm, expected):
+    """09:00 ≤ t < 10:00 (사용자 요청에 따라 1시간 확장)."""
+    dt = datetime(2026, 5, 6, hh, mm, tzinfo=KST)
+    assert scheduler._within_early_morning(dt) is expected
+
+
 # ── 휴장일 가드 데코레이터 ──────────────────────────────────────────────────
 
 def test_business_day_only_skips_weekend():

@@ -9,6 +9,7 @@ import pytest
 from src.jongbae.leading_theme import (
     codes_in_leading_themes,
     count_themes,
+    identify_leading_stocks,
     identify_leading_themes,
 )
 
@@ -117,3 +118,59 @@ def test_codes_in_leading_themes_dedupe():
 
 def test_codes_in_leading_themes_empty():
     assert codes_in_leading_themes([]) == []
+
+
+# ── identify_leading_stocks ──────────────────────────────────────────────────
+
+def _snapshot_with_lup(rows: list[tuple[int, str, bool]]) -> pd.DataFrame:
+    """rank, code, is_limit_up 만 채운 미니 스냅샷."""
+    return pd.DataFrame([
+        {
+            "rank": r, "code": c, "name": f"종목{c}",
+            "price": 1000, "prev_close": 770, "daily_return": 30.0,
+            "intraday_high": 1001, "intraday_low": 990,
+            "volume": 1, "trading_value": 1, "is_limit_up": lup,
+        }
+        for r, c, lup in rows
+    ])
+
+
+def test_identify_leading_stocks_first_mover_per_theme():
+    """주도테마 내 rank 가 가장 좋은 상한가 종목 = 주도주."""
+    snap = _snapshot_with_lup([
+        (1, "A", False),
+        (2, "B", True),    # 전기/전선 first-mover
+        (3, "C", True),    # 전기/전선 추가 상한가
+        (5, "D", True),    # 반도체 first-mover
+    ])
+    leading = [
+        {"theme": "전기/전선", "count": 3, "codes": ["A", "B", "C"]},
+        {"theme": "반도체",   "count": 3, "codes": ["D", "E", "F"]},
+    ]
+    leaders = identify_leading_stocks(snap, leading)
+    codes = [l["code"] for l in leaders]
+    assert codes == ["B", "D"]
+    assert leaders[0]["theme"] == "전기/전선"
+
+
+def test_identify_leading_stocks_no_limit_up():
+    snap = _snapshot_with_lup([(1, "A", False), (2, "B", False)])
+    leading = [{"theme": "X", "count": 3, "codes": ["A", "B"]}]
+    assert identify_leading_stocks(snap, leading) == []
+
+
+def test_identify_leading_stocks_dedup_across_themes():
+    """한 종목이 여러 주도테마에 속해도 한 번만 등장."""
+    snap = _snapshot_with_lup([(1, "A", True)])
+    leading = [
+        {"theme": "T1", "count": 3, "codes": ["A"]},
+        {"theme": "T2", "count": 3, "codes": ["A"]},
+    ]
+    leaders = identify_leading_stocks(snap, leading)
+    assert len(leaders) == 1
+    assert leaders[0]["theme"] == "T1"  # 먼저 매칭된 테마
+
+
+def test_identify_leading_stocks_empty_themes():
+    snap = _snapshot_with_lup([(1, "A", True)])
+    assert identify_leading_stocks(snap, []) == []

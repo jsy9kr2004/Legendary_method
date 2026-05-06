@@ -115,3 +115,58 @@ def codes_in_leading_themes(leading_themes: list[dict[str, Any]]) -> list[str]:
                 seen_set.add(code)
                 seen.append(code)
     return seen
+
+
+def identify_leading_stocks(
+    snapshot_df: pd.DataFrame,
+    leading_themes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """주도주 식별 — 주도테마 내 first-mover 상한가 종목.
+
+    정량 정의 (CLAUDE.md):
+        주도주 = 주도테마 내에서 가장 빨리 상한가에 도달한 종목 (first-mover).
+
+    구현 (스냅샷 기준):
+        스냅샷에는 first-mover 시각이 직접 안 찍히므로 'rank 가 가장 높은
+        상한가 종목' 을 first-mover proxy 로 사용. (거래대금 누적이 더 빨리
+        쌓인 종목 = 더 일찍 거래량 폭증 = 더 일찍 상한가 진입)
+
+    Returns:
+        [{"code", "name", "theme", "rank", "price", "daily_return"}, ...]
+        한 테마당 0개 또는 1개. 주도테마 순서로 정렬.
+    """
+    if snapshot_df.empty or not leading_themes:
+        return []
+
+    if "is_limit_up" not in snapshot_df.columns:
+        return []
+
+    lup = snapshot_df[snapshot_df["is_limit_up"]].copy()
+    if lup.empty:
+        return []
+
+    leaders: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+    for theme_info in leading_themes:
+        theme = theme_info["theme"]
+        codes_in_theme = set(theme_info.get("codes", []))
+        # 주도테마 종목 중 상한가 친 것
+        cand = lup[lup["code"].astype(str).isin(codes_in_theme)]
+        if cand.empty:
+            continue
+        # rank 가 가장 좋은(=숫자 작은) = 거래대금 누적 가장 빨리 도달
+        first_mover = cand.sort_values("rank").iloc[0]
+        code = str(first_mover["code"])
+        if code in seen_codes:
+            continue  # 한 종목이 여러 주도테마에 속해도 한 번만
+        seen_codes.add(code)
+        leaders.append({
+            "code": code,
+            "name": str(first_mover.get("name", "")),
+            "theme": theme,
+            "rank": int(first_mover.get("rank", 0)),
+            "price": int(first_mover.get("price", 0)),
+            "daily_return": float(first_mover.get("daily_return", 0.0)),
+        })
+
+    return leaders

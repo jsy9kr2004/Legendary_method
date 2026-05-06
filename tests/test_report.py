@@ -287,11 +287,14 @@ def test_periodic_report_new_limit_up():
 
 def test_early_morning_alert_no_change_returns_none():
     same_themes = [{"theme": "전기/전선", "count": 3, "codes": ["A"]}]
+    same_stocks = [{"code": "A", "name": "X", "theme": "전기/전선",
+                    "rank": 1, "price": 100, "daily_return": 30.0}]
     result = build_early_morning_alert(
         snapshot_df=_make_snapshot(),
         leading_themes=same_themes,
         prev_leading_themes=same_themes,
-        new_limit_up=[],
+        leading_stocks=same_stocks,
+        prev_leading_stocks=same_stocks,
         snapshot_dt=_DT_0910,
     )
     assert result is None
@@ -302,7 +305,8 @@ def test_early_morning_alert_new_theme_triggers():
         snapshot_df=_make_snapshot(),
         leading_themes=[{"theme": "전기/전선", "count": 3, "codes": ["A"]}],
         prev_leading_themes=[],
-        new_limit_up=[],
+        leading_stocks=[],
+        prev_leading_stocks=[],
         snapshot_dt=_DT_0910,
     )
     assert result is not None
@@ -310,17 +314,39 @@ def test_early_morning_alert_new_theme_triggers():
     assert "전기/전선" in result
 
 
-def test_early_morning_alert_new_limit_up_triggers():
-    same = [{"theme": "T", "count": 3, "codes": ["A"]}]
+def test_early_morning_alert_new_leading_stock_triggers():
+    """주도주 신규 진입 시 알림이 발송돼야 한다."""
+    same_themes = [{"theme": "전기/전선", "count": 3, "codes": ["075180"]}]
+    new_leader = [{"code": "075180", "name": "제룡전기", "theme": "전기/전선",
+                   "rank": 1, "price": 91300, "daily_return": 30.0}]
     result = build_early_morning_alert(
         snapshot_df=_make_snapshot(),
-        leading_themes=same,
-        prev_leading_themes=same,
-        new_limit_up=[{"name": "제룡전기", "code": "075180", "daily_return": 30.0}],
+        leading_themes=same_themes,
+        prev_leading_themes=same_themes,
+        leading_stocks=new_leader,
+        prev_leading_stocks=[],
         snapshot_dt=_DT_0910,
     )
     assert result is not None
-    assert "상한가" in result
+    assert "주도주 진입" in result
+    assert "제룡전기" in result
+
+
+def test_early_morning_alert_dropped_leader_triggers():
+    """주도주 이탈도 알림."""
+    same_themes = [{"theme": "전기/전선", "count": 3, "codes": ["075180"]}]
+    leader = [{"code": "075180", "name": "제룡전기", "theme": "전기/전선",
+               "rank": 1, "price": 91300, "daily_return": 30.0}]
+    result = build_early_morning_alert(
+        snapshot_df=_make_snapshot(),
+        leading_themes=same_themes,
+        prev_leading_themes=same_themes,
+        leading_stocks=[],
+        prev_leading_stocks=leader,
+        snapshot_dt=_DT_0910,
+    )
+    assert result is not None
+    assert "주도주 이탈" in result
 
 
 def test_has_significant_change_same_themes():
