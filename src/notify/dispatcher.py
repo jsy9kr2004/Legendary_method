@@ -86,6 +86,8 @@ class Dispatcher:
             self._s.gmail_to,
             subject,
             body,
+            host=self._s.smtp_host,
+            port=self._s.smtp_port,
         )
 
     def email_afterhours(self, report_text: str, report_date: str) -> dict[str, Any]:

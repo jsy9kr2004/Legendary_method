@@ -1,12 +1,11 @@
-"""Gmail SMTP 이메일 발송 모듈.
+"""SMTP 이메일 발송 모듈.
 
 사후 레포트(16:00) 전용. 마크다운 본문을 그대로 plain text로 발송.
 HTML 변환은 v1에서 필요 시 추가.
 
 SMTP 설정:
-    서버: smtp.gmail.com:587 (STARTTLS)
-    인증: Gmail 앱 비밀번호 (2FA 활성화 필수)
-          계정 설정 → 보안 → 앱 비밀번호 발급
+    호스트/포트는 Settings (환경변수) 에서 주입. 기본값은 Gmail (STARTTLS).
+    인증: Gmail 앱 비밀번호 또는 동등한 SMTP 인증 정보.
 
 재시도:
     tenacity 3회, 2~16초 지수 백오프.
@@ -32,8 +31,6 @@ from tenacity import (
     wait_exponential,
 )
 
-_SMTP_HOST = "smtp.gmail.com"
-_SMTP_PORT = 587
 _SMTP_TIMEOUT = 30
 
 
@@ -44,6 +41,8 @@ _SMTP_TIMEOUT = 30
     reraise=True,
 )
 def _send_via_smtp(
+    host: str,
+    port: int,
     user: str,
     password: str,
     to: str,
@@ -60,7 +59,7 @@ def _send_via_smtp(
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     context = ssl.create_default_context()
-    with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=_SMTP_TIMEOUT) as smtp:
+    with smtplib.SMTP(host, port, timeout=_SMTP_TIMEOUT) as smtp:
         smtp.ehlo()
         smtp.starttls(context=context)
         smtp.ehlo()
@@ -74,29 +73,33 @@ def send_email(
     to: str,
     subject: str,
     body: str,
+    host: str = "",
+    port: int = 0,
 ) -> dict[str, Any]:
     """이메일 발송.
 
     Args:
-        user: Gmail 주소 (발신자)
-        password: Gmail 앱 비밀번호
+        user: SMTP 계정 (발신자 주소)
+        password: SMTP 인증용 앱 비밀번호
         to: 수신자 주소
         subject: 제목
         body: 본문 (마크다운 plain text)
+        host: SMTP 호스트 (필수, 빈 문자열이면 발송 스킵)
+        port: SMTP 포트 (필수, 0이면 발송 스킵)
 
     Returns:
         {"ok": True} or {"ok": False, "error": str}
     """
-    if not user or not password or not to:
-        logger.warning("Gmail 설정 미완료 — 이메일 발송 스킵")
+    if not user or not password or not to or not host or port <= 0:
+        logger.warning("SMTP 설정 미완료 — 이메일 발송 스킵")
         return {"ok": False, "error": "설정 미완료"}
 
     try:
-        _send_via_smtp(user, password, to, subject, body)
+        _send_via_smtp(host, port, user, password, to, subject, body)
         logger.info(f"이메일 발송 완료 → {to}  제목: {subject}")
         return {"ok": True}
     except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"Gmail 인증 실패 (앱 비밀번호 확인 필요): {e}")
+        logger.error(f"SMTP 인증 실패 (앱 비밀번호 확인 필요): {e}")
         return {"ok": False, "error": f"인증 실패: {e}"}
     except Exception as e:
         logger.error(f"이메일 발송 실패: {e}")

@@ -28,9 +28,11 @@ def _settings(tmp_path, dry_run: bool = False) -> Settings:
         kis_api_mode="mock",
         telegram_bot_token="TEST_TOKEN",
         telegram_chat_id="12345",
-        gmail_user="test@gmail.com",
+        gmail_user="test@example.com",
         gmail_app_password="app_pw",
         gmail_to="zeta@example.com",
+        smtp_host="smtp.example.com",
+        smtp_port=587,
     )
 
 
@@ -146,7 +148,8 @@ def test_send_error_alert_empty_token():
 def test_send_email_calls_smtp():
     with patch("src.notify.email.smtplib.SMTP") as MockSMTP:
         smtp_instance = MockSMTP.return_value.__enter__.return_value
-        result = send_email("user@gmail.com", "pw", "to@example.com", "제목", "본문")
+        result = send_email("user@example.com", "pw", "to@example.com", "제목", "본문",
+                            host="smtp.example.com", port=587)
     assert result["ok"] is True
     smtp_instance.sendmail.assert_called_once()
 
@@ -155,13 +158,22 @@ def test_send_email_auth_error():
     with patch("src.notify.email.smtplib.SMTP") as MockSMTP:
         instance = MockSMTP.return_value.__enter__.return_value
         instance.login.side_effect = smtplib.SMTPAuthenticationError(535, b"auth failed")
-        result = send_email("user@gmail.com", "wrong_pw", "to@example.com", "제목", "본문")
+        result = send_email("user@example.com", "wrong_pw", "to@example.com", "제목", "본문",
+                            host="smtp.example.com", port=587)
     assert result["ok"] is False
     assert "인증 실패" in result["error"]
 
 
 def test_send_email_empty_settings():
     result = send_email("", "", "", "제목", "본문")
+    assert result["ok"] is False
+
+
+def test_send_email_missing_host_skipped():
+    """host/port 미설정 시 발송 스킵."""
+    with patch("src.notify.email.smtplib.SMTP") as MockSMTP:
+        result = send_email("u@example.com", "pw", "to@example.com", "제목", "본문")
+    MockSMTP.assert_not_called()
     assert result["ok"] is False
 
 
