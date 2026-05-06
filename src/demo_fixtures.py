@@ -122,31 +122,45 @@ def make_daily_ohlcv(target_date: date, lookback_days: int = 260) -> pd.DataFram
         days.sort()
     days = days[-lookback_days:]
 
-    # 과거에도 몇 번 상한가 사례를 삽입해야 historical 통계가 의미있음
-    historical_limit_up_days = [30, 80, 130, 180]  # 약 n일 전 인덱스
+    # 과거에도 충분한 강한 양봉 사례 삽입 (R4(c) n>=5 충족 + Layer 통계 의미있게)
+    # Layer 1 cross-stock pool 이라 10종목 × 6건 = 60건 정도면 충분.
+    historical_limit_up_days = [25, 60, 100, 140, 180, 220]
 
     all_rows = []
     for code, name, market, base_price, _ in DEMO_STOCKS:
         today_idx = len(days) - 1  # 마지막 날 = target_date
 
-        if code == "075180":  # 제룡전기: 상한가 + 과거 사례 삽입
+        if code == "075180":  # 제룡전기: 오늘 상한가 + 과거 다수 사례
             special_return = 0.30
             df_vals = _make_ohlcv_series(base_price, len(days), today_idx, special_return)
-            # 과거 historical 상한가 사례 삽입
             for hist_idx in historical_limit_up_days:
                 if hist_idx < len(days):
                     prev_close = int(df_vals.iloc[hist_idx - 1]["close"])
                     df_vals.at[hist_idx, "close"] = int(prev_close * 1.30)
                     df_vals.at[hist_idx, "high"] = int(prev_close * 1.30)
-                    # 다음날 갭상 삽입 (일부는 갭상, 일부는 갭하)
-                    if hist_idx + 1 < len(days) and hist_idx % 2 == 0:
+                    # 다음날 갭 삽입 (대부분 갭상)
+                    if hist_idx + 1 < len(days) and hist_idx % 3 != 0:
                         df_vals.at[hist_idx + 1, "open"] = int(prev_close * 1.30 * 1.07)
                     elif hist_idx + 1 < len(days):
                         df_vals.at[hist_idx + 1, "open"] = int(prev_close * 1.30 * 0.99)
         elif code in ("001440", "229640", "010120", "267260"):  # 전기/전선 강세
             df_vals = _make_ohlcv_series(base_price, len(days), today_idx, 0.22)
+            # 다른 종목에도 +20%↑ 과거 사례 일부 삽입 (Layer 1 표본 보강)
+            for hist_idx in historical_limit_up_days[:3]:
+                if hist_idx < len(days):
+                    prev_close = int(df_vals.iloc[hist_idx - 1]["close"])
+                    df_vals.at[hist_idx, "close"] = int(prev_close * 1.22)
+                    df_vals.at[hist_idx, "high"] = int(prev_close * 1.25)
+                    if hist_idx + 1 < len(days):
+                        df_vals.at[hist_idx + 1, "open"] = int(prev_close * 1.22 * 1.03)
         else:
             df_vals = _make_ohlcv_series(base_price, len(days), None)
+            # 일반 종목도 가끔 강한 양봉 — Layer 1 표본 보강용
+            for hist_idx in historical_limit_up_days[:2]:
+                if hist_idx < len(days):
+                    prev_close = int(df_vals.iloc[hist_idx - 1]["close"])
+                    df_vals.at[hist_idx, "close"] = int(prev_close * 1.21)
+                    df_vals.at[hist_idx, "high"] = int(prev_close * 1.23)
 
         for i, d in enumerate(days):
             row = df_vals.iloc[i]

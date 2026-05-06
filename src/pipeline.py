@@ -33,6 +33,7 @@ from src.data.storage import read_daily_ohlcv, read_naver_themes
 from src.jongbae.candidates import accepted_candidates, extract_candidates
 from src.jongbae.historical import (
     close_position,
+    has_enough_samples,
     historical_4layer,
     pick_sizing_layer,
 )
@@ -122,6 +123,11 @@ def run_pipeline(
 
         layers = historical_4layer(daily_ohlcv, today_close_pos=cp, today=target_date)
         sizing_layer_name, sizing_stats = pick_sizing_layer(layers)
+
+        # R4 (c): 모든 layer 가 n<5 면 후보 제외 (표본 부족)
+        if not has_enough_samples(sizing_stats):
+            logger.info(f"[파이프라인] {code} R4(c) 표본부족 제외 (n<5)")
+            continue
 
         # 테마 조회
         if not theme_df.empty:

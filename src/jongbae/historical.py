@@ -115,13 +115,20 @@ def _gap_metrics(matched: pd.DataFrame) -> dict[str, Any]:
 
 
 def _filter_lookback(df: pd.DataFrame, today: date, lookback_days: int) -> pd.DataFrame:
-    """today 기준 lookback_days 거래일 이전까지의 데이터만."""
+    """today 기준 약 lookback_days 거래일 이전까지의 데이터만 (cross-stock pool 보존).
+
+    주의:
+        과거 버전에서 `.tail(lookback_days)` 를 적용했는데, 멀티-코드 long-format
+        에서는 이게 마지막 N행만 남겨 대부분의 종목 historical 사례를 잘라버림.
+        cutoff(달력일) 으로만 제한하고 tail 은 적용하지 않는다.
+    """
     if df.empty:
         return df
-    cutoff = today - timedelta(days=int(lookback_days * 1.5))  # 거래일 ~ 달력일 변환
+    # 거래일 → 달력일 환산 (252영업일 ≈ 365 + alpha)
+    cutoff = today - timedelta(days=int(lookback_days * 1.5))
     out = df[df["date"] >= cutoff]
     out = out[out["date"] < today]  # 오늘 데이터 제외 (look-ahead 방지)
-    return out.sort_values("date").tail(lookback_days)
+    return out.sort_values("date")
 
 
 def historical_4layer(
