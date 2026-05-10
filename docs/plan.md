@@ -97,6 +97,38 @@
 
 **완료 기준:** 1주일간 사람 개입 없이 정상 동작.
 
+### Milestone 5.5: 주도섹터/주도주 정의 재정립 (Week 6~7)
+
+**배경:** Sonnet이 만든 "거래대금 30위 ≥3종목" 단일 룰은 대형주(하이닉스/삼전) 편향이 심해 단타 주도주 판별로 부적합. 한국 단타 실무 통설(테마별 상승률 + 시총 대비 회전율 + breadth)에 맞춰 재정립한다. R3, R3'(신설) 참고.
+
+- [ ] **시총 데이터 적재** — KIS mst part2 추가 필드 파싱. `src/data/master.py` 확장. 회전율(거래대금/시총) 계산용 필수
+- [ ] **ETF/ETN/리츠/스팩/펀드 필터** — KIS 종목분류 코드 + 종목명 패턴(`KODEX`/`TIGER`/`KBSTAR`/`ARIRANG` 등) + 코드 패턴(`1XXXXX` 펀드, `5XXXXX` 스팩). `src/data/master.py` `is_tradable_for_jongbae()`. 기존 `100030` 펀드 누락 이슈 같이 해소
+- [ ] **주도섹터 정의 변경** — 단순 "30위 내 ≥3종목" → 테마별 (a) breadth(테마 내 +5%/+10% 종목 수) + (b) 평균 상승률(동일가중) + (c) 회전율 합계 z-score 합산. `src/jongbae/leading_theme.py` `score_themes()`. 임계값/가중치는 운영 튜닝 항목
+- [ ] **주도주 정의 변경** — 주도섹터 내 **회전율 1위** = 주도주. 거래대금 절대값 X (대형주 자동 배제). 상승률/거래대금은 표시만. `identify_early_morning_leaders` 시그니처 변경
+- [ ] **주도주 교체 상태 머신** — `NORMAL` / `TRANSITION` (교체 가능성) / `GRACE` (실제 교체 후 5분 유예). `src/dashboard/state.py`. 임계값 R3' 참고
+- [ ] **plan/jongbae-strategy/data-infra/report-spec/CLAUDE 메타 갱신** ← 본 작업 시작 전 선행
+
+**완료 기준:** 데모 모드(2025-05-04 제룡전기 케이스)에서 새 정의로 주도섹터="전기/전선", 주도주="제룡전기"가 정상 식별. 하이닉스/삼전이 (단타용) 주도주에 안 잡힘.
+
+### Milestone 6: 실시간 모니터링 대시보드 (Week 7~8)
+
+**목표:** 09:00~10:30 평일 자동 운영. 주도주 + 사용자 관심 종목을 1~2초 간격으로 텔레그램에서 실시간 모니터링 (메시지 편집 방식, 푸시 알림은 최초 1회만).
+
+- [ ] **분봉 fetcher** — KIS API `FHKST03010200`. 5분봉/1분봉 거래대금 시계열. `src/data/intraday.py` `fetch_minute_bars()`
+- [ ] **체결강도 fetcher** — KIS API `inquire-ccnl`. 매수체결/매도체결 비율. `fetch_ccnl_strength()`
+- [ ] **호가잔량 fetcher** — KIS API `inquire-asking-price-exp-ccn`. 매수/매도 호가 잔량. `fetch_asking_price()`
+- [ ] **투자자별 순매수 fetcher** — KIS API `inquire-investor`. 외국인/기관/프로그램 순매수. `fetch_investor_flow()`
+- [ ] **거래대금 가속배율 계산** — 현재 5분봉 거래대금 / 직전 30분 평균. `src/jongbae/momentum.py`. 양수→치고 올라옴 / 음수→자금 이탈 동일 인프라
+- [ ] **상태 머신** (M5.5와 공유) — 종목 추가/제거/유예기 카운트다운
+- [ ] **Telegram 양방향 봇** — long polling으로 incoming 메시지 수신. 명령어: `/pause`(자동/수동 전체 토글), `/list`, `/clear`(수동분만), 6자리 숫자(토글). `src/notify/telegram_bot.py`
+- [ ] **메시지 편집 인프라** — `editMessageText`로 종목당 메시지 1개 유지 갱신. 종목 1~2개=2초, 3~5개=3초, 6~10개=5초 동적 간격. `src/notify/telegram.py` 확장
+- [ ] **자동 운영 시간** — 평일 09:00 자동 ON, 10:30 자동 OFF. `/pause` 상태도 매일 자동 ON 리셋. 휴장일 스킵
+- [ ] **장 시간 외 안내** — 시간 외 사용자 입력 시 "장 시간 외입니다" 안내 한 줄
+- [ ] **임계값 설정** — `src/jongbae/config_thresholds.py`. 가속배율/거래대금/회전율비/유예시간. 운영 중 사용자 피드백으로 튜닝
+- [ ] **테스트** — 상태 전이, 명령 파싱, 임계 트리거, rate limit 핸들링
+
+**완료 기준:** 평일 09:00~10:30 동안 주도주 1~2개 자동 모니터링 + 사용자 임의 종목 추가/해제 가능. 알림 폭주 없이 푸시는 신규 종목 진입 시점만.
+
 ---
 
 ## v0 범위 정의 (명시적)
@@ -165,6 +197,11 @@
 - [ ] **KRX 정밀 휴장일 캘린더** — v0 는 weekday 기반. 정밀화는 KIS 인덱스 OHLCV 또는 정적 테이블
 - [ ] **`change_rate` 적재 시 NaN** — 분석 단계에서 `groupby('code')['close'].pct_change()` 로 계산
 - [ ] **모의투자(mock) 일봉 endpoint 동작 검증 미완** — 현재 real 모드로만 검증됨
+- [ ] **morning/afterhours `market_stats` 빈 객체** — KIS 지수(KOSPI/KOSDAQ) 현재가 API 호출 미구현. 현재 `_send_morning`/`_send_afterhours` 가 `market_stats={}` 로 전달
+- [ ] **WICS 섹터 매핑 크롤러** — wiseindex.com 크롤링 (월 1회). M0 미착수 항목
+- [ ] **수정주가 일관성** — daily fetcher `adjusted=True` 일관 사용 검증
+- [ ] **종목 코드 변경(액면분할/합병) 처리** — historical 통계 단절 회피
+- [ ] **테마 매핑 변경 시 historical 재계산** — 네이버 테마 월 1회 갱신 시 사례 변동 영향 분석
 
 ---
 

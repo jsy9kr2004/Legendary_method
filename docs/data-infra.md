@@ -4,14 +4,19 @@
 
 | 데이터 | 소스 | 갱신 주기 | 비용 |
 |---|---|---|---|
-| 일봉 OHLCV | pykrx (네이버 크롤링) | 매일 16:00 | 무료 |
-| 종목 마스터 | pykrx + KRX 공식 | 매일 | 무료 |
+| 일봉 OHLCV | KIS API (M0에서 단일출처화) | 매일 16:00 | KIS 계좌 필요 |
+| 종목 마스터 (코드/이름/시장구분) | KIS mst part1 | 매일 | KIS 계좌 필요 |
+| **시총 / 상장일 / 액면가** (M5.5) | KIS mst part2 | 매일 | KIS 계좌 필요 |
 | WICS 섹터 매핑 | wiseindex.com 크롤링 | 월 1회 | 무료 |
-| 네이버 금융 테마 | 네이버 금융 크롤링 | 월 1회 | 무료 |
-| 장중 거래대금 순위 | KIS API | 11:00, 13:00, 14:00, 14:50 | KIS 계좌 필요 |
-| 장중 종목 시세 | KIS API | 4시점 + 상한가 진입 폴링 | KIS 계좌 필요 |
+| 네이버 금융 테마 | 네이버 금융 크롤링 | 월 1회 (7일 신선도 체크) | 무료 |
+| 장중 거래대금 순위 | KIS API `FHPST01710000` | 정기 4회 + 09:00~10:30 1~2초 | KIS 계좌 필요 |
+| 장중 종목 시세 | KIS API `FHKST01010100` | 정기 4회 + 상한가 폴링 + M6 모니터링 | KIS 계좌 필요 |
+| **분봉 시계열** (M6) | KIS API `FHKST03010200` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **체결강도** (M6) | KIS API `inquire-ccnl` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **호가잔량** (M6) | KIS API `inquire-asking-price-exp-ccn` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **투자자별 순매수** (M6) | KIS API `inquire-investor` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
 | 시간외 단일가 | KIS API | 16:00~18:00 폴링 | KIS 계좌 필요 |
-| KRX 휴장일 | pykrx 자체 캘린더 | 연 1회 | 무료 |
+| KRX 휴장일 | weekday 기반 (v0) → 정밀 (v1 TODO) | 연 1회 | 무료 |
 
 ## API 한계 — 알아두기
 
@@ -107,14 +112,36 @@ CREATE TABLE stock_themes (
 ### 장중
 
 ```
-11:00 → KIS API: 거래대금 30위 + 각 종목 시세 → 스냅샷
-13:00 → 동일
-14:00 → 동일
-14:50 → 동일 (★ 가장 중요)
+09:00~10:30  → 모니터링 worker (M6, 평일만 자동 ON):
+               주도주 + 사용자 추가 종목에 대해 1~2초 간격으로
+                 - 분봉 거래대금 (FHKST03010200)
+                 - 체결강도 (inquire-ccnl)
+                 - 호가잔량 (inquire-asking-price-exp-ccn)
+                 - 투자자별 순매수 (inquire-investor)
+               수집 → editMessageText로 텔레그램 메시지 갱신.
+               전체 거래대금 30위 (R3 v1: 50위) 갱신은 30~60초 주기.
 
-장중 상시 → 주도테마 후보 종목 폴링 (1~5분 간격)
-            상한가 진입 감지 시 즉시 알림 트리거
+11:00         → 거래대금 50위 + 각 종목 시세 → 스냅샷 (정기 1차)
+13:00         → 동일 (정기 2차)
+14:00         → 동일 (정기 3차)
+14:50         → 동일 + 결정 레포트 (★ 가장 중요)
+
+장중 상시     → 주도테마 후보 종목 폴링 (1~5분 간격)
+                상한가 진입 감지 시 즉시 알림 트리거
 ```
+
+### KIS API 호출수 예산 (M6 운영 시)
+
+KIS rate limit: real **초당 20콜**. 모니터링 worker 호출수:
+
+| 동시 모니터링 종목 수 | 갱신 간격 | 종목당 4지표 | 초당 호출수 | 한계 대비 |
+|---|---|---|---|---|
+| 1~2 | 2초 | 4 | 4~8 | 여유 |
+| 3~5 | 3초 | 4 | 4~7 | 여유 |
+| 6~10 | 5초 | 4 | 5~8 | 여유 |
+| 11+ | (거부) | — | — | 보호 |
+
+→ **종목 10개 이내** 운영 정책으로 rate limit 보호. 거래대금 50위 갱신과 충돌 없도록 worker 분리.
 
 ### 월 1회 (테마/섹터 갱신)
 
@@ -152,11 +179,16 @@ class KISRateLimiter:
 
 ### 주요 엔드포인트
 
-| 용도 | TR ID | 비고 |
+| 용도 | TR ID / endpoint | 비고 |
 |---|---|---|
-| 거래대금 상위 | FHPST01710000 | 30위 한 번에 |
+| 거래대금 상위 | FHPST01710000 | 30~50위 한 번에 |
 | 주식 현재가 | FHKST01010100 | 종목별 |
-| 일봉 시세 | FHKST03010100 | 백업용 (pykrx 우선) |
+| 일봉 시세 | FHKST03010100 | 일봉 적재 (M0 단일출처) |
+| **분봉 시세** (M6) | FHKST03010200 | 종목별 1/3/5/10/15/30/60분봉 |
+| **체결강도** (M6) | `inquire-ccnl` | 매수/매도 체결 비율 |
+| **호가잔량** (M6) | `inquire-asking-price-exp-ccn` | 매수/매도 10단계 호가 잔량 |
+| **투자자별 순매수** (M6) | `inquire-investor` | 외국인/기관/프로그램 순매수 |
+| 종목 마스터 (mst) | mst zip download | part1 기본정보 + part2 시총/상장일 |
 
 ## pykrx 사용 가이드
 
@@ -275,7 +307,29 @@ https://www.wiseindex.com/Index/IndexList?ftype=WICS
 |---|---|---|
 | 일봉 OHLCV (전종목) | ~1MB | ~250MB |
 | 장중 스냅샷 (4회) | ~50KB | ~12MB |
+| 모니터링 1초 로그 (M6, 09:00~10:30, 종목 5개 평균) | ~2MB | ~500MB |
 | 레포트 마크다운 | ~30KB | ~8MB |
 | 메타 데이터 | 0 (월 1회) | ~5MB |
 
-→ 연간 약 300MB. 5년 누적해도 1.5GB. 디스크 부담 거의 없음.
+→ M0~M5 기준 연간 약 300MB. M6 모니터링 로그 추가 시 연간 ~800MB. 5년 4GB 수준. 디스크 부담 여전히 작음. 단 1초 로그는 압축/롤오버 정책 필요.
+
+## ETF/펀드/리츠 필터링 (M5.5)
+
+R2 강화 — 단타 유니버스에서 다음을 제외:
+
+```
+1. 코드 패턴 차단:
+   - 1XXXXX  → 펀드/리츠 다수
+   - 5XXXXX  → 스팩
+   - 9XXXXX  → 일부 ETF/ETN
+2. 종목명 prefix 차단:
+   KODEX, TIGER, KBSTAR, ARIRANG, KINDEX, HANARO, RISE,
+   ACE, SOL, WOORI, PLUS, KOSEF, ITF, SMART, FOCUS, PARAMOUNT,
+   TIMEFOLIO, TREX, TRUSTON, MASTER, BNK, HK, MAESTRO, KOACT,
+   FREEDOM, MIRAE, NH-Amundi, 신한, 흥국, 한국투자
+3. KIS 종목분류 코드 활용 (mst part1 그룹코드):
+   'EF' (ETF), 'EN' (ETN), 'EW' (ELW), 'RT' (REIT) 등 차단
+4. 기존 보통주 'S' prefix 필터 + 위 컷의 AND 조합
+```
+
+→ `src/data/master.py` `is_tradable_for_jongbae(code, name, group_code) -> bool` 단일 진입점.
