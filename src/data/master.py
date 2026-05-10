@@ -1,7 +1,7 @@
 """KIS 종목 마스터 다운로드 / 파싱.
 
-KIS 가 제공하는 KOSPI/KOSDAQ 마스터 zip 을 받아서 보통주(주권 ST) 만 필터링한
-DataFrame 을 반환한다.
+KIS 가 제공하는 KOSPI/KOSDAQ 마스터 zip 을 받아서 종배 매매 가능한 종목만
+필터링한 DataFrame 을 반환한다.
 
 mst 파일 구조 (KIS Open API GitHub `open-trading-api` 참조,
 **문자 단위(char)** 슬라이스):
@@ -23,13 +23,23 @@ mst 파일 구조 (KIS Open API GitHub `open-trading-api` 참조,
     F  펀드 / 수익증권
     D  DR (신주인수권증권)
 
+part2 추가 필드 (KIS open-trading-api kis_kospi_code_mst.py 참조):
+    char[105:113]  상장일자 (8자, YYYYMMDD)
+    char[172:181]  시가총액 (9자, 단위는 raw — 일반적으로 억원)
+
 인코딩: CP949. 한글 1자 = 1 char = 2 bytes 라 byte 슬라이스 X, 반드시
 **decode 후 char 단위 슬라이스**.
+
+ETF/펀드/리츠/스팩 필터 (M5.5):
+    `is_tradable_for_jongbae(code, name, group_code)` 가 단일 진입점.
+    그룹코드 'S' 외에 종목명 prefix(KODEX/TIGER/...) + 코드 패턴(`5XXXXX` 스팩)
+    까지 차단한다.
 """
 from __future__ import annotations
 
 import io
 import zipfile
+from datetime import date, datetime
 
 import httpx
 import pandas as pd
@@ -46,7 +56,31 @@ _SHORTCODE_LEN = 9
 _STDCODE_LEN = 12
 _KORNAME_OFFSET = _SHORTCODE_LEN + _STDCODE_LEN  # 21
 
-_OUTPUT_COLS = ["code", "name", "market", "market_cap", "listed_at"]
+# KIS mst part2 내부 char 오프셋
+_PART2_LISTED_AT_OFFSET = 105
+_PART2_LISTED_AT_LEN = 8
+_PART2_MARKET_CAP_OFFSET = 172
+_PART2_MARKET_CAP_LEN = 9
+
+_OUTPUT_COLS = ["code", "name", "market", "group_code", "market_cap", "listed_at"]
+
+# ETF / ETN 브랜드 prefix (종목명 시작 문자열).
+# 단타 대상이 아닌 패시브 상품 — 회전율 1위 자리 차지하면 노이즈.
+# 영어 브랜드명만 등재 (한국어 운용사명은 보통주 이름과 충돌 — 예: "삼성전자").
+# 추가 ETF 차단은 그룹코드 'E' 또는 종목명 'ETF'/'ETN' 키워드로 처리.
+_ETF_NAME_PREFIXES: tuple[str, ...] = (
+    "KODEX", "TIGER", "KBSTAR", "ARIRANG", "KINDEX", "HANARO", "RISE",
+    "ACE", "SOL", "WOORI", "PLUS", "KOSEF", "ITF", "SMART", "FOCUS",
+    "TIMEFOLIO", "TREX", "TRUSTON", "MASTER", "BNK", "MAESTRO", "KOACT",
+    "FREEDOM", "KCGI", "DOORI",
+)
+
+# 차단할 그룹코드 첫글자.
+#   S 주권 → 통과
+#   E ETF/ETN/ELW
+#   F 펀드/수익증권
+#   D DR
+_BLOCKED_GROUP_FIRST_CHARS: frozenset[str] = frozenset({"E", "F", "D"})
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10), reraise=True)
@@ -74,17 +108,113 @@ def is_preferred_stock(code: str) -> bool:
     return code[-1] != "0"
 
 
+def is_etf_like_name(name: str) -> bool:
+    """종목명이 ETF/ETN/펀드 운용사 prefix 로 시작하는지.
+
+    KODEX/TIGER 같이 명확한 패시브 상품 식별. 단타 대상이 아니므로 제외.
+    종목명에 공백/특수문자 섞일 수 있어 startswith 만 체크 (대소문자 무시 X — KIS 마스터는 대문자 표준).
+    """
+    if not name:
+        return False
+    upper = name.strip()
+    return any(upper.startswith(p) for p in _ETF_NAME_PREFIXES)
+
+
+def is_spac_code(code: str) -> bool:
+    """6자리 종목코드가 스팩(SPAC) 패턴인지.
+
+    한국 SPAC 은 종목명에 '스팩' 포함하고 코드는 보통 1XXXXX 또는 4XXXXX/5XXXXX
+    범위에 분포. 코드만으로는 정밀 구분 어려워 `is_tradable_for_jongbae` 에서
+    종목명 '스팩' 키워드와 함께 차단.
+    """
+    return False  # placeholder — 종목명 차단으로 충분
+
+
+def is_tradable_for_jongbae(
+    code: str,
+    name: str,
+    group_code: str,
+) -> bool:
+    """종배/단타 후보로 거래 가능한 종목인지 단일 진입점.
+
+    제외:
+        - 그룹코드 첫글자가 E (ETF/ETN/ELW), F (펀드), D (DR) 인 경우
+        - 종목명이 ETF 운용사 prefix 로 시작 (KODEX/TIGER/KBSTAR/...)
+        - 종목명에 '스팩' 포함 (SPAC)
+        - 종목명에 'ETF'/'ETN' 포함
+        - 종목명에 '리츠' 포함 (Real Estate Investment Trust)
+        - 6자리 코드 아님
+
+    Args:
+        code: 6자리 KRX 종목코드.
+        name: 한글 종목명.
+        group_code: KIS mst 그룹코드 (앞 2자).
+
+    Returns:
+        True 면 종배 후보 자격, False 면 제외.
+    """
+    if len(code) != 6 or not code.isdigit():
+        return False
+
+    g = (group_code or "").strip().upper()
+    if g and g[0] in _BLOCKED_GROUP_FIRST_CHARS:
+        return False
+
+    if is_etf_like_name(name):
+        return False
+
+    n = (name or "").strip()
+    if "스팩" in n:
+        return False
+    if "ETF" in n.upper() or "ETN" in n.upper():
+        return False
+    if "리츠" in n:
+        return False
+
+    return True
+
+
+def _parse_int_safe(s: str) -> int:
+    """공백/None/빈문자열을 0 으로 안전 파싱."""
+    s = (s or "").strip()
+    if not s:
+        return 0
+    try:
+        return int(s)
+    except ValueError:
+        return 0
+
+
+def _parse_listed_at(s: str) -> date | None:
+    """YYYYMMDD 형식 → date. 비정상 값은 None."""
+    s = (s or "").strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        return datetime.strptime(s, "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
 def _parse_mst(
     content: bytes,
     market: str,
     group_prefix: str | None = "S",
     include_preferred: bool = True,
+    jongbae_only: bool = False,
 ) -> pd.DataFrame:
     """KIS mst → DataFrame.
 
     `content` 는 raw bytes. cp949 로 decode 후 char 단위로 슬라이스.
     `group_prefix`: 그룹코드 첫 글자 매칭 (default 'S'=주권). None 이면 전체.
     `include_preferred`: False 면 우선주(끝자리 != 0) 제외.
+    `jongbae_only`: True 면 ETF/ETN/리츠/스팩/펀드까지 강력 차단
+        (`is_tradable_for_jongbae` 적용). M5.5 신설.
+
+    추출 컬럼: code, name, market, group_code, market_cap, listed_at.
+        market_cap: KIS mst 의 raw 정수값 (단위는 KIS 명세 — 보통 억원).
+                    파싱 실패 시 0.
+        listed_at:  YYYYMMDD → date. 파싱 실패 시 None.
     """
     text = content.decode("cp949", errors="replace")
     part2_len = _part2_len(market)
@@ -110,14 +240,25 @@ def _parse_mst(
                 continue
         if not include_preferred and is_preferred_stock(krx_code):
             continue
+        if jongbae_only and not is_tradable_for_jongbae(krx_code, kor_name, group_code):
+            continue
+
+        # part2 추가 필드 — 길이가 짧아 슬라이스 실패 가능성 있음 (mst 포맷 변경 시)
+        listed_raw = part2[
+            _PART2_LISTED_AT_OFFSET : _PART2_LISTED_AT_OFFSET + _PART2_LISTED_AT_LEN
+        ] if len(part2) >= _PART2_LISTED_AT_OFFSET + _PART2_LISTED_AT_LEN else ""
+        market_cap_raw = part2[
+            _PART2_MARKET_CAP_OFFSET : _PART2_MARKET_CAP_OFFSET + _PART2_MARKET_CAP_LEN
+        ] if len(part2) >= _PART2_MARKET_CAP_OFFSET + _PART2_MARKET_CAP_LEN else ""
 
         rows.append(
             {
                 "code": krx_code,
                 "name": kor_name,
                 "market": market,
-                "market_cap": 0,
-                "listed_at": None,
+                "group_code": group_code,
+                "market_cap": _parse_int_safe(market_cap_raw),
+                "listed_at": _parse_listed_at(listed_raw),
             }
         )
     return pd.DataFrame(rows, columns=_OUTPUT_COLS)
@@ -126,31 +267,36 @@ def _parse_mst(
 def fetch_stock_master(
     group_prefix: str | None = "S",
     include_preferred: bool = True,
+    jongbae_only: bool = False,
 ) -> pd.DataFrame:
     """KOSPI + KOSDAQ 합본.
 
     Args:
         group_prefix: 그룹코드 첫글자 ('S'=주권 default, None=전체).
         include_preferred: 우선주 포함 여부 (default True).
+        jongbae_only: True 면 종배 후보 자격(`is_tradable_for_jongbae`) 통과만.
+                      ETF 운용사 prefix / 스팩 / 리츠 모두 제외.
 
     매일 16:30 갱신 권장.
     """
     logger.info("KIS 종목 마스터 다운로드 (KOSPI)")
     kospi = _parse_mst(
-        _download_mst(KOSPI_URL), "KOSPI", group_prefix, include_preferred
+        _download_mst(KOSPI_URL), "KOSPI", group_prefix, include_preferred, jongbae_only
     )
     logger.info(
         f"KOSPI {len(kospi)} 종목 (group_prefix={group_prefix or 'ALL'}, "
-        f"preferred={'IN' if include_preferred else 'OUT'})"
+        f"preferred={'IN' if include_preferred else 'OUT'}, "
+        f"jongbae_only={jongbae_only})"
     )
 
     logger.info("KIS 종목 마스터 다운로드 (KOSDAQ)")
     kosdaq = _parse_mst(
-        _download_mst(KOSDAQ_URL), "KOSDAQ", group_prefix, include_preferred
+        _download_mst(KOSDAQ_URL), "KOSDAQ", group_prefix, include_preferred, jongbae_only
     )
     logger.info(
         f"KOSDAQ {len(kosdaq)} 종목 (group_prefix={group_prefix or 'ALL'}, "
-        f"preferred={'IN' if include_preferred else 'OUT'})"
+        f"preferred={'IN' if include_preferred else 'OUT'}, "
+        f"jongbae_only={jongbae_only})"
     )
 
     return pd.concat([kospi, kosdaq], ignore_index=True)

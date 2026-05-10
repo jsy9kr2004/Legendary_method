@@ -114,7 +114,7 @@ def test_parse_mst_skips_short_lines():
 
 def test_parse_mst_columns_match_schema():
     df = master._parse_mst(_make_mst_line("005930", "삼성전자"), "KOSPI")
-    assert list(df.columns) == ["code", "name", "market", "market_cap", "listed_at"]
+    assert list(df.columns) == ["code", "name", "market", "group_code", "market_cap", "listed_at"]
 
 
 def test_parse_mst_handles_cr_lf():
@@ -125,6 +125,79 @@ def test_parse_mst_handles_cr_lf():
     df = master._parse_mst(line_crlf, "KOSPI")
     assert len(df) == 1
     assert df.iloc[0]["code"] == "005930"
+
+
+def test_is_etf_like_name():
+    assert master.is_etf_like_name("KODEX 200") is True
+    assert master.is_etf_like_name("TIGER 미국S&P500") is True
+    assert master.is_etf_like_name("KBSTAR 게임테마") is True
+    assert master.is_etf_like_name("ARIRANG 고배당") is True
+    assert master.is_etf_like_name("삼성전자") is False
+    assert master.is_etf_like_name("제룡전기") is False
+    assert master.is_etf_like_name("") is False
+
+
+def test_is_tradable_for_jongbae_basic():
+    assert master.is_tradable_for_jongbae("005930", "삼성전자", "ST") is True
+    assert master.is_tradable_for_jongbae("091990", "셀트리온제약", "S") is True
+
+
+def test_is_tradable_for_jongbae_blocks_etf_group():
+    assert master.is_tradable_for_jongbae("100030", "한투ETF", "EF") is False
+    assert master.is_tradable_for_jongbae("123456", "어떤ETN", "EN") is False
+    assert master.is_tradable_for_jongbae("111111", "어떤펀드", "FU") is False
+
+
+def test_is_tradable_for_jongbae_blocks_etf_name():
+    assert master.is_tradable_for_jongbae("123456", "KODEX 200", "ST") is False
+    assert master.is_tradable_for_jongbae("123456", "TIGER 헬스케어", "ST") is False
+    assert master.is_tradable_for_jongbae("123456", "KBSTAR 게임", "ST") is False
+
+
+def test_is_tradable_for_jongbae_blocks_spac_and_reit():
+    assert master.is_tradable_for_jongbae("123456", "어떤스팩제3호", "ST") is False
+    assert master.is_tradable_for_jongbae("123456", "신한알파리츠", "ST") is False
+    assert master.is_tradable_for_jongbae("123456", "어떤것 ETF", "ST") is False
+    assert master.is_tradable_for_jongbae("123456", "어떤것 ETN", "ST") is False
+
+
+def test_is_tradable_for_jongbae_invalid_code():
+    assert master.is_tradable_for_jongbae("12345", "삼성전자", "ST") is False
+    assert master.is_tradable_for_jongbae("ABCDEF", "삼성전자", "ST") is False
+
+
+def test_parse_mst_jongbae_only_excludes_etf_name():
+    """그룹코드는 'S' 지만 종목명이 KODEX 인 경우 jongbae_only 로 제외 (실제론 드뭄)."""
+    content = (
+        _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
+        + _make_mst_line("123456", "KODEX200", "KOSPI", "ST")
+    )
+    df = master._parse_mst(content, "KOSPI", jongbae_only=True)
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "005930"
+
+
+def test_parse_mst_jongbae_only_keeps_normal_stocks():
+    content = _make_mst_line("005930", "삼성전자", "KOSPI", "ST")
+    df = master._parse_mst(content, "KOSPI", jongbae_only=True)
+    assert len(df) == 1
+
+
+def test_parse_int_safe():
+    assert master._parse_int_safe("12345") == 12345
+    assert master._parse_int_safe("  12345  ") == 12345
+    assert master._parse_int_safe("") == 0
+    assert master._parse_int_safe("abc") == 0
+    assert master._parse_int_safe(None) == 0  # type: ignore
+
+
+def test_parse_listed_at():
+    from datetime import date
+    assert master._parse_listed_at("19980101") == date(1998, 1, 1)
+    assert master._parse_listed_at("20240315") == date(2024, 3, 15)
+    assert master._parse_listed_at("") is None
+    assert master._parse_listed_at("99999999") is None
+    assert master._parse_listed_at("abcd1234") is None
 
 
 def test_fetch_stock_master_concatenates_markets():

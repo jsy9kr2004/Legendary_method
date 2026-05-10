@@ -176,58 +176,71 @@ def test_identify_leading_stocks_empty_themes():
     assert identify_leading_stocks(snap, []) == []
 
 
-# ── identify_early_morning_leaders ───────────────────────────────────────────
+# ── identify_early_morning_leaders (M5.5: 회전율 1위 정의) ────────────────────
 
 from src.jongbae.leading_theme import identify_early_morning_leaders
 
 
-def _snap(rows: list[tuple[int, str, float, bool]]) -> pd.DataFrame:
-    """rank, code, daily_return, is_limit_up."""
+def _snap_em(
+    rows: list[tuple[int, str, float, bool, float]],
+) -> pd.DataFrame:
+    """rank, code, daily_return, is_limit_up, turnover(%)."""
     return pd.DataFrame([
         {"rank": r, "code": c, "name": f"종목{c}",
          "price": 1000, "prev_close": 800, "daily_return": ret,
          "intraday_high": 1100, "intraday_low": 900,
-         "volume": 1, "trading_value": 1, "is_limit_up": lup}
-        for r, c, ret, lup in rows
+         "volume": 1000, "trading_value": int(to * 1e10), "is_limit_up": lup,
+         "market_cap": 1000, "turnover": to}
+        for r, c, ret, lup, to in rows
     ])
 
 
-def test_em_leaders_volume_and_return_separately():
-    """거래대금 1위와 상승률 1위가 다르면 둘 다 주도주."""
-    snap = _snap([
-        (1, "A", 5.0,  False),   # 거래대금 1위, 상승률 낮음
-        (2, "B", 25.0, False),   # 거래대금 2위, 상승률 1위
-        (3, "C", 10.0, False),
-        (4, "D", 15.0, False),
+def test_em_leaders_picks_top_turnover():
+    """주도섹터 내 회전율 1위가 주도주."""
+    snap = _snap_em([
+        (1, "A", 5.0,  False, 1.0),    # 거래대금 1위지만 회전율 낮음 (대형주 패턴)
+        (2, "B", 10.0, False, 15.0),   # 회전율 최고 → 주도주
+        (3, "C", 8.0,  False, 8.0),
     ])
-    leading = [{"theme": "T", "count": 3, "codes": ["A", "B", "C", "D"]}]
+    leading = [{"theme": "T", "count": 3, "codes": ["A", "B", "C"]}]
     leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
-    codes = sorted([l["code"] for l in leaders])
-    assert codes == ["A", "B"]
-    a = next(l for l in leaders if l["code"] == "A")
-    b = next(l for l in leaders if l["code"] == "B")
-    assert a["criterion"] == "volume"
-    assert b["criterion"] == "return"
+    assert [l["code"] for l in leaders] == ["B"]
 
 
-def test_em_leaders_both_criteria():
-    """거래대금 + 상승률 1위가 동일 종목이면 criterion='both'."""
-    snap = _snap([
-        (1, "A", 28.0, False),   # 둘 다 1위
-        (2, "B", 5.0,  False),
+def test_em_leaders_top_per_theme_2():
+    """top_per_theme=2 면 회전율 상위 2개."""
+    snap = _snap_em([
+        (1, "A", 5.0,  False, 1.0),
+        (2, "B", 10.0, False, 15.0),
+        (3, "C", 8.0,  False, 8.0),
+        (4, "D", 12.0, False, 22.0),
     ])
-    leading = [{"theme": "T", "count": 3, "codes": ["A", "B"]}]
+    leading = [{"theme": "T", "count": 4, "codes": ["A", "B", "C", "D"]}]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=2)
+    assert sorted([l["code"] for l in leaders]) == ["B", "D"]
+
+
+def test_em_leaders_excludes_megacap_by_turnover():
+    """대형주(거래대금 1위 + 시총 거대) 시뮬: 회전율 작아서 자연 누락."""
+    snap = _snap_em([
+        (1, "HYNIX",    2.0,  False, 0.4),
+        (2, "SAMSUNG",  1.5,  False, 0.3),
+        (3, "JEPRYUNG", 30.0, True,  18.0),
+    ])
+    leading = [{"theme": "T", "count": 3, "codes": ["HYNIX", "SAMSUNG", "JEPRYUNG"]}]
     leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
-    a = next(l for l in leaders if l["code"] == "A")
-    assert a["criterion"] == "both"
+    assert [l["code"] for l in leaders] == ["JEPRYUNG"]
 
 
 def test_em_leaders_multi_theme_stock_dedup():
-    """한 종목이 여러 주도섹터에 속하면 themes 리스트에 합쳐서 한 번만."""
-    snap = _snap([(1, "A", 25.0, False), (2, "B", 20.0, False), (3, "C", 15.0, False)])
+    """한 종목이 여러 주도섹터에 속하면 themes 리스트 합쳐서 한 번만."""
+    snap = _snap_em([
+        (1, "A", 25.0, False, 12.0),
+        (2, "B", 20.0, False, 8.0),
+    ])
     leading = [
-        {"theme": "T1", "count": 3, "codes": ["A", "B", "C"]},
-        {"theme": "T2", "count": 3, "codes": ["A", "B"]},
+        {"theme": "T1", "count": 3, "codes": ["A", "B"]},
+        {"theme": "T2", "count": 3, "codes": ["A"]},
     ]
     leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
     a_entries = [l for l in leaders if l["code"] == "A"]
@@ -235,40 +248,164 @@ def test_em_leaders_multi_theme_stock_dedup():
     assert sorted(a_entries[0]["themes"]) == ["T1", "T2"]
 
 
-def test_em_leaders_criterion_promotion_across_themes():
-    """T1 에선 volume 만, T2 에선 return 만 → 통합 criterion='both'.
-
-    설계:
-        X: rank 5, return 10%
-        Y: rank 8, return 30%   (T1 에서 X 보다 rank 크고 return 높음)
-        Z: rank 3, return 5%    (T2 에서 X 보다 rank 작고 return 낮음)
-        T1 = [X, Y]: X 는 volume top, Y 는 return top → X criterion='volume'
-        T2 = [X, Z]: Z 는 volume top, X 는 return top → X criterion='return'
-        → X 가 두 테마 통합 시 'both' 로 격상되어야 함
-    """
-    snap = _snap([
-        (3, "Z", 5.0,  False),
-        (5, "X", 10.0, False),
-        (8, "Y", 30.0, False),
-    ])
-    leading = [
-        {"theme": "T1", "count": 3, "codes": ["X", "Y"]},
-        {"theme": "T2", "count": 3, "codes": ["X", "Z"]},
-    ]
-    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
-    x = next(l for l in leaders if l["code"] == "X")
-    assert x["criterion"] == "both"
-    assert sorted(x["themes"]) == ["T1", "T2"]
-
-
 def test_em_leaders_includes_limit_up_flag():
-    snap = _snap([(1, "A", 30.0, True), (2, "B", 25.0, False)])
+    snap = _snap_em([
+        (1, "A", 30.0, True,  18.0),
+        (2, "B", 25.0, False, 8.0),
+    ])
     leading = [{"theme": "T", "count": 3, "codes": ["A", "B"]}]
     leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
     a = next(l for l in leaders if l["code"] == "A")
     assert a["is_limit_up"] is True
+    assert a["turnover"] == 18.0
+
+
+def test_em_leaders_fallback_to_trading_value_when_no_turnover():
+    """turnover 컬럼 없으면 거래대금 절대값으로 fallback."""
+    snap = pd.DataFrame([
+        {"rank": 1, "code": "A", "name": "A",
+         "price": 1000, "prev_close": 800, "daily_return": 5.0,
+         "intraday_high": 1100, "intraday_low": 900,
+         "volume": 1000, "trading_value": 1000, "is_limit_up": False},
+        {"rank": 2, "code": "B", "name": "B",
+         "price": 1000, "prev_close": 800, "daily_return": 25.0,
+         "intraday_high": 1100, "intraday_low": 900,
+         "volume": 1000, "trading_value": 9999, "is_limit_up": False},
+    ])
+    leading = [{"theme": "T", "count": 2, "codes": ["A", "B"]}]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
+    assert [l["code"] for l in leaders] == ["B"]
+
+
+def test_em_leaders_sorted_by_turnover_desc():
+    snap = _snap_em([
+        (1, "A", 5.0, False, 5.0),
+        (2, "B", 8.0, False, 18.0),
+        (3, "C", 6.0, False, 11.0),
+    ])
+    leading = [{"theme": "T", "count": 3, "codes": ["A", "B", "C"]}]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=3)
+    assert [l["code"] for l in leaders] == ["B", "C", "A"]
 
 
 def test_em_leaders_empty_inputs():
-    assert identify_early_morning_leaders(_snap([]), [{"theme": "T", "count": 3, "codes": ["A"]}]) == []
-    assert identify_early_morning_leaders(_snap([(1, "A", 10.0, False)]), []) == []
+    empty_snap = pd.DataFrame(columns=[
+        "rank", "code", "name", "price", "prev_close", "daily_return",
+        "intraday_high", "intraday_low", "volume", "trading_value",
+        "is_limit_up", "market_cap", "turnover",
+    ])
+    assert identify_early_morning_leaders(empty_snap, [{"theme": "T", "count": 3, "codes": ["A"]}]) == []
+    snap = _snap_em([(1, "A", 10.0, False, 5.0)])
+    assert identify_early_morning_leaders(snap, []) == []
+
+
+# ── score_leading_sectors (M5.5 v1) ───────────────────────────────────────────
+
+from src.jongbae.leading_theme import score_leading_sectors
+
+
+def _full_snap(
+    rows: list[tuple[int, str, float, float, int]],
+) -> pd.DataFrame:
+    """rank, code, daily_return, turnover, market_cap."""
+    return pd.DataFrame([
+        {"rank": r, "code": c, "name": f"종목{c}",
+         "price": 1000, "prev_close": 800, "daily_return": ret,
+         "intraday_high": 1100, "intraday_low": 900,
+         "volume": 1000, "trading_value": int(to * mc * 1e8 / 100),
+         "is_limit_up": False, "market_cap": mc, "turnover": to}
+        for r, c, ret, to, mc in rows
+    ])
+
+
+def _theme_map(rows: list[tuple[str, str]]) -> pd.DataFrame:
+    return pd.DataFrame([{"code": c, "theme": t} for c, t in rows])
+
+
+def test_score_sectors_picks_higher_breadth_and_return():
+    """T1: breadth 큼 + 평균상승률 큼 + 회전율 큼 → 1위."""
+    snap = _full_snap([
+        (1, "A", 20.0, 15.0, 1000),
+        (2, "B", 18.0, 12.0, 1000),
+        (3, "C", 22.0, 18.0, 1000),
+        (4, "D",  3.0,  1.0, 1000),
+        (5, "E",  2.0,  0.8, 1000),
+        (6, "F",  4.0,  1.5, 1000),
+    ])
+    mapping = _theme_map([
+        ("A", "T1"), ("B", "T1"), ("C", "T1"),
+        ("D", "T2"), ("E", "T2"), ("F", "T2"),
+    ])
+    leading = score_leading_sectors(snap, mapping, top_n=10, sector_count=2)
+    assert [l["theme"] for l in leading] == ["T1", "T2"]
+    assert leading[0]["score"] > leading[1]["score"]
+
+
+def test_score_sectors_min_member_count():
+    """구성종목 < 3 인 테마는 후보 X."""
+    snap = _full_snap([
+        (1, "A", 20.0, 15.0, 1000),
+        (2, "B", 18.0, 12.0, 1000),
+        (3, "C", 22.0, 18.0, 1000),
+        (4, "D", 25.0, 30.0, 1000),  # T2 단일 종목
+    ])
+    mapping = _theme_map([
+        ("A", "T1"), ("B", "T1"), ("C", "T1"),
+        ("D", "T2"),
+    ])
+    leading = score_leading_sectors(snap, mapping, top_n=10, sector_count=5)
+    assert [l["theme"] for l in leading] == ["T1"]
+
+
+def test_score_sectors_breadth_counts_above_threshold():
+    """breadth = 테마 내 daily_return >= 5% 종목 수."""
+    snap = _full_snap([
+        (1, "A", 10.0, 5.0, 1000),
+        (2, "B",  3.0, 4.0, 1000),  # 5% 미만
+        (3, "C",  8.0, 6.0, 1000),
+        (4, "D",  2.0, 3.0, 1000),  # 5% 미만
+    ])
+    mapping = _theme_map([
+        ("A", "T"), ("B", "T"), ("C", "T"), ("D", "T"),
+    ])
+    leading = score_leading_sectors(snap, mapping, top_n=10, sector_count=1)
+    assert leading[0]["breadth"] == 2  # A, C 만
+    assert leading[0]["member_count"] == 4
+
+
+def test_score_sectors_codes_ordered_by_rank():
+    snap = _full_snap([
+        (5, "C", 8.0, 6.0, 1000),
+        (1, "A", 10.0, 5.0, 1000),
+        (3, "B", 9.0, 7.0, 1000),
+    ])
+    mapping = _theme_map([("A", "T"), ("B", "T"), ("C", "T")])
+    leading = score_leading_sectors(snap, mapping, top_n=10, sector_count=1)
+    assert leading[0]["codes"] == ["A", "B", "C"]
+
+
+def test_score_sectors_empty_inputs():
+    empty_snap = pd.DataFrame(columns=[
+        "rank", "code", "name", "price", "prev_close", "daily_return",
+        "intraday_high", "intraday_low", "volume", "trading_value",
+        "is_limit_up", "market_cap", "turnover",
+    ])
+    assert score_leading_sectors(empty_snap, _theme_map([("A", "T")])) == []
+    snap = _full_snap([(1, "A", 10.0, 5.0, 1000)])
+    assert score_leading_sectors(snap, pd.DataFrame()) == []
+
+
+def test_score_sectors_top_n_caps_universe():
+    """top_n 이 작으면 그 안의 종목만 집계 — 테마 멤버수 줄어들 수 있음."""
+    snap = _full_snap([
+        (1, "A", 20.0, 15.0, 1000),
+        (2, "B", 18.0, 12.0, 1000),
+        (3, "C", 22.0, 18.0, 1000),
+        (4, "D", 19.0, 14.0, 1000),  # top_n=3 일 땐 미포함
+    ])
+    mapping = _theme_map([
+        ("A", "T"), ("B", "T"), ("C", "T"), ("D", "T"),
+    ])
+    leading = score_leading_sectors(snap, mapping, top_n=3, sector_count=1)
+    assert leading[0]["member_count"] == 3
+    assert "D" not in leading[0]["codes"]
