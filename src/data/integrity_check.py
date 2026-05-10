@@ -7,11 +7,12 @@
 3. **주말 적재** — date.weekday() ≥ 5 인 행 (버그 의심)
 
 이슈 발견 시 stderr 에 출력하고 비-zero exit code 로 종료.
-텔레그램 알림 통합은 M4 이후.
+`--send` 옵션 시 실패 항목을 텔레그램 에러 알림으로도 발송 (M5+).
 
 사용:
     python -m src.data.integrity_check
     python -m src.data.integrity_check --coverage 0.90 --outlier 0.30
+    python -m src.data.integrity_check --send    # 이상 시 텔레그램 발송
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from src.data import storage
 from src.logging_setup import setup_logging
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="일봉 적재 무결성 체크")
     p.add_argument(
         "--coverage",
@@ -46,7 +47,36 @@ def _parse_args() -> argparse.Namespace:
         default=20,
         help="이슈별 표시 최대 행 수 (default 20)",
     )
-    return p.parse_args()
+    p.add_argument(
+        "--send",
+        action="store_true",
+        help="이상 시 텔레그램 에러 알림 발송 (FAIL 만, WARN 은 발송 안 함)",
+    )
+    return p.parse_args(argv)
+
+
+def build_alert_text(failures: list[str], warnings: list[str]) -> str:
+    """이슈 리스트 → 텔레그램 알림용 plain text.
+
+    Args:
+        failures: FAIL 항목 (exit code 영향). 알림에 ❌
+        warnings: WARN 항목 (exit code 영향 X). 알림에 ⚠
+
+    Returns:
+        한 줄 헤더 + 항목 bullet. 빈 알림은 "" 반환.
+    """
+    if not failures and not warnings:
+        return ""
+    lines = []
+    if failures:
+        lines.append(f"❌ FAIL ({len(failures)}건):")
+        for f in failures:
+            lines.append(f"  • {f}")
+    if warnings:
+        lines.append(f"⚠ WARN ({len(warnings)}건):")
+        for w in warnings:
+            lines.append(f"  • {w}")
+    return "\n".join(lines)
 
 
 def check_recent_coverage(
@@ -92,15 +122,18 @@ def find_weekend_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df[weekend_mask].copy()
 
 
-def main() -> None:
-    args = _parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
     settings = load_settings()
     setup_logging(settings)
 
     df = storage.read_daily_ohlcv(settings.data_dir)
     if df.empty:
-        logger.error("일봉 데이터 없음 (`init_daily` 먼저 실행)")
-        sys.exit(2)
+        msg = "일봉 데이터 없음 (`init_daily` 먼저 실행)"
+        logger.error(msg)
+        if args.send:
+            _telegram_alert(settings, build_alert_text([msg], []))
+        return 2
 
     logger.info(
         f"무결성 체크 시작: {len(df)} rows, "
@@ -108,7 +141,8 @@ def main() -> None:
         f"{df['date'].min()} ~ {df['date'].max()}"
     )
 
-    issues = 0
+    failures: list[str] = []
+    warnings_: list[str] = []
 
     # 1. 커버리지
     ok, msg = check_recent_coverage(df, args.coverage)
@@ -116,7 +150,7 @@ def main() -> None:
         logger.info(f"[OK]   커버리지 — {msg}")
     else:
         logger.warning(f"[FAIL] 커버리지 미달 — {msg}")
-        issues += 1
+        failures.append(f"커버리지 미달 — {msg}")
 
     # 2. 가격 이상치 (수정주가 일관 사용 가정 → 50% 이상은 진짜 이상)
     outliers = find_price_outliers(df, args.outlier)
@@ -132,6 +166,9 @@ def main() -> None:
         if len(outliers) > args.max_show:
             logger.warning(f"       ... (총 {len(outliers)} 건 중 {args.max_show}만 표시)")
         # WARN — exit code 영향 X (수정주가 보정 후에도 이상치는 정상 케이스도 많음)
+        warnings_.append(
+            f"가격 이상치 {len(outliers)}건 (임계 {args.outlier:.0%})"
+        )
 
     # 3. 주말 적재 (있으면 버그)
     weekends = find_weekend_rows(df)
@@ -141,13 +178,32 @@ def main() -> None:
         logger.error(f"[FAIL] 주말 적재 {len(weekends)} 행 (버그 의심):")
         for _, row in weekends.head(args.max_show).iterrows():
             logger.error(f"       {row['code']} {row['date']}")
-        issues += 1
+        failures.append(f"주말 적재 {len(weekends)}행 (버그 의심)")
 
-    if issues > 0:
-        logger.error(f"무결성 체크 실패: {issues} 건")
-        sys.exit(1)
+    if args.send and (failures or warnings_):
+        _telegram_alert(settings, build_alert_text(failures, warnings_))
+
+    if failures:
+        logger.error(f"무결성 체크 실패: {len(failures)} 건")
+        return 1
     logger.info("무결성 체크 통과")
+    return 0
+
+
+def _telegram_alert(settings, text: str) -> None:
+    """텔레그램 에러 알림 발송 (실패해도 raise 안 함).
+
+    Dispatcher.telegram_error() 사용 — parse_mode=None plain text + 이중 실패 방지.
+    """
+    if not text:
+        return
+    try:
+        from src.notify.dispatcher import Dispatcher
+        d = Dispatcher(settings)
+        d.telegram_error(text, context="무결성 체크")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"텔레그램 알림 실패: {e}")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

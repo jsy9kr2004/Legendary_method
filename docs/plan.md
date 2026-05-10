@@ -188,7 +188,7 @@
 - [ ] **종목 마스터 시가총액 / 상장일 미수집** — KIS mst part2 추가 필드 파싱 필요. 현재 0 / None
 - [ ] **`100030` 등 1XXXXX 주권형 펀드/리츠** — KIS 그룹코드 'S' 에 포함되어 보통주 필터로 안 걸러짐. 종목명 패턴 또는 part2 필드 분기 필요
 - [ ] **WICS / 네이버 테마 크롤러** — M2 진입 직전 작업
-- [ ] **무결성 체크 알림 채널** — 현재 stderr/exit code 만, 텔레그램은 M4 이후 통합
+- [x] **무결성 체크 알림 채널** — `python -m src.data.integrity_check --send` 옵션 추가. FAIL/WARN 항목 텔레그램 에러 알림으로 발송 (Dispatcher.telegram_error). cron 통합 가능. (2026-05-10)
 - [ ] **R5 Layer 4 (고점 도달 시각 매칭)** — 분봉 히스토리 부재로 v0 미구현. 매일 분봉 적재 후 v1에서 구현
 - [x] **종배 시그널 통합 파이프라인** — `src/pipeline.py` `run_pipeline()`. demo 모드 (--demo), 저장 (--save), 발송 (--send). `src/demo_fixtures.py` 제룡전기 2025-05-04 mock. `tests/test_pipeline.py` 13개 E2E 테스트. (2026-05-06)
 - [x] **09:00~10:00 장 초반 고주파 모니터링** — `src/scheduler.py` `_early_morning_check`. 1시간 동안 60초 간격. 주도섹터(테마) 변화 + 주도주 변화 감지. (2026-05-06)
