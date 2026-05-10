@@ -197,7 +197,7 @@
 - [ ] **KRX 정밀 휴장일 캘린더** — v0 는 weekday 기반. 정밀화는 KIS 인덱스 OHLCV 또는 정적 테이블
 - [ ] **`change_rate` 적재 시 NaN** — 분석 단계에서 `groupby('code')['close'].pct_change()` 로 계산
 - [ ] **모의투자(mock) 일봉 endpoint 동작 검증 미완** — 현재 real 모드로만 검증됨
-- [ ] **morning/afterhours `market_stats` 빈 객체** — KIS 지수(KOSPI/KOSDAQ) 현재가 API 호출 미구현. 현재 `_send_morning`/`_send_afterhours` 가 `market_stats={}` 로 전달
+- [x] ~~morning/afterhours `market_stats` 빈 객체~~ → `src/data/index.py` `compute_market_stats()` 구현. KOSPI/KOSDAQ 현재가 + 200일 이평 + 60일 수익률 자동 채움. `_send_morning`/`_send_afterhours` 가 KIS client 받아 호출. (2026-05-10)
 - [ ] **WICS 섹터 매핑 크롤러** — wiseindex.com 크롤링 (월 1회). M0 미착수 항목
 - [ ] **수정주가 일관성** — daily fetcher `adjusted=True` 일관 사용 검증
 - [ ] **종목 코드 변경(액면분할/합병) 처리** — historical 통계 단절 회피

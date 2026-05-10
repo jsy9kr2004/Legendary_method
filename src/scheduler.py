@@ -66,9 +66,6 @@ _SNAPSHOT_TIMES = ["11:00", "13:00", "14:00", "14:50"]
 _POLL_INTERVAL_SEC = int(os.getenv("LIMIT_UP_POLL_INTERVAL_SEC", "60"))
 _WATCH_TOP_N = int(os.getenv("LIMIT_UP_WATCH_TOP_N", "30"))
 
-# 9~9:30 고주파 변화감지 폴링 (장초반 주도섹터/주도주 변동에 민감 반응)
-_EARLY_INTERVAL_SEC = int(os.getenv("EARLY_MORNING_INTERVAL_SEC", "60"))
-
 
 # ── 일별 글로벌 상태 ─────────────────────────────────────────────────────────
 # 매일 08:30에 _reset_state() 로 초기화.
@@ -209,80 +206,30 @@ def _poll_limit_up(
 
 
 @_business_day_only("모닝")
-def _send_morning(settings: Settings, dispatcher: Dispatcher) -> None:
+def _send_morning(settings: Settings, dispatcher: Dispatcher,
+                  client: KISClient | None = None) -> None:
     """09:30 모닝 레포트 발송.
 
-    market_stats 자동 수집은 별도 모듈 필요(TODO). v0 는 텍스트 placeholder
-    수준으로만 발송 — Zeta 직관 판단 영역.
+    market_stats 는 KIS 지수 API 로 자동 채움 (M5.5+). client 가 None 이면 빈 dict.
+    holdings 는 사용자 입력 메커니즘 미구현 — 빈 리스트.
     """
     from src.report.morning import build_morning_report
     dt = now_kst()
-    market_stats: dict[str, Any] = {}  # TODO: KIS 인덱스 조회로 채우기
+    market_stats: dict[str, Any] = {}
+    if client is not None:
+        try:
+            from src.data.index import compute_market_stats
+            market_stats = compute_market_stats(client)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[모닝] market_stats 조회 실패: {e}")
     holdings: list[dict[str, Any]] = []  # TODO: 보유 입력 메커니즘
     report = build_morning_report(market_stats, holdings, dt)
     dispatcher.send_morning(report)
 
 
-def _within_early_morning(dt: datetime) -> bool:
-    """장초반 고주파 변화감지 시간대 (09:00 ≤ t < 10:00 KST).
-
-    사용자 요청에 따라 09:00~10:00 1시간 동안 동작.
-    """
-    t = dt.time()
-    return (t >= datetime.strptime("09:00", "%H:%M").time()
-            and t < datetime.strptime("10:00", "%H:%M").time())
-
-
-@_business_day_only("장초반 변화감지")
-def _early_morning_check(
-    client: KISClient,
-    settings: Settings,
-    dispatcher: Dispatcher,
-) -> None:
-    """09:00~10:00 동안 주도섹터 / 주도주 변화 감지 + 신규 상한가 알림.
-
-    감지 대상:
-        - 주도섹터(테마) 변화: 신규 진입/탈락
-        - 주도주(주도테마 내 first-mover 상한가 종목) 변화
-    비주도테마 상한가는 별도 limit-up 폴링이 처리.
-    """
-    global _watch_codes, _already_limit_up, _prev_leading_themes, _prev_leading_stocks
-    dt = now_kst()
-    if not _within_early_morning(dt):
-        return
-
-    df = fetch_volume_rank(client, top_n=_WATCH_TOP_N)
-    if df.empty:
-        return
-
-    _watch_codes = df["code"].tolist()
-    theme_df = read_naver_themes(settings.data_dir)
-    leading = identify_leading_themes(df, theme_df)
-    # 고주파 모니터링용 주도주 (pre-limit-up 진입 후보):
-    # 주도섹터 내 거래대금 상위 + 상승률 상위 종목.
-    leaders = identify_early_morning_leaders(df, leading, top_per_theme=2)
-
-    # 신규 상한가는 그대로 limit-up 이벤트로 발송 (주도주 여부와 별개)
-    lup_df = filter_limit_up_from_snapshot(df)
-    if not lup_df.empty:
-        for _, row in lup_df.iterrows():
-            code = str(row["code"])
-            if code not in _already_limit_up:
-                _already_limit_up.add(code)
-                _send_limit_up_alert(row.to_dict(), settings, dispatcher, dt)
-
-    from src.report.periodic import build_early_morning_alert
-    alert = build_early_morning_alert(
-        df, leading, _prev_leading_themes,
-        leaders, _prev_leading_stocks, dt,
-    )
-    dispatcher.send_early_morning(alert)
-    _prev_leading_themes = leading
-    _prev_leading_stocks = leaders
-
-
 @_business_day_only("사후")
-def _send_afterhours(settings: Settings, dispatcher: Dispatcher) -> None:
+def _send_afterhours(settings: Settings, dispatcher: Dispatcher,
+                     client: KISClient | None = None) -> None:
     """16:00 사후 레포트 이메일 발송."""
     from src.data.snapshot import list_snapshots
     from src.report.afterhours import build_afterhours_report
@@ -299,11 +246,19 @@ def _send_afterhours(settings: Settings, dispatcher: Dispatcher) -> None:
         "snapshots_collected": len(snaps),
         "errors": [],
     }
+    market_stats: dict[str, Any] = {}
+    if client is not None:
+        try:
+            from src.data.index import compute_market_stats
+            market_stats = compute_market_stats(client)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[사후] market_stats 조회 실패: {e}")
     report = build_afterhours_report(
         candidates=[],
         afterhours_quotes=[],
         data_status=data_status,
         report_dt=dt,
+        market_stats=market_stats,
     )
     dispatcher.email_afterhours(report, today.strftime("%Y-%m-%d"))
 
@@ -546,24 +501,16 @@ def run() -> None:
     scheduler.add_job(
         _send_morning,
         trigger=CronTrigger(day_of_week="mon-fri", hour=9, minute=30),
-        args=[settings, dispatcher],
+        args=[settings, dispatcher, client],
         id="morning",
         name="모닝 레포트",
         misfire_grace_time=600,
     )
 
-    # 09:00~09:30 장초반 고주파 변화감지 (테마/주도주 변동 즉시 알림)
+    # 09:00~10:30 장초반 모니터링은 M6 대시보드 잡(아래 _dashboard_*)이 담당.
+    # 이전 _early_morning_check (60초 간격 변화감지) 는 dashboard tick(5초)
+    # + 상태 머신 + editMessageText 로 대체됨.
     from apscheduler.triggers.interval import IntervalTrigger
-    scheduler.add_job(
-        _early_morning_check,
-        trigger=IntervalTrigger(seconds=_EARLY_INTERVAL_SEC),
-        args=[client, settings, dispatcher],
-        id="early_morning_poll",
-        name="장초반 변화감지",
-        misfire_grace_time=30,
-        max_instances=1,
-        coalesce=True,
-    )
 
     # 4시점 스냅샷 + 정기/결정 레포트
     for t in _SNAPSHOT_TIMES:
@@ -581,7 +528,7 @@ def run() -> None:
     scheduler.add_job(
         _send_afterhours,
         trigger=CronTrigger(day_of_week="mon-fri", hour=16, minute=0),
-        args=[settings, dispatcher],
+        args=[settings, dispatcher, client],
         id="afterhours",
         name="사후 레포트",
         misfire_grace_time=1800,

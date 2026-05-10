@@ -23,6 +23,7 @@ def build_afterhours_report(
     afterhours_quotes: list[dict[str, Any]],
     data_status: dict[str, Any],
     report_dt: datetime,
+    market_stats: dict[str, Any] | None = None,
 ) -> str:
     """사후 레포트 마크다운 생성.
 
@@ -36,6 +37,7 @@ def build_afterhours_report(
             "errors": list[str],
         }
         report_dt: 레포트 생성 시각 (KST).
+        market_stats: 시장 마감 지표 (KIS 지수 API). None/빈 dict 면 섹션 생략.
 
     Returns:
         마크다운 문자열.
@@ -48,6 +50,27 @@ def build_afterhours_report(
         sep(),
         "",
     ]
+
+    if market_stats:
+        lines += ["[시장 마감 지표]"]
+        if "kospi_current" in market_stats:
+            cr = market_stats.get("kospi_change_rate", float("nan"))
+            lines.append(
+                f"  KOSPI  {market_stats['kospi_current']:.2f}  "
+                f"({fmt_pct(cr) if cr == cr else '—'})"
+            )
+        if "kosdaq_current" in market_stats:
+            cr = market_stats.get("kosdaq_change_rate", float("nan"))
+            lines.append(
+                f"  KOSDAQ {market_stats['kosdaq_current']:.2f}  "
+                f"({fmt_pct(cr) if cr == cr else '—'})"
+            )
+        if "kospi_above_ma200" in market_stats:
+            tag = "위 (대세상승장)" if market_stats["kospi_above_ma200"] else "아래 (조심)"
+            lines.append(f"  200일 이평: {tag}")
+        if "kospi_60d_return" in market_stats:
+            lines.append(f"  KOSPI 60일 수익률: {fmt_pct(market_stats['kospi_60d_return'])}")
+        lines.append("")
 
     # 오늘의 종배 후보 요약
     lines.append(f"[오늘 종배 후보 ({len(accepted)}종목)]")
