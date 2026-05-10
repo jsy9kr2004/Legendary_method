@@ -196,3 +196,71 @@ def codes_for_theme(data_dir: Path, theme: str) -> list[str]:
         return []
     matched = df[df["theme"] == theme]["code"]
     return matched.tolist()
+
+
+# ── WICS 섹터 매핑 (M0 추가, 월 1회 갱신) ────────────────────────────────────
+
+WICS_SECTORS_FILENAME = "wics_sectors.parquet"
+WICS_SECTORS_COLUMNS = ["code", "name", "sector_code", "sector_name", "crawled_at"]
+
+
+def wics_sectors_path(data_dir: Path) -> Path:
+    return data_dir / "meta" / WICS_SECTORS_FILENAME
+
+
+def read_wics_sectors(data_dir: Path) -> pd.DataFrame:
+    """WICS 섹터 매핑 parquet 읽기. 없으면 빈 DF."""
+    path = wics_sectors_path(data_dir)
+    if not path.exists():
+        return pd.DataFrame(columns=WICS_SECTORS_COLUMNS)
+    return pd.read_parquet(path)
+
+
+def write_wics_sectors(df: pd.DataFrame, data_dir: Path) -> None:
+    """전체 덮어쓰기 (월 1회 갱신)."""
+    path = wics_sectors_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if df.empty:
+        df = pd.DataFrame(columns=WICS_SECTORS_COLUMNS)
+    df.to_parquet(path, index=False)
+
+
+def wics_last_crawled(data_dir: Path) -> date | None:
+    df = read_wics_sectors(data_dir)
+    if df.empty or "crawled_at" not in df.columns:
+        return None
+    val = df["crawled_at"].max()
+    if hasattr(val, "date"):
+        return val.date()
+    return val
+
+
+def wics_is_fresh(data_dir: Path, max_age_days: int = 35) -> bool:
+    """최근 max_age_days 이내에 크롤링된 WICS 데이터가 있으면 True.
+
+    WICS 는 월 1회 갱신 — 35일 default 로 두 달 텀 허용.
+    """
+    last = wics_last_crawled(data_dir)
+    if last is None:
+        return False
+    from src.config import today_kst
+    delta = (today_kst() - last).days
+    return delta <= max_age_days
+
+
+def sector_for_code(data_dir: Path, code: str) -> dict | None:
+    """종목코드 → {sector_code, sector_name} 또는 None.
+
+    WICS 는 1:1 매핑 (한 종목당 1개 대분류).
+    """
+    df = read_wics_sectors(data_dir)
+    if df.empty:
+        return None
+    row = df[df["code"] == code]
+    if row.empty:
+        return None
+    r = row.iloc[0]
+    return {
+        "sector_code": str(r["sector_code"]),
+        "sector_name": str(r["sector_name"]),
+    }

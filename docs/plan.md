@@ -24,7 +24,7 @@
 - [x] KOSPI/KOSDAQ 전종목 일봉 적재 (parquet, single file `data/daily/ohlcv.parquet`). default 1년치, `--years 5`로 backfill. (2026-05-06)
 - [x] `python -m src.data.incremental_daily` — 종목별 last_loaded_date 기준 매일 갱신.
 - [x] 종목 마스터 (`src/data/master.py`, `update_master.py`). KIS mst zip 파싱, 보통주(주권 'S' prefix) 필터, 우선주 토글. **시총/상장일은 미수집 (TODO)**.
-- [ ] WICS 섹터 매핑 크롤링 (월 1회) — 미착수
+- [x] WICS 섹터 매핑 크롤링 (월 1회) — `src/data/wics_crawler.py` + `src/data/update_wics.py`. wiseindex.com `GetIndexComponents` JSON, 대분류 10개(G10~G55). 35일 신선도 체크, --force 옵션. `data/meta/wics_sectors.parquet` (long, 1:1 매핑). 중분류(WI 28개)는 v1. (2026-05-10)
 - [x] 네이버 금융 테마 매핑 크롤링 — `src/data/theme_crawler.py` + `update_themes.py`. 7일 신선도 체크, --force 옵션. `data/meta/naver_themes.parquet` (long format). (2026-05-06)
 - [x] KRX 휴장일 — v0 는 weekday 기반 단순화 (`src/calendar_kr.py`). 공휴일은 fetcher 빈응답으로 자연 처리.
 - [x] KIS Open API 인프라 (`src/kis/`): 토큰 발급/캐시/갱신, rate limiter (real 20cps / mock 2cps), KISClient.
@@ -198,7 +198,7 @@
 - [ ] **`change_rate` 적재 시 NaN** — 분석 단계에서 `groupby('code')['close'].pct_change()` 로 계산
 - [ ] **모의투자(mock) 일봉 endpoint 동작 검증 미완** — 현재 real 모드로만 검증됨
 - [x] ~~morning/afterhours `market_stats` 빈 객체~~ → `src/data/index.py` `compute_market_stats()` 구현. KOSPI/KOSDAQ 현재가 + 200일 이평 + 60일 수익률 자동 채움. `_send_morning`/`_send_afterhours` 가 KIS client 받아 호출. (2026-05-10)
-- [ ] **WICS 섹터 매핑 크롤러** — wiseindex.com 크롤링 (월 1회). M0 미착수 항목
+- [x] ~~WICS 섹터 매핑 크롤러~~ — 완료 (M0 체크리스트 참조). 중분류(WI 28개)는 v1로 미룸.
 - [ ] **수정주가 일관성** — daily fetcher `adjusted=True` 일관 사용 검증
 - [ ] **종목 코드 변경(액면분할/합병) 처리** — historical 통계 단절 회피
 - [ ] **테마 매핑 변경 시 historical 재계산** — 네이버 테마 월 1회 갱신 시 사례 변동 영향 분석
