@@ -185,6 +185,37 @@ def themes_for_code(data_dir: Path, code: str) -> list[str]:
     return matched.tolist()
 
 
+def compute_change_rate(df: pd.DataFrame) -> pd.DataFrame:
+    """일봉 long DataFrame 의 `change_rate` 를 종목별 close pct_change 로 채움.
+
+    배경:
+        KIS API daily fetcher 가 NaN 으로 적재함 (`src/data/daily.py`).
+        분석 시점에 호출자가 명시적으로 사용.
+
+    정량 정의:
+        change_rate(%) = (close - prev_close) / prev_close × 100
+            prev_close 는 같은 code 의 직전 적재일 close.
+            첫 영업일은 NaN 유지.
+
+    Args:
+        df: code, date, close 컬럼 포함하는 long format.
+
+    Returns:
+        같은 길이의 새 DataFrame. `change_rate` 컬럼이 채워진 사본.
+        입력은 변경하지 않음.
+    """
+    if df.empty:
+        return df.copy()
+    out = df.copy()
+    if "change_rate" not in out.columns:
+        out["change_rate"] = pd.NA
+    sorted_df = out.sort_values(["code", "date"]).copy()
+    sorted_df["change_rate"] = (
+        sorted_df.groupby("code")["close"].pct_change() * 100.0
+    ).astype("Float64")
+    return sorted_df.sort_index()
+
+
 def codes_for_theme(data_dir: Path, theme: str) -> list[str]:
     """테마 이름에 해당하는 종목 코드 목록.
 
