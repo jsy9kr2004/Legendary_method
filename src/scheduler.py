@@ -38,7 +38,7 @@ from src.calendar_kr import is_business_day
 from src.config import KST, Settings, load_settings, now_kst
 from src.data.intraday import fetch_volume_rank
 from src.data.snapshot import save_snapshot
-from src.data.storage import read_daily_ohlcv, read_naver_themes
+from src.data.storage import read_daily_ohlcv, read_naver_themes, read_stock_master
 from src.jongbae.candidates import accepted_candidates, extract_candidates
 from src.jongbae.historical import (
     close_position,
@@ -77,6 +77,18 @@ _already_limit_up: set[str] = set()
 _watch_codes: list[str] = []
 _prev_leading_themes: list[dict[str, Any]] = []
 _prev_leading_stocks: list[dict[str, Any]] = []
+
+# ── M6 모니터링 대시보드 글로벌 상태 ────────────────────────────────────────
+
+from src.dashboard.state import MonitoringSession  # noqa: E402
+
+_dashboard_session = MonitoringSession()
+_dashboard_message_ids: dict[str, Any] = {}
+_dashboard_master_df = None
+_dashboard_theme_df = None
+_dashboard_daily_df = None
+_dashboard_command_thread: Any = None
+_dashboard_command_stop: Any = None
 
 
 def _reset_state() -> None:
@@ -417,6 +429,92 @@ def _send_limit_up_alert(
 # ── 스케줄러 본체 ───────────────────────────────────────────────────────────
 
 
+# ── M6 대시보드 잡 함수 ──────────────────────────────────────────────────────
+
+
+@_business_day_only("모니터링 시작")
+def _dashboard_start(client: KISClient, settings: Settings) -> None:
+    """09:00 매일 자동 ON — 데이터 캐시 로드 + paused 리셋 + 명령 thread 시작."""
+    global _dashboard_master_df, _dashboard_theme_df, _dashboard_daily_df
+    global _dashboard_command_thread, _dashboard_command_stop
+
+    from src.dashboard.worker import reset_daily, start_command_thread
+
+    logger.info("[M6] 모니터링 대시보드 시작")
+    try:
+        _dashboard_master_df = read_stock_master(settings.data_dir)
+    except FileNotFoundError:
+        logger.warning("[M6] 종목 마스터 미존재 — turnover 계산 불가, 후보 필터 X")
+        _dashboard_master_df = None
+    try:
+        _dashboard_theme_df = read_naver_themes(settings.data_dir)
+    except FileNotFoundError:
+        logger.warning("[M6] 네이버 테마 미존재 — 주도섹터 식별 불가")
+        _dashboard_theme_df = None
+    try:
+        _dashboard_daily_df = read_daily_ohlcv(settings.data_dir)
+    except FileNotFoundError:
+        _dashboard_daily_df = None
+
+    reset_daily(_dashboard_session)
+    _dashboard_message_ids.clear()
+
+    # 사용자 명령 long polling thread (이미 동작 중이면 stop 후 재시작)
+    if _dashboard_command_stop is not None:
+        _dashboard_command_stop.set()
+    if settings.telegram_bot_token and settings.telegram_chat_id:
+        _dashboard_command_thread, _dashboard_command_stop = start_command_thread(
+            _dashboard_session,
+            settings.telegram_bot_token,
+            settings.telegram_chat_id,
+        )
+    else:
+        logger.warning("[M6] 텔레그램 미설정 — 명령 thread 미시작")
+
+
+@_business_day_only("모니터링 tick")
+def _dashboard_tick_job(client: KISClient, settings: Settings) -> None:
+    """5초마다 호출 — 모니터링 한 사이클. 시간창은 worker 안에서 가드."""
+    if _dashboard_master_df is None or _dashboard_theme_df is None:
+        return
+    if not (settings.telegram_bot_token and settings.telegram_chat_id):
+        return
+
+    from src.dashboard.worker import dashboard_tick
+    dashboard_tick(
+        session=_dashboard_session,
+        message_ids=_dashboard_message_ids,
+        client=client,
+        master_df=_dashboard_master_df,
+        theme_mapping_df=_dashboard_theme_df,
+        daily_ohlcv=_dashboard_daily_df,
+        token=settings.telegram_bot_token,
+        chat_id=settings.telegram_chat_id,
+        now=now_kst(),
+    )
+
+
+@_business_day_only("모니터링 종료")
+def _dashboard_stop(settings: Settings) -> None:
+    """10:30 종료 — 모니터링 메시지 정리 + 명령 thread stop."""
+    global _dashboard_command_thread, _dashboard_command_stop
+
+    from src.dashboard.worker import cleanup_messages
+
+    logger.info("[M6] 모니터링 대시보드 종료")
+    if settings.telegram_bot_token and settings.telegram_chat_id:
+        cleanup_messages(
+            token=settings.telegram_bot_token,
+            chat_id=settings.telegram_chat_id,
+            session=_dashboard_session,
+            message_ids=_dashboard_message_ids,
+        )
+    if _dashboard_command_stop is not None:
+        _dashboard_command_stop.set()
+    _dashboard_command_thread = None
+    _dashboard_command_stop = None
+
+
 def _make_scheduler() -> BlockingScheduler:
     return BlockingScheduler(timezone=KST)
 
@@ -500,6 +598,34 @@ def run() -> None:
         misfire_grace_time=30,
         max_instances=1,
         coalesce=True,
+    )
+
+    # ── M6 모니터링 대시보드 (09:00 시작 / 10:30 종료, 5초 tick) ─────────────
+    scheduler.add_job(
+        _dashboard_start,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=9, minute=0),
+        args=[client, settings],
+        id="dashboard_start",
+        name="모니터링 시작",
+        misfire_grace_time=120,
+    )
+    scheduler.add_job(
+        _dashboard_tick_job,
+        trigger=IntervalTrigger(seconds=5),
+        args=[client, settings],
+        id="dashboard_tick",
+        name="모니터링 tick (5s)",
+        misfire_grace_time=10,
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        _dashboard_stop,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=10, minute=30),
+        args=[settings],
+        id="dashboard_stop",
+        name="모니터링 종료",
+        misfire_grace_time=300,
     )
 
     def _shutdown(signum, frame):
