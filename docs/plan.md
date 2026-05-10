@@ -194,7 +194,7 @@
 - [x] **09:00~10:00 장 초반 고주파 모니터링** — `src/scheduler.py` `_early_morning_check`. 1시간 동안 60초 간격. 주도섹터(테마) 변화 + 주도주 변화 감지. (2026-05-06)
   - 고주파용 주도주 정의 (사용자 명시, pre-limit-up): 주도섹터 내 **거래대금 상위** OR **상승률 상위** 종목. 한 테마에 여러 주도주, 한 종목이 여러 테마에 걸칠 수 있음 (1:1 매핑 X). 구현은 `identify_early_morning_leaders()`.
   - 정통 주도주 정의 (post-limit-up, ★ 결정 레포트용): 주도테마 내 first-mover 상한가 종목. 구현은 `identify_leading_stocks()`.
-- [ ] **KRX 정밀 휴장일 캘린더** — v0 는 weekday 기반. 정밀화는 KIS 인덱스 OHLCV 또는 정적 테이블
+- [x] **KRX 정밀 휴장일 캘린더** — `src/calendar_kr.py` 에 `_KRX_HOLIDAYS` 정적 set (2024~2026 큐레이션). 법정공휴일 + 근로자의 날 + 12/31 KRX 임시휴장 모두 반영. `is_holiday()` 함수 추가, `is_business_day()` 가 weekday + 휴장일 둘 다 체크. 매년 12월 KRX 발표 시 갱신 필요. (2026-05-10)
 - [ ] **`change_rate` 적재 시 NaN** — 분석 단계에서 `groupby('code')['close'].pct_change()` 로 계산
 - [ ] **모의투자(mock) 일봉 endpoint 동작 검증 미완** — 현재 real 모드로만 검증됨
 - [x] ~~morning/afterhours `market_stats` 빈 객체~~ → `src/data/index.py` `compute_market_stats()` 구현. KOSPI/KOSDAQ 현재가 + 200일 이평 + 60일 수익률 자동 채움. `_send_morning`/`_send_afterhours` 가 KIS client 받아 호출. (2026-05-10)
