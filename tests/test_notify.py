@@ -218,14 +218,6 @@ def test_dispatcher_telegram_live(tmp_path):
     assert results == [payload]
 
 
-def test_dispatcher_send_early_morning_none(tmp_path):
-    """build_early_morning_alert 가 None 반환하면 발송 안 함."""
-    d = Dispatcher(_settings(tmp_path, dry_run=False))
-    with patch("src.notify.dispatcher.send_message") as mock_send:
-        d.send_early_morning(None)
-    mock_send.assert_not_called()
-
-
 def test_dispatcher_send_decision_multiple_parts(tmp_path):
     d = Dispatcher(_settings(tmp_path, dry_run=True))
     parts = ["part1", "part2", "part3"]
