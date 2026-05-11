@@ -134,3 +134,121 @@ def test_detects_sunday_row():
 
 def test_weekend_check_empty_df():
     assert ic.find_weekend_rows(pd.DataFrame()).empty
+
+
+# ── build_alert_text ─────────────────────────────────────────────────────────
+
+
+def test_build_alert_text_failures_and_warnings():
+    text = ic.build_alert_text(
+        failures=["커버리지 미달 — 95% 미만"],
+        warnings=["가격 이상치 3건"],
+    )
+    assert "FAIL" in text
+    assert "1건" in text
+    assert "WARN" in text
+    assert "커버리지" in text
+    assert "이상치" in text
+
+
+def test_build_alert_text_empty_returns_empty():
+    assert ic.build_alert_text([], []) == ""
+
+
+def test_build_alert_text_only_failures():
+    text = ic.build_alert_text(failures=["주말 적재 5행"], warnings=[])
+    assert "FAIL" in text
+    assert "WARN" not in text
+
+
+def test_build_alert_text_only_warnings():
+    text = ic.build_alert_text(failures=[], warnings=["가격 이상치"])
+    assert "WARN" in text
+    assert "FAIL" not in text
+
+
+# ── main(--send) 텔레그램 발송 ──────────────────────────────────────────────
+
+
+def test_main_send_calls_dispatcher_on_failure(tmp_path, monkeypatch):
+    """주말 적재 행 → FAIL → --send 옵션 시 dispatcher.telegram_error 호출."""
+    from unittest.mock import MagicMock, patch
+    import pandas as pd
+
+    # 주말 적재 1행 (FAIL 유발)
+    df = pd.DataFrame([{
+        "code": "005930", "date": date(2025, 5, 3),  # 토요일
+        "open": 70000, "high": 71000, "low": 69500, "close": 70500,
+        "volume": 100, "trading_value": 7_050_000,
+    }])
+
+    fake_settings = MagicMock()
+    fake_settings.data_dir = tmp_path
+    fake_settings.log_dir = tmp_path
+
+    fake_dispatcher = MagicMock()
+    with patch.object(ic.storage, "read_daily_ohlcv", return_value=df), \
+         patch.object(ic, "load_settings", return_value=fake_settings), \
+         patch.object(ic, "setup_logging"), \
+         patch("src.notify.dispatcher.Dispatcher", return_value=fake_dispatcher):
+        rc = ic.main(["--send"])
+
+    assert rc == 1  # FAIL
+    fake_dispatcher.telegram_error.assert_called_once()
+    args, kwargs = fake_dispatcher.telegram_error.call_args
+    body = args[0] if args else kwargs.get("text", "")
+    assert "주말 적재" in body
+
+
+def test_main_send_skips_dispatcher_when_clean(tmp_path, monkeypatch):
+    """이슈 없으면 dispatcher 호출 안 함."""
+    from unittest.mock import MagicMock, patch
+    import pandas as pd
+
+    df = pd.DataFrame([
+        {"code": "005930", "date": date(2025, 5, 1), "open": 70000,
+         "high": 71000, "low": 69500, "close": 70500,
+         "volume": 100, "trading_value": 7_050_000},
+        {"code": "005930", "date": date(2025, 5, 2), "open": 70500,
+         "high": 71500, "low": 70000, "close": 71000,
+         "volume": 100, "trading_value": 7_100_000},
+    ])
+
+    fake_settings = MagicMock()
+    fake_settings.data_dir = tmp_path
+    fake_settings.log_dir = tmp_path
+
+    fake_dispatcher = MagicMock()
+    with patch.object(ic.storage, "read_daily_ohlcv", return_value=df), \
+         patch.object(ic, "load_settings", return_value=fake_settings), \
+         patch.object(ic, "setup_logging"), \
+         patch("src.notify.dispatcher.Dispatcher", return_value=fake_dispatcher):
+        rc = ic.main(["--send"])
+
+    assert rc == 0
+    fake_dispatcher.telegram_error.assert_not_called()
+
+
+def test_main_no_send_does_not_call_dispatcher_on_failure(tmp_path):
+    """--send 미지정 시 dispatcher 호출 안 함."""
+    from unittest.mock import MagicMock, patch
+    import pandas as pd
+
+    df = pd.DataFrame([{
+        "code": "005930", "date": date(2025, 5, 3),
+        "open": 70000, "high": 71000, "low": 69500, "close": 70500,
+        "volume": 100, "trading_value": 7_050_000,
+    }])
+
+    fake_settings = MagicMock()
+    fake_settings.data_dir = tmp_path
+
+    fake_dispatcher = MagicMock()
+    with patch.object(ic.storage, "read_daily_ohlcv", return_value=df), \
+         patch.object(ic, "load_settings", return_value=fake_settings), \
+         patch.object(ic, "setup_logging"), \
+         patch("src.notify.dispatcher.Dispatcher", return_value=fake_dispatcher):
+        rc = ic.main([])
+
+    assert rc == 1
+    fake_dispatcher.telegram_error.assert_not_called()

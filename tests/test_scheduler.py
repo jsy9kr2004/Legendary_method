@@ -49,15 +49,21 @@ def test_within_polling_window(hh, mm, expected):
 @pytest.mark.parametrize("hh,mm,expected", [
     (8, 59, False),
     (9, 0, True),      # 시작
-    (9, 30, True),     # 사용자 요청 확장 영역
-    (9, 59, True),     # 종료 직전
-    (10, 0, False),    # 종료
-    (10, 30, False),
+    (9, 30, True),
+    (10, 0, True),     # 사용자 요청에 따라 10:30 까지 확장
+    (10, 30, True),    # 종료 시각 포함
+    (10, 31, False),
 ])
-def test_within_early_morning_extended(hh, mm, expected):
-    """09:00 ≤ t < 10:00 (사용자 요청에 따라 1시간 확장)."""
-    dt = datetime(2026, 5, 6, hh, mm, tzinfo=KST)
-    assert scheduler._within_early_morning(dt) is expected
+def test_in_monitoring_window_m6(hh, mm, expected):
+    """M6 dashboard 운영 시간 (09:00 ~ 10:30 평일).
+
+    `_early_morning_check` 폐기 후 `dashboard.state.in_monitoring_window` 가 대체.
+    """
+    from datetime import datetime as _dt
+    from src.dashboard.state import in_monitoring_window
+    # 2026-05-11 월요일 (평일)
+    dt = _dt(2026, 5, 11, hh, mm)
+    assert in_monitoring_window(dt) is expected
 
 
 # ── 휴장일 가드 데코레이터 ──────────────────────────────────────────────────

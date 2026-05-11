@@ -22,17 +22,18 @@ _RNG = np.random.default_rng(42)
 # ── 종목 정의 ─────────────────────────────────────────────────────────────────
 
 DEMO_STOCKS = [
-    # (code, name, market, base_price, theme)
-    ("075180", "제룡전기",       "KOSDAQ", 70_230,  ["전기/전선", "원자력", "AI데이터센터"]),
-    ("001440", "대한전선",       "KOSPI",  3_500,   ["전기/전선", "구리"]),
-    ("229640", "LS에코에너지",   "KOSPI",  12_000,  ["전기/전선", "구리"]),
-    ("010120", "LS ELECTRIC",    "KOSPI",  110_000, ["전기/전선", "원전"]),
-    ("267260", "HD현대일렉트릭", "KOSPI",  290_000, ["전기/전선", "원전"]),
-    ("000660", "SK하이닉스",     "KOSPI",  180_000, ["반도체", "AI칩"]),
-    ("034730", "SK스퀘어",       "KOSPI",  68_000,  ["반도체", "지주회사"]),
-    ("016360", "삼성증권",       "KOSPI",  44_000,  ["증권", "금융"]),
-    ("005930", "삼성전자",       "KOSPI",  79_000,  ["반도체", "AI칩"]),
-    ("035720", "카카오",         "KOSPI",  41_000,  ["IT서비스", "AI"]),
+    # (code, name, market, base_price, theme, market_cap_억원)
+    # 시총은 KIS mst 와 일치하는 단위 = 억원. 회전율 = 거래대금/시총 계산용 (M5.5).
+    ("075180", "제룡전기",       "KOSDAQ", 70_230,  ["전기/전선", "원자력", "AI데이터센터"], 5_000),
+    ("001440", "대한전선",       "KOSPI",  3_500,   ["전기/전선", "구리"],                  7_000),
+    ("229640", "LS에코에너지",   "KOSPI",  12_000,  ["전기/전선", "구리"],                  5_500),
+    ("010120", "LS ELECTRIC",    "KOSPI",  110_000, ["전기/전선", "원전"],                  35_000),
+    ("267260", "HD현대일렉트릭", "KOSPI",  290_000, ["전기/전선", "원전"],                  100_000),
+    ("000660", "SK하이닉스",     "KOSPI",  180_000, ["반도체", "AI칩"],                     1_300_000),  # 대형주
+    ("034730", "SK스퀘어",       "KOSPI",  68_000,  ["반도체", "지주회사"],                 80_000),
+    ("016360", "삼성증권",       "KOSPI",  44_000,  ["증권", "금융"],                       40_000),
+    ("005930", "삼성전자",       "KOSPI",  79_000,  ["반도체", "AI칩"],                     4_800_000),  # 대형주
+    ("035720", "카카오",         "KOSPI",  41_000,  ["IT서비스", "AI"],                     180_000),
 ]
 
 DEMO_THEMES = [
@@ -127,7 +128,7 @@ def make_daily_ohlcv(target_date: date, lookback_days: int = 260) -> pd.DataFram
     historical_limit_up_days = [25, 60, 100, 140, 180, 220]
 
     all_rows = []
-    for code, name, market, base_price, _ in DEMO_STOCKS:
+    for code, name, market, base_price, _, _ in DEMO_STOCKS:
         today_idx = len(days) - 1  # 마지막 날 = target_date
 
         if code == "075180":  # 제룡전기: 오늘 상한가 + 과거 다수 사례
@@ -206,11 +207,17 @@ def make_snapshot(target_date: date) -> pd.DataFrame:
         if not stock_info:
             continue
 
-        _, name, _, base_price, _ = stock_info
+        _, name, _, base_price, _, market_cap = stock_info
         close = int(row["close"])
         prev_close = int(prev_close_map.get(code, base_price))
         daily_return = (close - prev_close) / prev_close * 100.0
         is_lup = close >= int(prev_close * 1.30)
+
+        # rank 1위가 가장 큰 거래대금이 되도록 역방향 스케일.
+        n = len(rank_order)
+        trading_value = int(row["trading_value"]) * (n - rank + 1)
+        # 회전율(%) = 거래대금 / (시총 억원 × 1e8) × 100
+        turnover = (trading_value / (market_cap * 1e8)) * 100.0 if market_cap > 0 else float("nan")
 
         rows.append({
             "rank": rank,
@@ -222,8 +229,10 @@ def make_snapshot(target_date: date) -> pd.DataFrame:
             "intraday_high": int(row["high"]),
             "intraday_low": int(row["low"]),
             "volume": int(row["volume"]),
-            "trading_value": int(row["trading_value"]) * rank,  # 1위가 더 크도록
+            "trading_value": trading_value,
             "is_limit_up": is_lup,
+            "market_cap": market_cap,
+            "turnover": round(turnover, 4) if turnover == turnover else float("nan"),
         })
 
     return pd.DataFrame(rows)

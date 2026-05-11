@@ -1,26 +1,52 @@
-"""주도테마 식별 (R3).
+"""주도테마/주도주 식별 (R3, R3').
 
-정량 정의:
-    1. 시점 t의 거래대금 상위 N(=30)위 종목 추출
+v0 (Sonnet 1차 구현, 폐기 예정):
+    "거래대금 30위 ≥ 3종목" — 대형주 편향으로 부적합.
+
+v1 (M5.5, 한국 단타 통설):
+    1. 거래대금 상위 LEADING_SECTOR_TOP_N(=50) 종목 추출 (master 필터로
+       ETF/펀드/리츠/스팩 사전 제외)
     2. 각 종목의 네이버 테마 리스트 조회 (한 종목 = 다중 테마)
-    3. 테마별 출현 빈도 카운트
-    4. 빈도 >= LEADING_THEME_THRESHOLD(=3) 인 테마를 주도테마로 식별
+    3. 테마별로 (a) breadth: +5%↑ 종목 수
+                  (b) avg_return: 동일가중 평균 상승률
+                  (c) turnover_sum: 회전율 합계
+       세 지표를 z-score 정규화 후 가중합 → theme_score
+    4. theme_score 상위 LEADING_SECTOR_COUNT(=3) = 주도섹터
 
-테마 분류 우선순위:
-    - 코드 내부 판정: 네이버 금융 테마 (data/meta/naver_themes.parquet)
-    - WICS 중분류는 레포트에 병기만 (M0 TODO)
+주도주 (R3'):
+    (가) 정통 (post-limit-up, 결정 레포트용): 주도섹터 내 first-mover 상한가
+        도달 종목. `identify_leading_stocks` (기존 유지).
+    (나) 고주파 (pre-limit-up, M6 모니터링용): 주도섹터 내 **회전율 1위**.
+        시총 정규화로 대형주 자동 배제. `identify_early_morning_leaders`.
 
 함정 방지:
     "종가 기준 거래대금 순위로 보면 빨리 상한가 친 진짜 주도주가 누락됨"
     → 호출부는 시점별 누적 거래대금 스냅샷을 사용해야 한다.
+
+호환성:
+    `count_themes` / `identify_leading_themes` v0 API 는 유지 (M2 후보 추출
+    파이프라인에서 사용 중). v1 신설 함수 `score_leading_sectors` 가
+    M5.5 신규 정의를 구현.
 """
 from __future__ import annotations
 
+import math
 from collections import Counter
 from typing import Any
 
 import pandas as pd
 from loguru import logger
+
+from src.jongbae.config_thresholds import (
+    LEADING_SECTOR_COUNT,
+    LEADING_SECTOR_TOP_N,
+    LEADING_STOCK_TOP_PER_SECTOR,
+    SECTOR_BREADTH_RETURN_THRESHOLD,
+    SECTOR_MIN_MEMBER_COUNT,
+    SECTOR_WEIGHT_BREADTH,
+    SECTOR_WEIGHT_RETURN,
+    SECTOR_WEIGHT_TURNOVER,
+)
 
 LEADING_THEME_THRESHOLD = 3
 DEFAULT_TOP_N = 30
@@ -179,45 +205,58 @@ def identify_leading_stocks(
 def identify_early_morning_leaders(
     snapshot_df: pd.DataFrame,
     leading_themes: list[dict[str, Any]],
-    top_per_theme: int = 2,
+    top_per_theme: int = LEADING_STOCK_TOP_PER_SECTOR,
 ) -> list[dict[str, Any]]:
-    """장초반 고주파 모니터링용 주도주 식별 (pre-limit-up).
+    """장초반 고주파 모니터링용 주도주 식별 (pre-limit-up). M5.5 재정의.
 
     목적 (사용자 명시):
         상한가는 거래정지(매수/매도 불가) 이므로, 상한가 도달 *전* 진입을
         노린다. 따라서 주도주 = 곧 상한가에 도달할 가능성이 높은 종목.
 
-    정의:
+    정의 (R3'(나) M5.5):
         (1) 주도섹터 내,
-        (2) 주도섹터 내 거래대금 상위 (rank 가 좋은) top_per_theme 종목, OR
-        (3) 주도섹터 내 상승률(daily_return) 상위 top_per_theme 종목.
+        (2) **회전율(거래대금/시총) 상위** top_per_theme 종목.
 
-    (2)와 (3)이 일시적으로 다를 수 있어 한 테마에서 둘 이상의 주도주가
-    나올 수 있고, 각 주도섹터 ↔ 주도주 가 1:1 매핑이 아니다.
+    거래대금 절대값으로 1위 잡으면 항상 하이닉스/삼전이 나옴 → 회전율로
+    시총 정규화하여 단타 자금이 실제로 들어온 종목 식별.
+    상승률/거래대금 절대값은 표시만 (점수화 X — 검증 안 된 자작 공식 회피).
+
     한 종목이 여러 주도섹터에 속하면 themes 리스트에 합쳐서 한 번만 등장.
 
     Args:
-        snapshot_df: SNAPSHOT_COLUMNS DataFrame (rank, code, daily_return, ...).
-        leading_themes: identify_leading_themes() 결과.
-        top_per_theme: 각 테마에서 거래대금/상승률 각각 상위 몇 개 볼지.
+        snapshot_df: SNAPSHOT_COLUMNS DataFrame. `turnover` 컬럼 필수.
+                     (없거나 모두 NaN 이면 fallback 으로 거래대금 절대값 사용)
+        leading_themes: identify_leading_themes() 결과 또는 score_leading_sectors().
+        top_per_theme: 각 주도섹터에서 회전율 상위 몇 개 볼지.
 
     Returns:
         [{
             "code", "name", "themes": [...], "rank", "price",
-            "daily_return", "is_limit_up",
-            "criterion": "volume" | "return" | "both",
+            "daily_return", "is_limit_up", "turnover", "trading_value",
+            "market_cap",
         }, ...]
-        같은 종목이 여러 테마/기준에 걸치면 한 번만 등장 (themes 합치고
-        criterion 은 'both' 로 격상).
+        회전율 내림차순 정렬.
     """
     if snapshot_df.empty or not leading_themes:
         return []
 
-    # 종목별 누적 정보
+    has_turnover = (
+        "turnover" in snapshot_df.columns
+        and snapshot_df["turnover"].notna().any()
+    )
+    sort_key = "turnover" if has_turnover else "trading_value"
+    if not has_turnover:
+        logger.warning(
+            "회전율 데이터 없음 — 거래대금 절대값으로 fallback. "
+            "시총 적재(M5.5) 확인 필요."
+        )
+
     by_code: dict[str, dict[str, Any]] = {}
 
     for theme_info in leading_themes:
-        theme = theme_info["theme"]
+        theme = theme_info.get("theme")
+        if not theme:
+            continue
         theme_codes = set(theme_info.get("codes", []))
         if not theme_codes:
             continue
@@ -226,44 +265,158 @@ def identify_early_morning_leaders(
         if in_theme.empty:
             continue
 
-        # 거래대금 상위 (rank 작을수록 좋음)
-        vol_top = in_theme.sort_values("rank").head(top_per_theme)
-        vol_codes = set(vol_top["code"].astype(str).tolist())
+        # 회전율 상위 (NaN 은 -inf 처리)
+        in_theme["_sort_key"] = in_theme[sort_key].fillna(float("-inf"))
+        top = in_theme.sort_values("_sort_key", ascending=False).head(top_per_theme)
 
-        # 상승률 상위 (NaN 은 -inf 처리해서 끝으로 보냄)
-        ret_top = in_theme.assign(
-            _ret_key=in_theme["daily_return"].fillna(float("-inf"))
-        ).sort_values("_ret_key", ascending=False).head(top_per_theme)
-        ret_codes = set(ret_top["code"].astype(str).tolist())
-
-        union_codes = vol_codes | ret_codes
-
-        for _, row in in_theme[in_theme["code"].astype(str).isin(union_codes)].iterrows():
+        for _, row in top.iterrows():
             code = str(row["code"])
-            in_vol = code in vol_codes
-            in_ret = code in ret_codes
-            new_criterion = "both" if (in_vol and in_ret) else ("volume" if in_vol else "return")
-
             if code in by_code:
-                # 기존 항목 업데이트 — 테마 합치기, criterion 격상
-                entry = by_code[code]
-                if theme not in entry["themes"]:
-                    entry["themes"].append(theme)
-                if entry["criterion"] != "both" and entry["criterion"] != new_criterion:
-                    entry["criterion"] = "both"
-                # rank/price 등은 첫 등장 값 유지 (스냅샷 기준 동일)
-            else:
-                by_code[code] = {
-                    "code": code,
-                    "name": str(row.get("name", "")),
-                    "themes": [theme],
-                    "rank": int(row.get("rank", 0)),
-                    "price": int(row.get("price", 0)),
-                    "daily_return": float(row.get("daily_return", 0.0))
-                        if pd.notna(row.get("daily_return")) else 0.0,
-                    "is_limit_up": bool(row.get("is_limit_up", False)),
-                    "criterion": new_criterion,
-                }
+                if theme not in by_code[code]["themes"]:
+                    by_code[code]["themes"].append(theme)
+                continue
+            by_code[code] = {
+                "code": code,
+                "name": str(row.get("name", "")),
+                "themes": [theme],
+                "rank": int(row.get("rank", 0)),
+                "price": int(row.get("price", 0)),
+                "daily_return": float(row.get("daily_return", 0.0))
+                    if pd.notna(row.get("daily_return")) else 0.0,
+                "is_limit_up": bool(row.get("is_limit_up", False)),
+                "turnover": float(row.get("turnover", float("nan")))
+                    if pd.notna(row.get("turnover")) else float("nan"),
+                "trading_value": int(row.get("trading_value", 0)),
+                "market_cap": int(row.get("market_cap", 0)),
+            }
 
-    # rank 순 정렬 (가장 거래대금 상위 종목 먼저)
-    return sorted(by_code.values(), key=lambda x: x["rank"])
+    # 회전율 내림차순 (회전율 NaN 은 끝으로). fallback 인 경우 거래대금 기준.
+    def _key(entry: dict[str, Any]) -> float:
+        v = entry.get("turnover", float("nan"))
+        if v != v or v is None:  # NaN
+            return -float(entry.get("trading_value", 0))  # fallback 음수
+        return -float(v)
+
+    return sorted(by_code.values(), key=_key)
+
+
+# ── R3 v1: 테마 z-score 합산 (M5.5) ──────────────────────────────────────────
+
+
+def _zscore(values: list[float]) -> list[float]:
+    """간단 z-score. 표준편차 0 이면 모두 0 반환."""
+    if not values:
+        return []
+    mean = sum(values) / len(values)
+    var = sum((v - mean) ** 2 for v in values) / len(values)
+    std = math.sqrt(var)
+    if std == 0:
+        return [0.0] * len(values)
+    return [(v - mean) / std for v in values]
+
+
+def score_leading_sectors(
+    snapshot_df: pd.DataFrame,
+    theme_mapping_df: pd.DataFrame,
+    top_n: int = LEADING_SECTOR_TOP_N,
+    sector_count: int = LEADING_SECTOR_COUNT,
+    breadth_return_threshold: float = SECTOR_BREADTH_RETURN_THRESHOLD,
+) -> list[dict[str, Any]]:
+    """주도섹터 식별 v1 (M5.5) — 테마별 z-score 합산.
+
+    정량 정의:
+        1. 거래대금 상위 top_n 종목 추출 (스냅샷이 이미 master 필터링됨)
+        2. 각 테마에 속한 종목으로 (a) breadth, (b) avg_return, (c) turnover_sum 집계
+        3. 테마간 z-score 정규화 → 가중합
+        4. 상위 sector_count 개를 주도섹터로 채택
+
+    Args:
+        snapshot_df: SNAPSHOT_COLUMNS (turnover 포함).
+        theme_mapping_df: long format (code, theme).
+        top_n: 거래대금 상위 몇 위까지 집계 대상.
+        sector_count: 채택할 주도섹터 수.
+        breadth_return_threshold: breadth 정의 임계 (+X%↑).
+
+    Returns:
+        [{
+            "theme": "전기/전선",
+            "score": 4.21,
+            "breadth": 4,            # +X%↑ 종목 수
+            "avg_return": 18.2,      # 동일가중 평균 상승률 (%)
+            "turnover_sum": 53.1,    # 회전율 합계 (%)
+            "member_count": 6,       # 테마 구성종목 수 (스냅샷 내)
+            "codes": ["075180", ...] # rank 오름차순
+        }, ...]
+        score 내림차순.
+    """
+    if snapshot_df.empty:
+        return []
+    if theme_mapping_df.empty:
+        logger.warning("주도섹터 식별: 테마 매핑 데이터 없음")
+        return []
+
+    top = snapshot_df.sort_values("rank").head(top_n).copy()
+    top["code"] = top["code"].astype(str)
+    top_codes = set(top["code"].tolist())
+
+    mapping = theme_mapping_df.copy()
+    mapping["code"] = mapping["code"].astype(str)
+    matched = mapping[mapping["code"].isin(top_codes)]
+    if matched.empty:
+        return []
+
+    # 종목 메타 빠른 조회
+    by_code = top.set_index("code")
+    rank_map = {c: int(by_code.at[c, "rank"]) for c in top_codes}
+
+    # 테마별 집계
+    theme_groups = matched.groupby("theme")["code"].apply(list)
+
+    raw: list[dict[str, Any]] = []
+    for theme, codes in theme_groups.items():
+        codes = [c for c in codes if c in top_codes]
+        if len(codes) < SECTOR_MIN_MEMBER_COUNT:
+            continue
+
+        members = by_code.loc[codes]
+        rets = members["daily_return"].fillna(0.0).astype(float).tolist()
+        tos = members["turnover"].astype(float).fillna(0.0).tolist()
+
+        breadth = sum(1 for r in rets if r >= breadth_return_threshold)
+        avg_return = sum(rets) / len(rets)
+        turnover_sum = sum(tos)
+
+        raw.append({
+            "theme": str(theme),
+            "breadth": breadth,
+            "avg_return": float(avg_return),
+            "turnover_sum": float(turnover_sum),
+            "member_count": len(codes),
+            "codes": sorted(codes, key=lambda c: rank_map.get(c, 99999)),
+        })
+
+    if not raw:
+        return []
+
+    # 테마간 z-score 정규화
+    breadth_z = _zscore([float(r["breadth"]) for r in raw])
+    return_z = _zscore([r["avg_return"] for r in raw])
+    turnover_z = _zscore([r["turnover_sum"] for r in raw])
+
+    for i, r in enumerate(raw):
+        r["score"] = (
+            SECTOR_WEIGHT_BREADTH * breadth_z[i]
+            + SECTOR_WEIGHT_RETURN * return_z[i]
+            + SECTOR_WEIGHT_TURNOVER * turnover_z[i]
+        )
+        # leading_themes 호환성을 위해 'count' 도 채워둠 (= breadth + +5%이상 종목 수)
+        r["count"] = r["breadth"]
+
+    raw.sort(key=lambda x: x["score"], reverse=True)
+    leading = raw[:sector_count]
+
+    logger.info(
+        f"주도섹터 v1 식별 {len(leading)}개: "
+        f"{[(t['theme'], round(t['score'], 2)) for t in leading]}"
+    )
+    return leading

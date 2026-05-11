@@ -23,7 +23,6 @@ from src.report.formatting import (
 from src.report.decision import build_decision_report, split_messages
 from src.report.event import build_limit_up_alert
 from src.report.periodic import (
-    build_early_morning_alert,
     build_periodic_report,
     has_significant_change,
 )
@@ -294,100 +293,9 @@ def _leader(code: str, name: str, themes: list[str], rank: int, ret: float,
     }
 
 
-def test_early_morning_alert_no_change_returns_none():
-    same_themes = [{"theme": "전기/전선", "count": 3, "codes": ["A"]}]
-    same_stocks = [_leader("A", "X", ["전기/전선"], 1, 25.0)]
-    result = build_early_morning_alert(
-        snapshot_df=_make_snapshot(),
-        leading_themes=same_themes,
-        prev_leading_themes=same_themes,
-        leading_stocks=same_stocks,
-        prev_leading_stocks=same_stocks,
-        snapshot_dt=_DT_0910,
-    )
-    assert result is None
-
-
-def test_early_morning_alert_new_theme_triggers():
-    result = build_early_morning_alert(
-        snapshot_df=_make_snapshot(),
-        leading_themes=[{"theme": "전기/전선", "count": 3, "codes": ["A"]}],
-        prev_leading_themes=[],
-        leading_stocks=[],
-        prev_leading_stocks=[],
-        snapshot_dt=_DT_0910,
-    )
-    assert result is not None
-    assert "⚡ [장초반-09:10]" in result
-    assert "전기/전선" in result
-
-
-def test_early_morning_alert_new_leading_stock_triggers():
-    """주도주 신규 진입 시 알림 발송."""
-    same_themes = [{"theme": "전기/전선", "count": 3, "codes": ["075180"]}]
-    new_leader = [_leader("075180", "제룡전기", ["전기/전선"], 1, 28.0, "both")]
-    result = build_early_morning_alert(
-        snapshot_df=_make_snapshot(),
-        leading_themes=same_themes,
-        prev_leading_themes=same_themes,
-        leading_stocks=new_leader,
-        prev_leading_stocks=[],
-        snapshot_dt=_DT_0910,
-    )
-    assert result is not None
-    assert "주도주 진입" in result
-    assert "제룡전기" in result
-    assert "거래대금+상승률" in result  # criterion=both 라벨
-
-
-def test_early_morning_alert_dropped_leader_triggers():
-    same_themes = [{"theme": "전기/전선", "count": 3, "codes": ["075180"]}]
-    leader = [_leader("075180", "제룡전기", ["전기/전선"], 1, 28.0)]
-    result = build_early_morning_alert(
-        snapshot_df=_make_snapshot(),
-        leading_themes=same_themes,
-        prev_leading_themes=same_themes,
-        leading_stocks=[],
-        prev_leading_stocks=leader,
-        snapshot_dt=_DT_0910,
-    )
-    assert result is not None
-    assert "주도주 이탈" in result
-
-
-def test_early_morning_alert_criterion_change_triggers():
-    """기준이 volume → both 등으로 격상되면 알림."""
-    same_themes = [{"theme": "전기/전선", "count": 3, "codes": ["075180"]}]
-    prev = [_leader("075180", "제룡전기", ["전기/전선"], 1, 15.0, "volume")]
-    curr = [_leader("075180", "제룡전기", ["전기/전선"], 1, 25.0, "both")]
-    result = build_early_morning_alert(
-        snapshot_df=_make_snapshot(),
-        leading_themes=same_themes,
-        prev_leading_themes=same_themes,
-        leading_stocks=curr,
-        prev_leading_stocks=prev,
-        snapshot_dt=_DT_0910,
-    )
-    assert result is not None
-    assert "기준 변동" in result
-
-
-def test_early_morning_alert_multi_theme_stock():
-    """한 종목이 여러 주도섹터에 걸치면 themes 가 합쳐져 표시."""
-    themes = [
-        {"theme": "전기/전선", "count": 3, "codes": ["075180"]},
-        {"theme": "원자력", "count": 3, "codes": ["075180"]},
-    ]
-    new_leader = [_leader("075180", "제룡전기", ["전기/전선", "원자력"], 1, 28.0, "both")]
-    result = build_early_morning_alert(
-        snapshot_df=_make_snapshot(),
-        leading_themes=themes,
-        prev_leading_themes=themes,
-        leading_stocks=new_leader,
-        prev_leading_stocks=[],
-        snapshot_dt=_DT_0910,
-    )
-    assert "전기/전선" in result and "원자력" in result
+# build_early_morning_alert 관련 테스트는 폐기 (M5.5/M6 dashboard 로 대체).
+# 09:00~10:30 변화 감지/알림은 src/dashboard/state.py / worker.py 의
+# 상태 머신 + step_tracker 로 검증됨 (test_dashboard_state.py).
 
 
 def test_has_significant_change_same_themes():

@@ -120,99 +120,12 @@ def _detect_theme_changes(
     return lines
 
 
-_CRITERION_LABEL = {
-    "volume": "거래대금",
-    "return": "상승률",
-    "both": "거래대금+상승률",
-}
-
-
-def build_early_morning_alert(
-    snapshot_df,
-    leading_themes: list[dict[str, Any]],
-    prev_leading_themes: list[dict[str, Any]],
-    leading_stocks: list[dict[str, Any]],
-    prev_leading_stocks: list[dict[str, Any]],
-    snapshot_dt: datetime,
-) -> str | None:
-    """09:00~10:00 장 초반 변화 감지 알림 생성.
-
-    변화가 없으면 None 반환 → 호출부에서 발송 안 함.
-
-    감지 기준 (사용자 명시 — 고주파 모니터링용):
-        1. 주도섹터(테마) 변화 — 신규 진입/탈락
-        2. 주도주 변화 — 주도섹터 내 거래대금/상승률 상위 종목 (pre-limit-up).
-           한 테마에 여러 주도주 가능, 한 종목이 여러 테마에 걸칠 수 있음.
-
-    leading_stocks 의 각 항목 스키마:
-        {code, name, themes: [...], rank, price, daily_return, is_limit_up,
-         criterion: 'volume'|'return'|'both'}
-
-    비주도테마 상한가는 별도 limit_up 폴링이 알림.
-
-    Returns:
-        마크다운 문자열 또는 None (변화 없음).
-    """
-    t = fmt_time(snapshot_dt)
-    changes: list[str] = []
-
-    # 주도테마 변화
-    theme_changes = _detect_theme_changes(leading_themes, prev_leading_themes)
-    changes.extend(theme_changes)
-
-    # 주도주 변화 (코드 기준 set diff)
-    prev_map = {s["code"]: s for s in prev_leading_stocks}
-    curr_map = {s["code"]: s for s in leading_stocks}
-    new_codes = set(curr_map) - set(prev_map)
-    dropped_codes = set(prev_map) - set(curr_map)
-    # criterion 변동 (예: volume → both 격상 등) 도 알림
-    criterion_changed = [
-        curr_map[c] for c in (set(curr_map) & set(prev_map))
-        if curr_map[c]["criterion"] != prev_map[c]["criterion"]
-    ]
-
-    def _stock_line(s: dict[str, Any], emoji: str, action: str) -> str:
-        themes_str = " / ".join(s.get("themes", []))
-        crit = _CRITERION_LABEL.get(s.get("criterion", ""), s.get("criterion", ""))
-        lup_mark = " 🔴상한가" if s.get("is_limit_up") else ""
-        return (
-            f"  {emoji} 주도주 {action}: {s['name']} ({s['code']})  "
-            f"[{themes_str}]  "
-            f"{fmt_pct(s.get('daily_return', 0.0))}  "
-            f"기준={crit}{lup_mark}"
-        )
-
-    for code in new_codes:
-        changes.append(_stock_line(curr_map[code], "⭐", "진입"))
-    for code in dropped_codes:
-        changes.append(_stock_line(prev_map[code], "💤", "이탈"))
-    for s in criterion_changed:
-        prev_crit = _CRITERION_LABEL.get(prev_map[s["code"]]["criterion"], "")
-        curr_crit = _CRITERION_LABEL.get(s["criterion"], "")
-        changes.append(
-            f"  🔁 주도주 기준 변동: {s['name']} ({s['code']})  "
-            f"{prev_crit} → {curr_crit}"
-        )
-
-    if not changes:
-        return None
-
-    lines = [f"⚡ [장초반-{t}]"] + changes
-
-    if leading_themes:
-        themes_summary = ", ".join(
-            f"{lt['theme']}({lt['count']})" for lt in leading_themes[:3]
-        )
-        lines.append(f"현재 주도섹터: {themes_summary}")
-    if leading_stocks:
-        # 거래대금 상위 (rank 작은) 1~2개를 대표로
-        top2 = leading_stocks[:2]
-        rep = ", ".join(
-            f"{s['name']}({s['code']})" for s in top2
-        )
-        lines.append(f"대표 주도주: {rep}")
-
-    return "\n".join(lines)
+# 폐기됨 (M5.5/M6): build_early_morning_alert 와 _CRITERION_LABEL 은
+# Sonnet 1차 구현(criterion volume/return/both)에 묶여 있었고, 회전율 1위
+# 단순화 + dashboard 상태 머신으로 대체됨. 09:00~10:30 변화 감지는
+# `src/dashboard/worker.py` `dashboard_tick` 이 담당.
+#
+# 정기(11:00/13:00/14:00) 추적은 본 파일 `build_periodic_report` 그대로 사용.
 
 
 def has_significant_change(

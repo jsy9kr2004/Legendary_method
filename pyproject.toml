@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "legendary-method"
+version = "0.1.0"
+description = "한국 주식 종배/주도주 매매 의사결정 보조 레포트 자동 발송 시스템"
+requires-python = ">=3.10"
+readme = "README.md"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

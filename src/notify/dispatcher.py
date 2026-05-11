@@ -118,12 +118,8 @@ class Dispatcher:
         results = self.telegram(alert)
         _log_results("상한가", results)
 
-    def send_early_morning(self, alert: str | None) -> None:
-        """장초반 변화감지 알림 발송. None이면 변화 없음 → 스킵."""
-        if alert is None:
-            return
-        results = self.telegram(alert)
-        _log_results("장초반", results)
+    # send_early_morning 은 폐기됨 (M5.5/M6). M6 dashboard worker 가 직접
+    # send_message_single / edit_message 호출로 대체.
 
 
 def _log_results(label: str, results: list[dict[str, Any]]) -> None:
