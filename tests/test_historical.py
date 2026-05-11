@@ -7,9 +7,11 @@ import pandas as pd
 import pytest
 
 from src.jongbae.historical import (
+    _coerce_date,
     close_position,
     has_enough_samples,
     historical_4layer,
+    market_regime_timeline,
     pick_sizing_layer,
 )
 
@@ -190,3 +192,153 @@ def test_pick_sizing_layer_all_insufficient():
     }
     name, _ = pick_sizing_layer(layers)
     assert name == "layer1"
+
+
+# ── 시장 국면 매칭 layer (Task C) ────────────────────────────────────────────
+
+def test_coerce_date_python_date():
+    assert _coerce_date(date(2026, 5, 6)) == date(2026, 5, 6)
+
+
+def test_coerce_date_string_yyyymmdd():
+    assert _coerce_date("20260506") == date(2026, 5, 6)
+
+
+def test_coerce_date_string_dashed():
+    assert _coerce_date("2026-05-06") == date(2026, 5, 6)
+
+
+def test_coerce_date_invalid_returns_none():
+    assert _coerce_date("garbage") is None
+    assert _coerce_date(None) is None
+
+
+def test_market_regime_timeline_above_below_ma():
+    """KOSPI 일봉 시계열 → ma 위/아래 boolean dict."""
+    closes = [100.0] * 5 + [110.0] * 4 + [120.0]  # 마지막 1개는 ma 위에 명확히
+    rows = [
+        {"date": date(2026, 1, 1) + timedelta(days=i), "close": c}
+        for i, c in enumerate(closes)
+    ]
+    timeline = market_regime_timeline(pd.DataFrame(rows), ma_window=5)
+    assert len(timeline) == 6
+    assert timeline[date(2026, 1, 5)] is False  # close=100, ma=100, 위가 아님
+    # 1/6: rolling [100,100,100,100,110]=102, close=110 > 102 → True
+    assert timeline[date(2026, 1, 6)] is True
+    # 1/10: rolling [110,110,110,110,120]=112, close=120 > 112 → True
+    assert timeline[date(2026, 1, 10)] is True
+
+
+def test_market_regime_timeline_too_short_returns_empty():
+    df = pd.DataFrame([{"date": date(2026, 1, 1), "close": 100.0}])
+    assert market_regime_timeline(df, ma_window=200) == {}
+
+
+def test_market_regime_timeline_handles_string_dates():
+    """KIS API 응답이 'YYYYMMDD' 문자열일 때도 동작."""
+    rows = [
+        {"date": f"202601{i+1:02d}", "close": 100.0 + i}
+        for i in range(10)
+    ]
+    timeline = market_regime_timeline(pd.DataFrame(rows), ma_window=3)
+    assert date(2026, 1, 10) in timeline
+
+
+def test_historical_4layer_layer3_strong_mkt_match():
+    """layer3 사례 중 매칭 날짜 regime이 오늘과 일치한 사례만."""
+    today = date(2026, 5, 6)
+    # A: 강세장 날(2026-04-02), B: 약세장 날(2026-04-09) — 두 사례 모두 +30%, close_pos=1.0
+    rows = [
+        {"code": "A", "date": date(2026, 4, 1), "open": 1000, "high": 1010, "low": 990, "close": 1000, "volume": 100},
+        {"code": "A", "date": date(2026, 4, 2), "open": 1000, "high": 1300, "low": 1000, "close": 1300, "volume": 100},
+        {"code": "A", "date": date(2026, 4, 3), "open": 1320, "high": 1340, "low": 1310, "close": 1335, "volume": 100},
+        {"code": "B", "date": date(2026, 4, 8), "open": 1000, "high": 1010, "low": 990, "close": 1000, "volume": 100},
+        {"code": "B", "date": date(2026, 4, 9), "open": 1000, "high": 1300, "low": 1000, "close": 1300, "volume": 100},
+        {"code": "B", "date": date(2026, 4, 10), "open": 1320, "high": 1340, "low": 1310, "close": 1335, "volume": 100},
+    ]
+    regime = {
+        date(2026, 4, 2): True,   # 강세장
+        date(2026, 4, 9): False,  # 약세장
+    }
+    result = historical_4layer(
+        pd.DataFrame(rows),
+        today_close_pos=1.0,
+        today=today,
+        today_strong_market=True,
+        market_regime_by_date=regime,
+    )
+    assert result["layer3"]["n"] == 2  # 두 사례 모두
+    assert result["layer3_strong_mkt"]["n"] == 1  # 강세장 사례 1건만
+
+
+def test_historical_4layer_skips_strong_mkt_when_no_regime():
+    """today_strong_market 또는 regime dict 없으면 layer3_strong_mkt 슬롯 자체 부재."""
+    today = date(2026, 5, 6)
+    rows = [
+        {"code": "A", "date": date(2026, 4, 1), "open": 1000, "high": 1010, "low": 990, "close": 1000, "volume": 100},
+        {"code": "A", "date": date(2026, 4, 2), "open": 1000, "high": 1300, "low": 1000, "close": 1300, "volume": 100},
+    ]
+    result = historical_4layer(pd.DataFrame(rows), today_close_pos=1.0, today=today)
+    assert "layer3_strong_mkt" not in result
+
+
+# ── 거래량 비율 매칭 layer (Task D) ──────────────────────────────────────────
+
+def test_historical_4layer_layer3_high_vol_match():
+    """layer3 사례 중 volume_ratio가 오늘 ±tolerance 범위만 매칭."""
+    today = date(2026, 5, 6)
+    rows: list[dict] = []
+    # 30일치 base (volume=100) — volume_ratio ≈ 1.0
+    for i in range(30):
+        rows.append({"code": "A", "date": date(2026, 3, 1) + timedelta(days=i),
+                     "open": 1000, "high": 1010, "low": 990, "close": 1000, "volume": 100})
+    # high-volume 사례: 직전 평균 100, 당일 700 → ratio ≈ 7
+    rows.append({"code": "A", "date": date(2026, 4, 5),
+                 "open": 1000, "high": 1300, "low": 1000, "close": 1300, "volume": 700})
+    rows.append({"code": "A", "date": date(2026, 4, 6),  # 다음날 (gap 계산용)
+                 "open": 1340, "high": 1360, "low": 1330, "close": 1350, "volume": 100})
+
+    result = historical_4layer(
+        pd.DataFrame(rows),
+        today_close_pos=1.0,
+        today=today,
+        today_volume_ratio=7.0,
+    )
+    assert result["layer3"]["n"] >= 1
+    assert result["layer3_high_vol"]["n"] == 1
+
+
+def test_historical_4layer_skips_high_vol_when_no_ratio():
+    today = date(2026, 5, 6)
+    rows = [
+        {"code": "A", "date": date(2026, 4, 1), "open": 1000, "high": 1010, "low": 990, "close": 1000, "volume": 100},
+        {"code": "A", "date": date(2026, 4, 2), "open": 1000, "high": 1300, "low": 1000, "close": 1300, "volume": 100},
+    ]
+    result = historical_4layer(pd.DataFrame(rows), today_close_pos=1.0, today=today)
+    assert "layer3_high_vol" not in result
+
+
+# ── pick_sizing_layer 우선순위 (새 layer) ────────────────────────────────────
+
+def test_pick_sizing_layer_prefers_strong_mkt_when_enough():
+    layers = {
+        "layer1": {"n": 100},
+        "layer2": {"n": 50},
+        "layer3": {"n": 20},
+        "layer3_strong_mkt": {"n": 8},
+        "layer3_high_vol": {"n": 10},
+    }
+    name, _ = pick_sizing_layer(layers)
+    assert name == "layer3_strong_mkt"
+
+
+def test_pick_sizing_layer_falls_back_to_high_vol_if_strong_mkt_insufficient():
+    layers = {
+        "layer1": {"n": 100},
+        "layer2": {"n": 50},
+        "layer3": {"n": 20},
+        "layer3_strong_mkt": {"n": 3},  # 부족
+        "layer3_high_vol": {"n": 10},
+    }
+    name, _ = pick_sizing_layer(layers)
+    assert name == "layer3_high_vol"

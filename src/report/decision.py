@@ -15,8 +15,10 @@ leading_theme → candidates → historical → sizing 파이프라인의 최종
 """
 from __future__ import annotations
 
+import json
 import math
-from datetime import datetime
+from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 from src.report.formatting import (
@@ -76,8 +78,17 @@ def _candidate_block(c: dict[str, Any]) -> str:
     # Historical 통계
     lines.append("")
     lines.append("[Historical 갭상 분석 — 1년 lookback]")
-    for layer_key, label in [("layer1", "Layer 1 (+20%↑)"), ("layer2", "Layer 2 (상한가)"), ("layer3", "Layer 3 (종가위치 매칭)")]:
-        stats = layers.get(layer_key, {})
+    layer_order = [
+        ("layer1", "Layer 1 (+20%↑)"),
+        ("layer2", "Layer 2 (상한가)"),
+        ("layer3", "Layer 3 (종가위치 매칭)"),
+        ("layer3_strong_mkt", "Layer 3 + 강세장 매칭"),
+        ("layer3_high_vol", "Layer 3 + 거래량 매칭"),
+    ]
+    for layer_key, label in layer_order:
+        if layer_key not in layers:
+            continue
+        stats = layers[layer_key]
         is_basis = layer_key == sizing_layer
         lines.append("  " + fmt_layer_stats(stats, label, is_sizing_basis=is_basis))
 
@@ -85,7 +96,62 @@ def _candidate_block(c: dict[str, Any]) -> str:
     if layer4_note:
         lines.append(f"  Layer 4: ⚠ {layer4_note}")
 
+    # 14:50 시그널 (표시만, 점수화 X)
+    signals = c.get("intraday_signals") or {}
+    signal_lines = _intraday_signal_lines(signals)
+    if signal_lines:
+        lines.append("")
+        lines.append("[14:50 시그널]  ※ 표시만 — 사이징 미반영")
+        lines.extend(signal_lines)
+
     return "\n".join(lines)
+
+
+def _intraday_signal_lines(signals: dict[str, Any]) -> list[str]:
+    """후보 종목의 14:50 호가/체결/투자자 시그널 → 사람-읽는 줄들.
+
+    Args:
+        signals: {"asking_price": {...}, "ccnl_strength": {...}, "investor_flow": {...}}
+                 각 dict는 src/data/intraday_realtime.py 의 fetch_xxx 결과.
+
+    Returns:
+        없는 시그널은 줄 생략. 셋 다 비어 있으면 [].
+    """
+    out: list[str] = []
+
+    ap = signals.get("asking_price") or {}
+    if ap:
+        bid = ap.get("bid_total_volume", 0)
+        ask = ap.get("ask_total_volume", 0)
+        ratio = ap.get("bid_ask_ratio", float("nan"))
+        ratio_str = f"{ratio:.1f}배" if ratio == ratio and ratio > 0 else "—"
+        tag = ""
+        if ratio == ratio:
+            if ratio >= 3.0:
+                tag = "  🟢 매수 우세"
+            elif ratio <= 0.5:
+                tag = "  🔴 매도 우세"
+        out.append(f"  호가:  매수 {bid:,}주 / 매도 {ask:,}주  (bid/ask {ratio_str}){tag}")
+
+    cs = signals.get("ccnl_strength") or {}
+    if cs:
+        strength = cs.get("ccnl_strength", float("nan"))
+        s_str = f"{strength:.0f}" if strength == strength else "—"
+        tag = ""
+        if strength == strength:
+            if strength >= 120:
+                tag = "  🟢 매수 우세"
+            elif strength <= 80:
+                tag = "  🔴 매도 우세"
+        out.append(f"  체결:  체결강도 {s_str}{tag}")
+
+    inv = signals.get("investor_flow") or {}
+    if inv:
+        fv = inv.get("foreign_net_buy_value", 0)
+        iv = inv.get("institution_net_buy_value", 0)
+        out.append(f"  수급:  외국인 {fmt_billion(fv)} / 기관 {fmt_billion(iv)}")
+
+    return out
 
 
 def _sizing_block(candidates: list[dict[str, Any]]) -> str:
@@ -114,10 +180,38 @@ def _sizing_block(candidates: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _market_regime_line(market_stats: dict[str, Any]) -> list[str]:
+    """[시장 국면] 섹션 — KOSPI 현재가/200ma 위아래/60일 수익률 한 줄 요약.
+
+    강세장 가정 무너지면 모든 종배 룰이 무효라 결정 레포트 최상단에 배치.
+    market_stats 가 비어 있으면 빈 리스트 반환 (섹션 자체 생략).
+    """
+    if not market_stats:
+        return []
+    parts: list[str] = []
+    if "kospi_current" in market_stats:
+        cr = market_stats.get("kospi_change_rate", float("nan"))
+        cr_str = fmt_pct(cr) if cr == cr else "—"
+        parts.append(f"KOSPI {market_stats['kospi_current']:.2f} ({cr_str})")
+    if "kospi_above_ma200" in market_stats:
+        parts.append("200ma 위 ✅" if market_stats["kospi_above_ma200"] else "200ma 아래 ⚠")
+    if "kospi_60d_return" in market_stats:
+        parts.append(f"60일 {fmt_pct(market_stats['kospi_60d_return'])}")
+    if not parts:
+        return []
+
+    lines = ["[시장 국면]", "  " + "  |  ".join(parts)]
+    if market_stats.get("kospi_above_ma200") is False:
+        lines.append("  ⚠ 강세장 가정 무너짐 — 룰 신뢰도 저하, 후보 사이징 보수적으로")
+    lines.append("")
+    return lines
+
+
 def build_decision_report(
     leading_themes: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
     snapshot_dt: datetime,
+    market_stats: dict[str, Any] | None = None,
 ) -> str:
     """결정 레포트 마크다운 생성.
 
@@ -130,6 +224,7 @@ def build_decision_report(
             - sizing_stats: dict (pick_sizing_layer 결과 stats)
             - sizing: {"kelly": float|None, "sharpe": float, "equal": float}
         snapshot_dt: 스냅샷 수집 시각 (KST datetime).
+        market_stats: compute_market_stats() 결과. None/빈 dict 시 섹션 생략.
 
     Returns:
         마크다운 문자열.
@@ -142,8 +237,9 @@ def build_decision_report(
         f"🎯 [결정-{t}] {fmt_date(d)}",
         sep(),
         "",
-        "[최종 주도테마]",
     ]
+    lines += _market_regime_line(market_stats or {})
+    lines.append("[최종 주도테마]")
 
     if leading_themes:
         for lt in leading_themes:
@@ -204,3 +300,65 @@ def split_messages(report: str, max_len: int = TELEGRAM_MAX_LEN) -> list[str]:
 def save_decision_report(text: str, data_dir, dt: datetime) -> None:
     """결정 레포트를 파일로 저장."""
     save_report(text, data_dir, dt, "decision")
+
+
+def _to_serializable(obj: Any) -> Any:
+    """numpy/pandas/날짜 스칼라를 JSON 가능한 native 타입으로 변환. NaN→None."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {str(k): _to_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_serializable(v) for v in obj]
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, float):
+        if obj != obj or obj in (float("inf"), float("-inf")):
+            return None
+        return obj
+    if isinstance(obj, int):
+        return obj
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if hasattr(obj, "item") and not isinstance(obj, str):
+        try:
+            return _to_serializable(obj.item())
+        except (ValueError, AttributeError):
+            pass
+    return str(obj) if not isinstance(obj, str) else obj
+
+
+def _decision_candidates_path(data_dir, d: date) -> Path:
+    return Path(data_dir) / "decisions" / f"{d.strftime('%Y-%m-%d')}.json"
+
+
+def save_decision_candidates(
+    candidates: list[dict[str, Any]],
+    data_dir,
+    dt: datetime,
+) -> Path:
+    """결정 레포트의 후보 리스트를 JSON으로 영속화 (사후 레포트가 16:00에 재로딩).
+
+    경로: {DATA_DIR}/decisions/YYYY-MM-DD.json
+    """
+    path = _decision_candidates_path(data_dir, dt.date())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "report_date": dt.date().isoformat(),
+        "report_time": dt.strftime("%H:%M:%S"),
+        "candidates": [_to_serializable(c) for c in candidates],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def load_decision_candidates(data_dir, d: date) -> list[dict[str, Any]]:
+    """저장된 결정 후보 리스트를 읽어 반환. 파일 없으면 빈 리스트."""
+    path = _decision_candidates_path(data_dir, d)
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    return payload.get("candidates", []) or []

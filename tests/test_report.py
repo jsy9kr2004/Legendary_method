@@ -20,7 +20,12 @@ from src.report.formatting import (
     fmt_sizing_table,
     fmt_date,
 )
-from src.report.decision import build_decision_report, split_messages
+from src.report.decision import (
+    build_decision_report,
+    load_decision_candidates,
+    save_decision_candidates,
+    split_messages,
+)
 from src.report.event import build_limit_up_alert
 from src.report.periodic import (
     build_periodic_report,
@@ -378,3 +383,150 @@ def test_afterhours_report_errors_shown():
     )
     assert "API 타임아웃" in report
     assert "❌" in report
+
+
+# ── market regime line (top of decision report) ──────────────────────────────
+
+def test_decision_report_shows_market_regime():
+    report = build_decision_report(
+        leading_themes=[],
+        candidates=[],
+        snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
+        market_stats={
+            "kospi_current": 2680.45,
+            "kospi_change_rate": 0.83,
+            "kospi_above_ma200": True,
+            "kospi_60d_return": 3.42,
+        },
+    )
+    assert "[시장 국면]" in report
+    assert "KOSPI 2680.45" in report
+    assert "200ma 위 ✅" in report
+    assert "+3.42%" in report
+
+
+def test_decision_report_warns_on_weak_market():
+    report = build_decision_report(
+        leading_themes=[],
+        candidates=[],
+        snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
+        market_stats={
+            "kospi_current": 2400.0,
+            "kospi_change_rate": -1.2,
+            "kospi_above_ma200": False,
+            "kospi_60d_return": -8.5,
+        },
+    )
+    assert "200ma 아래 ⚠" in report
+    assert "강세장 가정 무너짐" in report
+
+
+def test_decision_report_omits_market_section_when_empty():
+    report = build_decision_report(
+        leading_themes=[],
+        candidates=[],
+        snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
+        market_stats=None,
+    )
+    assert "[시장 국면]" not in report
+
+
+# ── intraday signals (14:50 호가/체결/투자자) ────────────────────────────────
+
+def _candidate_with_signals() -> dict:
+    base = _make_candidate()
+    base["intraday_signals"] = {
+        "asking_price": {
+            "bid_total_volume": 3_200_000,
+            "ask_total_volume": 450_000,
+            "bid_ask_ratio": 7.1,
+        },
+        "ccnl_strength": {"ccnl_strength": 142.0},
+        "investor_flow": {
+            "foreign_net_buy_value": 1_800_000_000,
+            "institution_net_buy_value": 4_200_000_000,
+        },
+    }
+    return base
+
+
+def test_decision_report_shows_intraday_signals():
+    report = build_decision_report(
+        leading_themes=[],
+        candidates=[_candidate_with_signals()],
+        snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
+    )
+    assert "[14:50 시그널]" in report
+    assert "표시만 — 사이징 미반영" in report
+    assert "체결강도 142" in report
+    assert "외국인 18.0억" in report
+    assert "기관 42.0억" in report
+    assert "🟢 매수 우세" in report
+
+
+def test_decision_report_flags_sell_side_dominance():
+    c = _make_candidate()
+    c["intraday_signals"] = {
+        "asking_price": {
+            "bid_total_volume": 100_000,
+            "ask_total_volume": 500_000,
+            "bid_ask_ratio": 0.2,
+        },
+        "ccnl_strength": {"ccnl_strength": 65.0},
+    }
+    report = build_decision_report(
+        leading_themes=[],
+        candidates=[c],
+        snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
+    )
+    assert "🔴 매도 우세" in report  # 호가, 체결 둘 다
+
+
+def test_decision_report_no_signal_section_when_signals_absent():
+    """signals 없으면 [14:50 시그널] 섹션 자체가 표시되지 않음."""
+    report = build_decision_report(
+        leading_themes=[],
+        candidates=[_make_candidate()],
+        snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
+    )
+    assert "[14:50 시그널]" not in report
+
+
+# ── decision candidates persistence ──────────────────────────────────────────
+
+def test_decision_candidates_round_trip(tmp_path):
+    """save → load 시 후보가 동일하게 복원되고 NaN은 None으로 직렬화된다."""
+    dt = datetime(2026, 5, 6, 14, 50, tzinfo=KST)
+    candidates = [
+        {
+            "code": "075180",
+            "name": "제룡전기",
+            "price": 91500,
+            "daily_return": 29.97,
+            "priority": "limit_up",
+            "themes": ["전력기기", "원전"],
+            "layers": {"layer1": {"n": 7, "p": 0.71, "avg_gap": 4.2}},
+            "sizing_stats": {"n": 3, "p": 1.0, "avg_gap": 8.9},
+            "sizing": {"kelly": 0.2, "sharpe": 0.42, "equal": 0.333},
+            "intraday_high_pct": float("nan"),  # NaN → null
+        }
+    ]
+    path = save_decision_candidates(candidates, tmp_path, dt)
+    assert path.exists()
+    assert path.name == "2026-05-06.json"
+
+    loaded = load_decision_candidates(tmp_path, dt.date())
+    assert len(loaded) == 1
+    c = loaded[0]
+    assert c["code"] == "075180"
+    assert c["name"] == "제룡전기"
+    assert c["daily_return"] == 29.97
+    assert c["themes"] == ["전력기기", "원전"]
+    assert c["sizing"]["kelly"] == 0.2
+    assert c["intraday_high_pct"] is None  # NaN → None
+
+
+def test_load_decision_candidates_missing_file_returns_empty(tmp_path):
+    """파일이 없으면 빈 리스트를 반환 (사후 레포트가 graceful skip)."""
+    result = load_decision_candidates(tmp_path, date(2026, 5, 6))
+    assert result == []

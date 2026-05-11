@@ -118,6 +118,11 @@ class Dispatcher:
         results = self.telegram(alert)
         _log_results("상한가", results)
 
+    def send_afterhours(self, report: str) -> None:
+        """사후 레포트 발송 (텔레그램, 4096자 초과 시 자동 분할)."""
+        results = self.telegram(report)
+        _log_results("사후", results)
+
     # send_early_morning 은 폐기됨 (M5.5/M6). M6 dashboard worker 가 직접
     # send_message_single / edit_message 호출로 대체.
 

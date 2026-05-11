@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
@@ -57,7 +57,14 @@ from src.jongbae.sizing import compute_sizing
 from src.kis.client import KISClient
 from src.logging_setup import setup_logging
 from src.notify.dispatcher import Dispatcher
-from src.report.decision import build_decision_report, save_decision_report, split_messages
+from src.ops.error_log import record_error
+from src.report.decision import (
+    build_decision_report,
+    load_decision_candidates,
+    save_decision_candidates,
+    save_decision_report,
+    split_messages,
+)
 from src.report.event import build_limit_up_alert_from_quote
 from src.report.periodic import build_periodic_report, save_periodic_report
 
@@ -113,6 +120,13 @@ def _business_day_only(label: str) -> Callable:
                 return fn(*args, **kwargs)
             except Exception as e:  # noqa: BLE001
                 logger.exception(f"[{label}] 잡 오류: {e}")
+                # 사후 레포트가 읽도록 일자별 에러 로그에 기록
+                settings = kwargs.get("settings") or _find_settings(args)
+                if settings is not None:
+                    try:
+                        record_error(settings.data_dir, label, str(e))
+                    except Exception:  # noqa: BLE001
+                        pass
                 # dispatcher 가 있으면 에러 알림
                 disp = kwargs.get("dispatcher") or _find_dispatcher(args)
                 if disp is not None:
@@ -128,6 +142,13 @@ def _business_day_only(label: str) -> Callable:
 def _find_dispatcher(args: tuple) -> Dispatcher | None:
     for a in args:
         if isinstance(a, Dispatcher):
+            return a
+    return None
+
+
+def _find_settings(args: tuple) -> Settings | None:
+    for a in args:
+        if isinstance(a, Settings):
             return a
     return None
 
@@ -150,6 +171,7 @@ def _collect_snapshot(
     df = fetch_volume_rank(client, top_n=_WATCH_TOP_N)
     if df.empty:
         logger.warning(f"[스냅샷] {label}: 데이터 없음 (휴장일 또는 API 오류)")
+        record_error(settings.data_dir, f"스냅샷 {label}", "데이터 없음 (휴장일 또는 API 오류)")
         return
 
     save_snapshot(df, settings.data_dir, dt)
@@ -169,7 +191,7 @@ def _collect_snapshot(
 
     # 14:50 은 결정 레포트로 별도 처리 (정기 레포트 발송 안 함)
     if label == "14:50":
-        _send_decision_report(df, settings, dispatcher, dt)
+        _send_decision_report(df, settings, dispatcher, dt, client=client)
     else:
         _send_periodic_report(df, settings, dispatcher, dt)
 
@@ -222,6 +244,7 @@ def _send_morning(settings: Settings, dispatcher: Dispatcher,
             market_stats = compute_market_stats(client)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[모닝] market_stats 조회 실패: {e}")
+            record_error(settings.data_dir, "모닝", f"market_stats 조회 실패: {e}")
     holdings: list[dict[str, Any]] = []  # TODO: 보유 입력 메커니즘
     report = build_morning_report(market_stats, holdings, dt)
     dispatcher.send_morning(report)
@@ -230,8 +253,9 @@ def _send_morning(settings: Settings, dispatcher: Dispatcher,
 @_business_day_only("사후")
 def _send_afterhours(settings: Settings, dispatcher: Dispatcher,
                      client: KISClient | None = None) -> None:
-    """16:00 사후 레포트 이메일 발송."""
+    """16:00 사후 레포트 텔레그램 발송."""
     from src.data.snapshot import list_snapshots
+    from src.ops.error_log import format_error_lines, read_errors
     from src.report.afterhours import build_afterhours_report
 
     dt = now_kst()
@@ -244,7 +268,7 @@ def _send_afterhours(settings: Settings, dispatcher: Dispatcher,
         "ohlcv_updated": not today_rows.empty,
         "ohlcv_count": int(today_rows["code"].nunique()) if not today_rows.empty else 0,
         "snapshots_collected": len(snaps),
-        "errors": [],
+        "errors": [],  # 발송 직전에 channel 누적분 + 자기 자신 실패 합쳐 채움
     }
     market_stats: dict[str, Any] = {}
     if client is not None:
@@ -253,14 +277,26 @@ def _send_afterhours(settings: Settings, dispatcher: Dispatcher,
             market_stats = compute_market_stats(client)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[사후] market_stats 조회 실패: {e}")
+            record_error(settings.data_dir, "사후", f"market_stats 조회 실패: {e}")
+    candidates = load_decision_candidates(settings.data_dir, today)
+    afterhours_quotes: list[dict[str, Any]] = []
+    if client is not None and candidates:
+        from src.data.afterhours_quotes import fetch_afterhours_quotes
+        try:
+            codes = [str(c.get("code", "")).zfill(6) for c in candidates if c.get("code")]
+            afterhours_quotes = fetch_afterhours_quotes(client, codes)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[사후] 시간외 단일가 조회 실패: {e}")
+            record_error(settings.data_dir, "사후", f"시간외 단일가 조회 실패: {e}")
+    data_status["errors"] = format_error_lines(read_errors(settings.data_dir, today))
     report = build_afterhours_report(
-        candidates=[],
-        afterhours_quotes=[],
+        candidates=candidates,
+        afterhours_quotes=afterhours_quotes,
         data_status=data_status,
         report_dt=dt,
         market_stats=market_stats,
     )
-    dispatcher.email_afterhours(report, today.strftime("%Y-%m-%d"))
+    dispatcher.send_afterhours(report)
 
 
 # ── 레포트 빌더 헬퍼 ────────────────────────────────────────────────────────
@@ -286,15 +322,55 @@ def _send_periodic_report(
     _prev_leading_themes = leading
 
 
+def _today_volume_ratio(
+    daily_ohlcv,
+    code: str,
+    today: date,
+    today_volume: int,
+    window: int = 20,
+) -> float | None:
+    """후보 종목의 오늘 거래량 비율 = today_volume / 직전 N일 평균.
+
+    Returns:
+        float (배수) 또는 None — 일봉 데이터 부족(<5일)/0 평균 시.
+    """
+    if today_volume <= 0 or daily_ohlcv is None or daily_ohlcv.empty:
+        return None
+    own = daily_ohlcv[(daily_ohlcv["code"] == code) & (daily_ohlcv["date"] < today)]
+    own = own.sort_values("date").tail(window)
+    if len(own) < 5:
+        return None
+    avg = own["volume"].mean()
+    if avg <= 0 or avg != avg:
+        return None
+    return float(today_volume / avg)
+
+
 def _send_decision_report(
     snapshot_df,
     settings: Settings,
     dispatcher: Dispatcher,
     dt: datetime,
+    client: KISClient | None = None,
 ) -> None:
     """14:50 결정 레포트 ★."""
     theme_df = read_naver_themes(settings.data_dir)
     daily_ohlcv = read_daily_ohlcv(settings.data_dir)
+
+    # 시장 국면 한 줄 (강세장 가정 점검)
+    market_stats: dict[str, Any] = {}
+    market_regime_by_date: dict[Any, bool] = {}
+    if client is not None:
+        try:
+            from src.data.index import KOSPI_CODE, compute_market_stats, fetch_index_daily
+            market_stats = compute_market_stats(client)
+            kospi_daily = fetch_index_daily(client, KOSPI_CODE, days=252)
+            from src.jongbae.historical import market_regime_timeline
+            market_regime_by_date = market_regime_timeline(kospi_daily)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[결정] market_stats/regime 조회 실패: {e}")
+            record_error(settings.data_dir, "결정", f"market_stats/regime 조회 실패: {e}")
+    today_strong_market = market_stats.get("kospi_above_ma200")
 
     leading = identify_leading_themes(snapshot_df, theme_df)
     leading_codes = codes_in_leading_themes(leading)
@@ -315,7 +391,15 @@ def _send_decision_report(
             low=float(low),
             close=float(close),
         )
-        layers = historical_4layer(daily_ohlcv, today_close_pos=cp, today=today)
+        vol_ratio = _today_volume_ratio(daily_ohlcv, code, today, int(row.get("volume", 0)))
+        layers = historical_4layer(
+            daily_ohlcv,
+            today_close_pos=cp,
+            today=today,
+            today_strong_market=today_strong_market,
+            market_regime_by_date=market_regime_by_date or None,
+            today_volume_ratio=vol_ratio,
+        )
         sizing_layer_name, sizing_stats = pick_sizing_layer(layers)
 
         # R4 (c): 모든 layer 가 n<5 면 후보 제외
@@ -343,8 +427,40 @@ def _send_decision_report(
             "equal":  sizing_results["equal"][i],
         }
 
-    report = build_decision_report(leading, candidates_with_stats, dt)
+    # 14:50 시그널 (호가/체결/투자자) — 표시만, Kelly에 반영 X (자작 가중합 금지)
+    if client is not None:
+        from src.data.intraday_realtime import (
+            fetch_asking_price,
+            fetch_ccnl_strength,
+            fetch_investor_flow,
+        )
+        for c in candidates_with_stats:
+            code = str(c.get("code", "")).zfill(6)
+            signals: dict[str, Any] = {}
+            try:
+                ap = fetch_asking_price(client, code)
+                if ap:
+                    signals["asking_price"] = ap
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[결정] {code} 호가 조회 실패: {e}")
+            try:
+                cs = fetch_ccnl_strength(client, code)
+                if cs:
+                    signals["ccnl_strength"] = cs
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[결정] {code} 체결강도 조회 실패: {e}")
+            try:
+                inv = fetch_investor_flow(client, code)
+                if inv:
+                    signals["investor_flow"] = inv
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[결정] {code} 투자자 매매 조회 실패: {e}")
+            if signals:
+                c["intraday_signals"] = signals
+
+    report = build_decision_report(leading, candidates_with_stats, dt, market_stats=market_stats)
     save_decision_report(report, settings.data_dir, dt)
+    save_decision_candidates(candidates_with_stats, settings.data_dir, dt)
     parts = split_messages(report)
     dispatcher.send_decision(parts)
 

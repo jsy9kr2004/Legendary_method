@@ -32,7 +32,7 @@ Layer 4 — 종가 위치 + 고점 도달 시각 매칭:
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -44,6 +44,9 @@ LAYER2_RETURN_THRESHOLD = 29.5
 CLOSE_POSITION_TOLERANCE = 0.02   # ±2%
 LOOKBACK_TRADING_DAYS = 252
 MIN_SAMPLES_FOR_CANDIDATE = 5     # n<5 이면 후보 제외 (R4 (c))
+MARKET_MA_WINDOW = 200            # KOSPI 200일 이평 (강세장 판정)
+VOLUME_AVG_WINDOW = 20            # 거래량 평균 윈도우 (배수 계산용)
+VOLUME_RATIO_TOLERANCE = 0.5      # ±0.5배 — Layer 매칭 폭
 
 
 def close_position(open_p: float, high: float, low: float, close: float) -> float:
@@ -59,14 +62,15 @@ def close_position(open_p: float, high: float, low: float, close: float) -> floa
 
 
 def _compute_returns(df: pd.DataFrame) -> pd.DataFrame:
-    """일봉 DF에 daily_return, next_day 메트릭 추가.
+    """일봉 DF에 daily_return, next_day 메트릭 + 거래량 비율 추가.
 
     Args:
         df: 단일 종목의 일봉, date 오름차순 정렬 가정.
-            columns: code, date, open, high, low, close, ...
+            columns: code, date, open, high, low, close, volume, ...
 
     Returns:
-        원본 + [daily_return, close_pos, next_open, next_close, gap_pct, next_close_return]
+        원본 + [daily_return, close_pos, next_open, next_close, gap_pct,
+                next_close_return, volume_ratio]
     """
     out = df.sort_values("date").copy()
     out["prev_close"] = out["close"].shift(1)
@@ -77,7 +81,63 @@ def _compute_returns(df: pd.DataFrame) -> pd.DataFrame:
     out["next_close"] = out["close"].shift(-1)
     out["gap_pct"] = (out["next_open"] - out["close"]) / out["close"] * 100.0
     out["next_close_return"] = (out["next_close"] - out["close"]) / out["close"] * 100.0
+    # 거래량 비율 = 당일 volume / 직전 N일 평균 (자기 자신 제외)
+    if "volume" in out.columns:
+        avg = out["volume"].shift(1).rolling(window=VOLUME_AVG_WINDOW, min_periods=5).mean()
+        out["volume_ratio"] = out["volume"] / avg
+    else:
+        out["volume_ratio"] = float("nan")
     return out
+
+
+def _coerce_date(val: Any) -> date | None:
+    """다양한 date-like 입력을 python date 로 변환. 실패 시 None."""
+    if val is None:
+        return None
+    if isinstance(val, date) and not isinstance(val, datetime):
+        return val
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, str):
+        s = val.replace("-", "").strip()
+        if len(s) == 8 and s.isdigit():
+            return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+        return None
+    if hasattr(val, "date") and callable(val.date):
+        try:
+            return val.date()
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def market_regime_timeline(
+    kospi_daily: pd.DataFrame,
+    ma_window: int = MARKET_MA_WINDOW,
+) -> dict[date, bool]:
+    """KOSPI 일봉 시계열 → 각 날짜의 ma_window 평균 위/아래 boolean.
+
+    Args:
+        kospi_daily: columns=[date, close], 오름차순 정렬 또는 미정렬. date 는
+            python date / datetime / "YYYYMMDD" 문자열 / "YYYY-MM-DD" 문자열 OK.
+        ma_window: moving average 윈도우 (기본 200일 이평).
+
+    Returns:
+        {python date: True(위) | False(아래)} — ma_window 일 이상의
+        과거 데이터가 누적된 날짜만 포함. 비어 있으면 빈 dict.
+    """
+    if kospi_daily is None or kospi_daily.empty or len(kospi_daily) < ma_window:
+        return {}
+    df = kospi_daily.copy()
+    df["_date"] = df["date"].apply(_coerce_date)
+    df = df.dropna(subset=["_date"]).sort_values("_date").reset_index(drop=True)
+    df["_ma"] = df["close"].rolling(window=ma_window).mean()
+    result: dict[date, bool] = {}
+    for _, row in df.iterrows():
+        ma = row["_ma"]
+        if ma == ma:  # not NaN
+            result[row["_date"]] = bool(row["close"] > ma)
+    return result
 
 
 def _gap_metrics(matched: pd.DataFrame) -> dict[str, Any]:
@@ -136,28 +196,45 @@ def historical_4layer(
     today_close_pos: float,
     today: date,
     lookback_days: int = LOOKBACK_TRADING_DAYS,
+    today_strong_market: bool | None = None,
+    market_regime_by_date: dict[date, bool] | None = None,
+    today_volume_ratio: float | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """전체 일봉 데이터에서 4-Layer 통계 계산.
+    """Historical 갭상 통계 계산 (4 + 2 layer).
+
+    기본 4 layer (M3):
+        layer1 — 전체 +20%↑
+        layer2 — 상한가 (+29.5%↑)
+        layer3 — layer2 + 종가 위치 ±2%
+        layer4 — layer3 + 분봉 고점 도달 시각 (v1 슬롯)
+
+    추가 layer (M3+ 한국 단타 통설 매칭):
+        layer3_strong_mkt — layer3 사례 중 매칭 날짜의 KOSPI ma200 regime이 오늘과 일치
+        layer3_high_vol — layer3 사례 중 거래량 비율이 오늘 ±tolerance 범위
+        둘 다 자동으로 Kelly에 반영 (pick_sizing_layer 가 좁은 layer 우선 사용).
 
     Args:
-        daily_ohlcv: 전종목 일봉 long format. columns: code, date, open, high, low, close, ...
-                     Layer 1~3은 모든 종목의 사례를 풀(pool)로 사용 (cross-stock matching).
+        daily_ohlcv: 전종목 일봉 long format. columns: code, date, open, high, low, close, volume, ...
         today_close_pos: 오늘 후보 종목의 종가 위치 (Layer 3 매칭용).
         today: 오늘 날짜 (lookback 기준).
         lookback_days: 과거 몇 거래일까지 볼지.
+        today_strong_market: 오늘 KOSPI > 200ma 여부. None이면 layer3_strong_mkt 산출 X.
+        market_regime_by_date: 과거 날짜별 KOSPI > 200ma boolean.
+                               `market_regime_timeline(kospi_daily)` 결과.
+                               None이면 layer3_strong_mkt 산출 X.
+        today_volume_ratio: 오늘 후보의 volume / 직전 20일 평균.
+                            None/NaN이면 layer3_high_vol 산출 X.
 
     Returns:
-        {"layer1": {n,p,avg_gap,...}, "layer2": {...}, "layer3": {...}, "layer4": {note: "v1"}}
-
-    주의:
-        Layer 4 는 분봉 히스토리 부재로 v0 미구현.
-        결과 dict 에 {"n": 0, "note": "v1: 분봉 데이터 적재 후 구현"} 으로 채워 넣음.
+        layer dict. 추가 layer 인자 부재 시 해당 슬롯은 누락 (None 키 X).
 
     설계 결정 (D2, v0):
-        Layer 1~3 은 cross-stock pool 로 매칭한다 — 즉 모든 종목의 historical
-        사례를 한 풀로 섞어서 갭상 통계를 계산. 표본 확보엔 유리하지만 종목별
-        고유 패턴(테마 의존성, 유동성 차이 등)은 못 잡는다.
-        v1 에서 종목별 Layer 추가 + 표본 충분할 때만 사용하는 hybrid 검토.
+        Layer 1~3 은 cross-stock pool 로 매칭. 모든 종목의 historical 사례를
+        한 풀로 섞어서 통계 산출. 표본 확보엔 유리하지만 종목별 고유 패턴은 못 잡음.
+        v1 에서 종목별 layer + 표본 충분할 때만 hybrid 검토.
+
+        시장 국면 매칭은 KIS API 일봉 limit(252)+ma200 윈도우 제약으로 사용 가능
+        날짜가 좁다 (~52일). 더 멀리 가려면 KOSPI 영구 적재 인프라 필요 (TODO).
     """
     if daily_ohlcv.empty:
         empty = {"n": 0, "p": float("nan"), "avg_gap": float("nan"),
@@ -182,7 +259,7 @@ def historical_4layer(
         & (layer2["close_pos"] <= today_close_pos + CLOSE_POSITION_TOLERANCE)
     ]
 
-    result = {
+    result: dict[str, dict[str, Any]] = {
         "layer1": _gap_metrics(layer1),
         "layer2": _gap_metrics(layer2),
         "layer3": _gap_metrics(layer3),
@@ -191,9 +268,30 @@ def historical_4layer(
             "note": "v1: 분봉 데이터 적재 후 구현",
         },
     }
+
+    # ── 시장 국면 매칭 (layer3 위) ──────────────────────────────────────────
+    if today_strong_market is not None and market_regime_by_date:
+        regime_match = layer3["date"].apply(
+            lambda d: market_regime_by_date.get(_coerce_date(d))
+        )
+        layer3_mkt = layer3[regime_match == today_strong_market]
+        result["layer3_strong_mkt"] = _gap_metrics(layer3_mkt)
+
+    # ── 거래량 비율 매칭 (layer3 위) ────────────────────────────────────────
+    if today_volume_ratio is not None and today_volume_ratio == today_volume_ratio:
+        in_range = layer3[
+            (layer3["volume_ratio"] >= today_volume_ratio - VOLUME_RATIO_TOLERANCE)
+            & (layer3["volume_ratio"] <= today_volume_ratio + VOLUME_RATIO_TOLERANCE)
+        ]
+        result["layer3_high_vol"] = _gap_metrics(in_range)
+
     logger.debug(
-        f"4-Layer 통계 (today={today}, close_pos={today_close_pos:.2f}): "
-        f"L1 n={result['layer1']['n']}, L2 n={result['layer2']['n']}, L3 n={result['layer3']['n']}"
+        f"Historical layers (today={today}, close_pos={today_close_pos:.2f}, "
+        f"strong_mkt={today_strong_market}, vol_ratio={today_volume_ratio}): "
+        f"L1 n={result['layer1']['n']}, L2 n={result['layer2']['n']}, "
+        f"L3 n={result['layer3']['n']}"
+        + (f", L3_mkt n={result['layer3_strong_mkt']['n']}" if "layer3_strong_mkt" in result else "")
+        + (f", L3_vol n={result['layer3_high_vol']['n']}" if "layer3_high_vol" in result else "")
     )
     return result
 
@@ -206,13 +304,16 @@ def has_enough_samples(layer_stats: dict[str, Any], min_n: int = MIN_SAMPLES_FOR
 def pick_sizing_layer(layers: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
     """사이징 기준 Layer 선택.
 
-    원칙: Layer 3 (종가 위치 매칭) 기준.
-    표본 부족(n < 5)이면 Layer 2 → Layer 1 순으로 fallback.
+    원칙: 좁은 매칭부터 우선 — 시장 국면 매칭 > 거래량 매칭 > 기본 layer3.
+    표본 부족(n < 5)이면 다음 layer 로 fallback.
+
+    우선순위:
+        layer3_strong_mkt → layer3_high_vol → layer3 → layer2 → layer1
 
     Returns:
         (layer_name, layer_stats)
     """
-    for name in ("layer3", "layer2", "layer1"):
+    for name in ("layer3_strong_mkt", "layer3_high_vol", "layer3", "layer2", "layer1"):
         stats = layers.get(name, {})
         if has_enough_samples(stats):
             return name, stats
