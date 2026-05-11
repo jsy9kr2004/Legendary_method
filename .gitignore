@@ -42,6 +42,15 @@ Thumbs.db
 logs/
 *.log
 
+# go script runtime state
+.go.pid
+.go.child.pid
+.go.pid.*
+.go.child.pid.*
+
+# 로컬 전용 ignore (개인 환경)
+.gitignore.local
+
 # Data (실데이터는 커밋 X, .gitkeep만 유지)
 data/daily/*
 data/intraday/*
@@ -58,3 +67,13 @@ data/meta/*
 
 # Notebook
 .ipynb_checkpoints/
+
+# SSH / 자격증명 (실수로 커밋 방지)
+jsy9kr2004
+jsy9kr2004.pub
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+id_ed25519*
+.envrc

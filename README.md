@@ -55,25 +55,23 @@ trader-assistant/
 └── tests/
 ```
 
-## 빠른 시작 (WIP)
+## 빠른 시작
+
+`./go` 스크립트가 venv 세팅 / 의존성 설치 / 데이터 incremental / 백그라운드 실행을 한 번에 처리한다.
 
 ```bash
-# 환경 설정
-cd ~/trader-assistant
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 환경변수 설정 (.env 파일)
-cp .env.example .env
-# .env 파일에 텔레그램 토큰, KIS API 키 등 입력
-
-# 일봉 데이터 초기 적재 (5년치, 1~2시간 소요)
-python -m src.data.init_daily
-
-# 데몬 실행 (장 시작부터 마감까지 자동 동작)
-python -m src.main
+cp .env.example .env       # 텔레그램 토큰, KIS API 키 등 입력
+./go tel                   # 텔레그램 연결 확인 (최초 1회는 venv 자동 생성)
+./go init                  # (선택) 5년치 일봉 백필 — 이미 적재된 종목은 자동 skip
+./go start                 # 일봉 incremental + 스케줄러 백그라운드 실행
+./go status                # 실행 상태 / watchdog 최근 로그
+./go logs                  # watchdog + 오늘자 trader 로그
+./go stop                  # 백그라운드 종료
 ```
+
+`./go start`는 `setsid + nohup`으로 watchdog 프로세스를 분리 실행하므로 **셸을 닫아도 살아남는다**. 스케줄러가 죽으면 watchdog이 5초 후 자동 재시작 (10분 안 5회 초과 시에만 중단). 자세한 명령은 `./go` 또는 `./go help`.
+
+> 일봉 적재는 종목별로 마지막 적재일을 보고 그 다음 영업일부터만 받는다. 따라서 `init`/`update`/`start`를 반복해도 중복 호출은 즉시 skip된다.
 
 ## 라이선스
 
