@@ -250,6 +250,22 @@ def _send_morning(settings: Settings, dispatcher: Dispatcher,
     dispatcher.send_morning(report)
 
 
+@_business_day_only("지수 적재")
+def _update_index_daily_job(settings: Settings, dispatcher: Dispatcher,
+                            client: KISClient | None = None) -> None:
+    """16:10 KOSPI/KOSDAQ 일봉 incremental update.
+
+    historical layer3_strong_mkt 200ma 매칭 사용 가능 날짜를 영구 누적.
+    초기 1회 `python -m src.data.update_index --init` 필요.
+    """
+    if client is None:
+        return
+    from src.data.index import update_index_daily
+    result = update_index_daily(client, settings.data_dir)
+    total = sum(result.values())
+    logger.info(f"[지수 적재] 신규 {total}건 ({result})")
+
+
 @_business_day_only("사후")
 def _send_afterhours(settings: Settings, dispatcher: Dispatcher,
                      client: KISClient | None = None) -> None:
@@ -358,13 +374,15 @@ def _send_decision_report(
     daily_ohlcv = read_daily_ohlcv(settings.data_dir)
 
     # 시장 국면 한 줄 (강세장 가정 점검)
+    # KOSPI 적재본 우선 사용 → fetch fallback. 적재본은 ma200 lookback 확보용.
     market_stats: dict[str, Any] = {}
     market_regime_by_date: dict[Any, bool] = {}
     if client is not None:
         try:
-            from src.data.index import KOSPI_CODE, compute_market_stats, fetch_index_daily
-            market_stats = compute_market_stats(client)
-            kospi_daily = fetch_index_daily(client, KOSPI_CODE, days=252)
+            from src.data.index import KOSPI_CODE, compute_market_stats
+            from src.data.index_storage import read_index_daily
+            market_stats = compute_market_stats(client, data_dir=settings.data_dir)
+            kospi_daily = read_index_daily(settings.data_dir, KOSPI_CODE)
             from src.jongbae.historical import market_regime_timeline
             market_regime_by_date = market_regime_timeline(kospi_daily)
         except Exception as e:  # noqa: BLE001
@@ -640,7 +658,7 @@ def run() -> None:
             misfire_grace_time=300,
         )
 
-    # 16:00 사후 레포트 (이메일)
+    # 16:00 사후 레포트 (텔레그램)
     scheduler.add_job(
         _send_afterhours,
         trigger=CronTrigger(day_of_week="mon-fri", hour=16, minute=0),
@@ -648,6 +666,16 @@ def run() -> None:
         id="afterhours",
         name="사후 레포트",
         misfire_grace_time=1800,
+    )
+
+    # 16:10 지수 일봉 incremental (사후 발송 후 KOSPI/KOSDAQ 그날치 적재)
+    scheduler.add_job(
+        _update_index_daily_job,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=16, minute=10),
+        args=[settings, dispatcher, client],
+        id="index_daily_update",
+        name="지수 일봉 업데이트",
+        misfire_grace_time=3600,
     )
 
     # 상한가 폴링 — IntervalTrigger 기반, 함수 내부에서 시간창 가드.

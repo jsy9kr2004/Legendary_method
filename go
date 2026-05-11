@@ -71,6 +71,18 @@ cmd_update() {
     "$PY" -m src.data.incremental_daily "$@"
 }
 
+cmd_init_index() {
+    ensure_venv
+    echo "[go] KOSPI/KOSDAQ 일봉 3년치 백필 (historical layer3_strong_mkt 매칭용)"
+    "$PY" -m src.data.update_index --init --years 3 "$@"
+}
+
+cmd_update_index() {
+    ensure_venv
+    echo "[go] KOSPI/KOSDAQ 일봉 incremental"
+    "$PY" -m src.data.update_index "$@"
+}
+
 cmd_tel() {
     ensure_venv
     "$PY" -m src.notify.test_send "$@"
@@ -242,16 +254,19 @@ Legendary Method — 간편 실행 스크립트
   status    실행 상태 확인
   logs      최근 로그 출력 (watchdog + 오늘자 trader)
 
-  tel       텔레그램 연결 테스트  (예: ./go tel "안녕")
-  update    일봉 incremental만 (어제까지)
-  init      5년치 일봉 backfill (이미 있는 건 자동 skip)
-  setup     venv 생성 + 의존성 설치 (idempotent)
-  test      pytest 실행
+  tel         텔레그램 연결 테스트  (예: ./go tel "안녕")
+  update      일봉 incremental만 (어제까지)
+  init        5년치 일봉 backfill (이미 있는 건 자동 skip)
+  init-index  KOSPI/KOSDAQ 3년치 백필 (시장 국면 매칭용, 1회)
+  update-index KOSPI/KOSDAQ incremental
+  setup       venv 생성 + 의존성 설치 (idempotent)
+  test        pytest 실행
 
 처음 실행:
   cp .env.example .env       # 토큰 등 입력
   ./go tel                   # 텔레그램 연결 확인
-  ./go init                  # (선택) 5년치 백필 — 시간 걸림
+  ./go init                  # (선택) 5년치 종목 일봉 백필 — 시간 걸림
+  ./go init-index            # (선택) 지수 3년치 백필 — historical 시장 국면 매칭
   ./go start                 # 스케줄러 데몬 시작
 
 watchdog 정책:
@@ -270,6 +285,8 @@ case "$cmd" in
     setup)              cmd_setup ;;
     init)               cmd_init "$@" ;;
     update)             cmd_update "$@" ;;
+    init-index)         cmd_init_index "$@" ;;
+    update-index)       cmd_update_index "$@" ;;
     tel)                cmd_tel "$@" ;;
     start)              cmd_start ;;
     stop)               cmd_stop ;;

@@ -22,6 +22,11 @@ from typing import Any
 from loguru import logger
 
 from src.config import KST, load_settings
+from src.data.index_storage import (
+    index_daily_path,
+    latest_loaded_index_date,
+    read_index_daily,
+)
 from src.data.storage import (
     daily_ohlcv_path,
     naver_themes_path,
@@ -34,6 +39,8 @@ from src.logging_setup import setup_logging
 DISK_WARN_PCT = 80.0       # 디스크 사용률 경고 (%)
 DISK_CRIT_PCT = 90.0       # 디스크 사용률 위험 (%)
 OHLCV_MAX_AGE_DAYS = 3     # 일봉 파일 최대 허용 경과 일수 (주말 포함)
+INDEX_MIN_DAYS = 250       # historical layer3_strong_mkt ma200 매칭에 필요 (200 + 여유)
+INDEX_MAX_LAST_AGE_DAYS = 4  # 지수 일봉 최근 적재일 (주말+공휴일 여유)
 LOG_MAX_SIZE_MB = 500      # 로그 디렉토리 최대 허용 크기 (MB)
 DATA_MAX_SIZE_GB = 10.0    # 데이터 디렉토리 최대 허용 크기 (GB)
 
@@ -147,6 +154,42 @@ def check_theme_freshness(data_dir: Path) -> CheckResult:
                        f"최신 ({age_str}, {size_mb:.2f}MB)", detail)
 
 
+def check_index_daily(data_dir: Path) -> CheckResult:
+    """KOSPI 일봉 적재 상태 — historical 시장 국면 매칭에 필요한 lookback 확보 여부."""
+    p = index_daily_path(data_dir, "0001")
+    if not p.exists():
+        return CheckResult(
+            "지수 일봉", False, "warn",
+            "파일 없음 — `./go init-index` 실행 필요",
+            {"path": str(p)},
+        )
+    df = read_index_daily(data_dir, "0001")
+    last = latest_loaded_index_date(data_dir, "0001")
+    today = date.today()
+    age = (today - last).days if last else None
+    n = len(df)
+    detail = {"path": str(p), "rows": n, "last": str(last) if last else None,
+              "age_days": age}
+
+    if n < INDEX_MIN_DAYS:
+        return CheckResult(
+            "지수 적재량", False, "warn",
+            f"{n}일치만 적재 — ma200 매칭에 {INDEX_MIN_DAYS}일 이상 권장",
+            detail,
+        )
+    if age is not None and age > INDEX_MAX_LAST_AGE_DAYS:
+        return CheckResult(
+            "지수 신선도", False, "warn",
+            f"마지막 적재 {age}일 전 ({last}) — incremental cron 확인",
+            detail,
+        )
+    return CheckResult(
+        "지수 일봉", True, "ok",
+        f"{n}일치 적재 (최근 {last})",
+        detail,
+    )
+
+
 def check_log_dir(log_dir: Path) -> CheckResult:
     """로그 디렉토리 존재 + 크기 체크."""
     if not log_dir.exists():
@@ -187,6 +230,7 @@ def run_health_check(data_dir: Path, log_dir: Path) -> HealthReport:
     report.add(check_disk(data_dir))
     report.add(check_ohlcv_freshness(data_dir))
     report.add(check_theme_freshness(data_dir))
+    report.add(check_index_daily(data_dir))
     report.add(check_log_dir(log_dir))
     report.add(check_data_dir_size(data_dir))
 
