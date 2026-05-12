@@ -214,6 +214,7 @@ def test_run_health_check_returns_report(tmp_path):
 
 def test_run_health_check_overall_ok_with_all_files(tmp_path):
     import pandas as pd
+    from src.data.index_storage import write_index_daily
     from src.data.storage import daily_ohlcv_path, write_naver_themes
 
     # 일봉 파일 생성
@@ -226,6 +227,13 @@ def test_run_health_check_overall_ok_with_all_files(tmp_path):
                          "crawled_at": date.today()}])
     write_naver_themes(df, tmp_path)
 
+    # 지수 일봉 (260일치, 최근 적재)
+    idx_df = pd.DataFrame([
+        {"date": date.today() - timedelta(days=i), "close": 2600.0 + i}
+        for i in range(260)
+    ])
+    write_index_daily(idx_df, tmp_path, "0001")
+
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
 
@@ -233,3 +241,55 @@ def test_run_health_check_overall_ok_with_all_files(tmp_path):
         report = run_health_check(tmp_path, log_dir)
 
     assert report.overall_ok is True
+
+
+# ── check_index_daily ────────────────────────────────────────────────────────
+
+from src.ops.health import check_index_daily  # noqa: E402
+
+
+def test_check_index_no_file(tmp_path):
+    r = check_index_daily(tmp_path)
+    assert r.ok is False
+    assert "init-index" in r.message
+
+
+def test_check_index_insufficient_history(tmp_path):
+    """적재량 부족 → warn."""
+    import pandas as pd
+    from src.data.index_storage import write_index_daily
+    df = pd.DataFrame([
+        {"date": date.today() - timedelta(days=i), "close": 2600.0 + i}
+        for i in range(50)
+    ])
+    write_index_daily(df, tmp_path, "0001")
+    r = check_index_daily(tmp_path)
+    assert r.ok is False
+    assert "ma200" in r.message
+
+
+def test_check_index_stale_freshness(tmp_path):
+    """충분 적재됐지만 최근 적재일이 오래됨 → warn."""
+    import pandas as pd
+    from src.data.index_storage import write_index_daily
+    df = pd.DataFrame([
+        {"date": date.today() - timedelta(days=i + 10), "close": 2600.0 + i}
+        for i in range(260)
+    ])
+    write_index_daily(df, tmp_path, "0001")
+    r = check_index_daily(tmp_path)
+    assert r.ok is False
+    assert "마지막 적재" in r.message
+
+
+def test_check_index_ok(tmp_path):
+    """충분 적재 + 최근 적재 → ok."""
+    import pandas as pd
+    from src.data.index_storage import write_index_daily
+    df = pd.DataFrame([
+        {"date": date.today() - timedelta(days=i), "close": 2600.0 + i}
+        for i in range(260)
+    ])
+    write_index_daily(df, tmp_path, "0001")
+    r = check_index_daily(tmp_path)
+    assert r.ok is True

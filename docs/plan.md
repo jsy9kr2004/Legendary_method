@@ -202,9 +202,38 @@
 - [ ] **수정주가 일관성** — daily fetcher `adjusted=True` 일관 사용 검증
 - [ ] **종목 코드 변경(액면분할/합병) 처리** — historical 통계 단절 회피
 - [ ] **테마 매핑 변경 시 historical 재계산** — 네이버 테마 월 1회 갱신 시 사례 변동 영향 분석
+- [x] **사후 레포트 채널: 이메일 → 텔레그램** — `Dispatcher.send_afterhours()` 추가, `_send_afterhours` 가 호출. (2026-05-12)
+- [x] **사후 레포트 candidates 비어있던 placeholder** — `save_decision_candidates` / `load_decision_candidates` (`{DATA_DIR}/decisions/YYYY-MM-DD.json`). 14:50 결정에서 저장 → 16:00 사후에서 재로딩. (2026-05-12)
+- [x] **사후 레포트 시간외 단일가 placeholder** — `src/data/afterhours_quotes.py`. KIS 현재가 endpoint(FHKST01010100)로 후보 종목들 시간외 가격 조회. 실패 graceful skip. (2026-05-12)
+- [x] **사후 레포트 errors 비어있던 placeholder** — `src/ops/error_log.py` 일자별 JSONL 채널. `_business_day_only` 데코레이터 + 부분 실패 (market_stats / 시간외 / 스냅샷 빈 응답) 모두 기록. 사후 발송 직전 `read_errors` 로 그날 누적분 채움. (2026-05-12)
+- [x] **결정 레포트 상단 시장 국면 한 줄** — KOSPI / 200ma 위·아래 / 60일 수익률. 약세장이면 "강세장 가정 무너짐" 경고. (2026-05-12)
+- [x] **결정 레포트 후보별 14:50 시그널 (호가/체결/외국인·기관)** — `fetch_asking_price` / `fetch_ccnl_strength` / `fetch_investor_flow` 재사용. 표시만 (Kelly에 반영 X — 자작 가중합 금지). (2026-05-12)
+- [x] **Historical layer3_strong_mkt (시장 국면 매칭)** — `market_regime_timeline(kospi_daily, ma_window=200)` 으로 사례 풀 각 날짜에 ma200 위/아래 부여. layer3 사례 중 오늘과 같은 regime 만 매칭. pick_sizing_layer 가 자동 선택 → Kelly 반영. (2026-05-12)
+- [x] **Historical layer3_high_vol (거래량 비율 매칭)** — `_compute_returns` 에 volume_ratio (당일 / 직전 20일 평균). layer3 사례 중 오늘 ±0.5배 범위만 매칭. Kelly 자동 반영. (2026-05-12)
+- [x] **KOSPI/KOSDAQ 일봉 영구 적재** — `src/data/index_storage.py` + `src/data/index.py` (fetch_index_daily_range 페이지네이션, init/update_index_daily). `python -m src.data.update_index --init` 으로 N년치 백필. 스케줄러 16:10 incremental cron. `compute_market_stats` 적재본 우선 사용 → ma200 매칭 사용 가능 날짜 영구 확장. `./go init-index` / `update-index` CLI. health check `check_index_daily` 추가. (2026-05-12)
+- [ ] **회전율 매칭 layer** — 시총 미적재로 보류. 종목 마스터 part2 적재 후 layer3_high_turnover 추가 가능.
 
 ---
 
 ## 진행 상황 추적
 
 각 마일스톤의 완료 여부는 본 문서 상단 체크박스로 관리한다. 매주 한 번 진행 상황 리뷰.
+
+### 세션 요약
+
+**2026-05-12 — 결정/사후 레포트 강화 + 지수 일봉 영구 적재**
+
+종배 매매 의사결정 보조에 필요한 정보 밀도와 historical 매칭 정밀도를 끌어올린 세션. 한국 단타 통설(상한가 잔량/체결강도/외국인·기관/시장 국면/회전율) 중 코드베이스에서 즉시 활용 가능한 항목을 결정 레포트와 historical 통계에 반영.
+
+- **사후 레포트 (16:00)** — 채널 이메일→텔레그램, 14:50 candidates 영속화(`{DATA_DIR}/decisions/YYYY-MM-DD.json`)→사후 재로딩, KIS 현재가 endpoint로 시간외 단일가, 일자별 JSONL 에러 집계 채널(`src/ops/error_log.py`).
+- **결정 레포트 (14:50)** — 상단 시장 국면 한 줄(KOSPI/200ma/60일 수익률), 후보별 호가·체결·외국인/기관 시그널(M6 fetcher 재사용, 표시만/Kelly 반영 X). 약세장 시 "강세장 가정 무너짐" 경고.
+- **Historical 매칭 layer 2종** — `layer3_strong_mkt`(KOSPI ma200 regime 매칭), `layer3_high_vol`(거래량 비율 ±0.5배 매칭). `pick_sizing_layer`가 좁은 layer 우선 → Kelly 자동 재계산.
+- **KOSPI/KOSDAQ 일봉 영구 적재** — `src/data/index_storage.py` parquet, `fetch_index_daily_range` 페이지네이션, `init/update_index_daily` CLI(`./go init-index`/`update-index`), 16:10 cron 통합, health check 추가. ma200 매칭 사용 가능 날짜를 ~52일→백필 N년-200일로 영구 확장.
+
+총 7 커밋, 540 tests, plan.md 기술 부채 14항목 [x] 완료.
+
+다음 후보 (우선순위):
+1. 시총 적재(M5.5 선행) → 회전율 layer 가능
+2. 분봉 적재 시작(Layer 4 / 상한가 도달 시각 매칭 v1)
+3. 수정주가 일관성 검증
+4. 1주일 dry-run (M5)

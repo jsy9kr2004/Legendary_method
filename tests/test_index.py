@@ -9,7 +9,10 @@ from src.data.index import (
     KOSPI_CODE,
     compute_market_stats,
     fetch_index_daily,
+    fetch_index_daily_range,
     fetch_index_quote,
+    init_index_daily,
+    update_index_daily,
 )
 
 
@@ -155,3 +158,158 @@ def test_compute_market_stats_short_history_no_ma200():
     stats = compute_market_stats(c)
     assert "kospi_ma200" not in stats
     assert "kospi_60d_return" in stats  # 80 ≥ 60
+
+
+# ── fetch_index_daily_range (페이지네이션) ────────────────────────────────────
+
+from datetime import date, timedelta  # noqa: E402
+
+
+def _page_payload(records: list[tuple[str, float]]) -> dict:
+    """(date_str, close) tuples → KIS output2 payload."""
+    return {
+        "output2": [
+            {"stck_bsop_date": d, "bstp_nmix_prpr": str(c)}
+            for d, c in records
+        ]
+    }
+
+
+def test_fetch_index_daily_range_single_page():
+    payload = _page_payload([("20260504", 2680.0), ("20260506", 2701.0)])
+    c = _client(payload)
+    # 두 번째 호출은 빈 응답 → 페이지네이션 종료
+    c.get.side_effect = [payload, {"output2": []}]
+
+    df = fetch_index_daily_range(c, KOSPI_CODE,
+                                 start_date=date(2026, 5, 1),
+                                 end_date=date(2026, 5, 6))
+    assert len(df) == 2
+    assert df.iloc[0]["date"] == date(2026, 5, 4)
+    assert df.iloc[1]["close"] == 2701.0
+
+
+def test_fetch_index_daily_range_pagination():
+    """한 호출당 응답 100건 제한 → 여러 페이지 누적."""
+    # 페이지 1: 2026-04-29 ~ 2026-05-06 (8건)
+    page1 = _page_payload([
+        (f"202605{d:02d}", 2700.0 + d) for d in [6, 5, 4]
+    ] + [(f"202604{d:02d}", 2680.0 + d) for d in [30, 29]])
+    # 페이지 2: 2026-04-25 ~ 2026-04-28 (4건)
+    page2 = _page_payload([
+        (f"202604{d:02d}", 2670.0 + d) for d in [28, 27, 26, 25]
+    ])
+    # 페이지 3: 빈 응답 → 종료
+    c = MagicMock()
+    c.get.side_effect = [page1, page2, {"output2": []}]
+
+    df = fetch_index_daily_range(c, KOSPI_CODE,
+                                 start_date=date(2026, 4, 25),
+                                 end_date=date(2026, 5, 6))
+    assert len(df) == 9
+    assert df.iloc[0]["date"] == date(2026, 4, 25)
+    assert df.iloc[-1]["date"] == date(2026, 5, 6)
+
+
+def test_fetch_index_daily_range_dedup():
+    """페이지 경계 중복 제거."""
+    page1 = _page_payload([("20260506", 2700.0), ("20260505", 2695.0)])
+    page2 = _page_payload([("20260505", 2695.0), ("20260504", 2680.0)])
+    c = MagicMock()
+    c.get.side_effect = [page1, page2, {"output2": []}]
+
+    df = fetch_index_daily_range(c, KOSPI_CODE,
+                                 start_date=date(2026, 5, 1),
+                                 end_date=date(2026, 5, 6))
+    assert len(df) == 3  # 5/4, 5/5, 5/6 — 5/5 중복 제거
+
+
+def test_fetch_index_daily_range_max_pages_guard():
+    """max_pages 도달 시 안전 종료 (무한 루프 방지)."""
+    # 매번 동일 1건 반환 → 진행 없으면 next_end >= cursor_end 체크로도 종료되지만
+    # 안전 가드를 명시적으로 검증
+    page = _page_payload([("20260506", 2700.0)])
+    c = MagicMock()
+    c.get.side_effect = [page] * 100  # 무제한 응답
+
+    df = fetch_index_daily_range(c, KOSPI_CODE,
+                                 start_date=date(2026, 1, 1),
+                                 end_date=date(2026, 5, 6),
+                                 max_pages=3)
+    assert len(df) == 1
+    # call_count <= max_pages+1 (마지막 cursor_end 진행 못해서 break 가능)
+    assert c.get.call_count <= 4
+
+
+def test_fetch_index_daily_range_empty_response_returns_empty():
+    df = fetch_index_daily_range(_client({"output2": []}), KOSPI_CODE,
+                                 start_date=date(2026, 5, 1),
+                                 end_date=date(2026, 5, 6))
+    assert df.empty
+
+
+def test_fetch_index_daily_range_invalid_range():
+    """start > end 면 빈 DF."""
+    df = fetch_index_daily_range(_client({}), KOSPI_CODE,
+                                 start_date=date(2026, 5, 6),
+                                 end_date=date(2026, 5, 1))
+    assert df.empty
+
+
+# ── init_index_daily / update_index_daily ────────────────────────────────────
+
+def test_init_index_daily_writes_parquet(tmp_path):
+    page = _page_payload([
+        (f"202605{d:02d}", 2700.0 + d) for d in [6, 5, 4]
+    ])
+    c = MagicMock()
+    c.get.side_effect = [page, {"output2": []}, page, {"output2": []}]
+    # 위 4개 응답: KOSPI 1 page + empty + KOSDAQ 1 page + empty
+
+    result = init_index_daily(c, tmp_path, years=1,
+                              today=date(2026, 5, 6))
+    assert result[KOSPI_CODE] == 3
+
+    from src.data.index_storage import read_index_daily
+    df = read_index_daily(tmp_path, KOSPI_CODE)
+    assert len(df) == 3
+
+
+def test_update_index_daily_skips_when_no_prior(tmp_path):
+    """저장된 적이 없으면 update 는 skip (init 필요)."""
+    c = MagicMock()
+    result = update_index_daily(c, tmp_path, index_codes=(KOSPI_CODE,),
+                                today=date(2026, 5, 6))
+    assert result[KOSPI_CODE] == 0
+    c.get.assert_not_called()
+
+
+def test_update_index_daily_skips_when_already_today(tmp_path):
+    """이미 오늘까지 적재된 경우 skip."""
+    from src.data.index_storage import write_index_daily
+    write_index_daily(
+        pd.DataFrame([{"date": date(2026, 5, 6), "close": 2701.0}]),
+        tmp_path, KOSPI_CODE,
+    )
+    c = MagicMock()
+    result = update_index_daily(c, tmp_path, index_codes=(KOSPI_CODE,),
+                                today=date(2026, 5, 6))
+    assert result[KOSPI_CODE] == 0
+    c.get.assert_not_called()
+
+
+def test_update_index_daily_fetches_gap(tmp_path):
+    """마지막 적재일 + 1 ~ 오늘 만 fetch."""
+    from src.data.index_storage import read_index_daily, write_index_daily
+    write_index_daily(
+        pd.DataFrame([{"date": date(2026, 5, 4), "close": 2680.0}]),
+        tmp_path, KOSPI_CODE,
+    )
+    page = _page_payload([("20260506", 2701.0), ("20260505", 2695.0)])
+    c = MagicMock()
+    c.get.side_effect = [page, {"output2": []}]
+
+    result = update_index_daily(c, tmp_path, index_codes=(KOSPI_CODE,),
+                                today=date(2026, 5, 6))
+    assert result[KOSPI_CODE] == 2  # 5/5, 5/6 신규
+    assert len(read_index_daily(tmp_path, KOSPI_CODE)) == 3

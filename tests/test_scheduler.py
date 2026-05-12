@@ -149,7 +149,7 @@ def test_run_registers_all_jobs(tmp_path, monkeypatch):
     expected = {
         "state_reset", "morning",
         "snapshot_1100", "snapshot_1300", "snapshot_1400", "snapshot_1450",
-        "afterhours", "limit_up_poll",
+        "afterhours", "index_daily_update", "limit_up_poll",
     }
     assert expected.issubset(set(job_ids)), f"누락된 잡: {expected - set(job_ids)}"
 

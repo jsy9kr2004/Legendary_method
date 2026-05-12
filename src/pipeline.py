@@ -43,7 +43,19 @@ from src.jongbae.leading_theme import (
 )
 from src.jongbae.sizing import compute_sizing
 from src.logging_setup import setup_logging
-from src.report.decision import build_decision_report, save_decision_report, split_messages
+from src.report.decision import (
+    build_decision_report,
+    save_decision_candidates,
+    save_decision_report,
+    split_messages,
+)
+
+
+def _demo_regime_by_date(daily_ohlcv) -> dict:
+    """데모 fixture: 모든 사례 날짜를 강세장(True)으로 가정."""
+    if daily_ohlcv is None or daily_ohlcv.empty:
+        return {}
+    return {d: True for d in daily_ohlcv["date"].unique().tolist()}
 
 
 def run_pipeline(
@@ -124,7 +136,23 @@ def run_pipeline(
             close=float(close),
         )
 
-        layers = historical_4layer(daily_ohlcv, today_close_pos=cp, today=target_date)
+        # 데모는 강세장 가정 + 후보별 거래량 비율 mock
+        if demo:
+            today_strong = True
+            regime_by_date = _demo_regime_by_date(daily_ohlcv)
+            vol_ratio = 6.5  # 평균 대비 ×6.5배 (단타 자금 집중 가정)
+        else:
+            today_strong = None
+            regime_by_date = None
+            vol_ratio = None
+        layers = historical_4layer(
+            daily_ohlcv,
+            today_close_pos=cp,
+            today=target_date,
+            today_strong_market=today_strong,
+            market_regime_by_date=regime_by_date,
+            today_volume_ratio=vol_ratio,
+        )
         sizing_layer_name, sizing_stats = pick_sizing_layer(layers)
 
         # R4 (c): 모든 layer 가 n<5 면 후보 제외 (표본 부족)
@@ -160,11 +188,38 @@ def run_pipeline(
         target_date.year, target_date.month, target_date.day,
         int(hh2), int(mm2), tzinfo=KST,
     )
-    report = build_decision_report(leading_themes, candidates_with_stats, snap_dt)
+    market_stats: dict[str, Any] = {}
+    if demo:
+        # 데모: 강세장 가정 (제룡전기 5/4 시점 시뮬레이션)
+        market_stats = {
+            "kospi_current": 2680.45,
+            "kospi_change_rate": 0.83,
+            "kospi_ma200": 2615.20,
+            "kospi_above_ma200": True,
+            "kospi_60d_return": 3.42,
+        }
+        # 14:50 시그널 mock (실제 운영에선 scheduler가 KIS client로 fetch)
+        for c in candidates_with_stats:
+            c["intraday_signals"] = {
+                "asking_price": {
+                    "bid_total_volume": 3_200_000,
+                    "ask_total_volume": 450_000,
+                    "bid_ask_ratio": 7.1,
+                },
+                "ccnl_strength": {"ccnl_strength": 142.0},
+                "investor_flow": {
+                    "foreign_net_buy_value": 1_800_000_000,
+                    "institution_net_buy_value": 4_200_000_000,
+                },
+            }
+    report = build_decision_report(
+        leading_themes, candidates_with_stats, snap_dt, market_stats=market_stats
+    )
 
     # ── 6. 저장 ───────────────────────────────────────────────────────────
     if save:
         save_decision_report(report, data_dir, snap_dt)
+        save_decision_candidates(candidates_with_stats, data_dir, snap_dt)
         logger.info(f"레포트 저장: {data_dir}/reports/{target_date}/{hh2}_{mm2}_decision.md")
 
     # ── 7. 발송 ───────────────────────────────────────────────────────────
