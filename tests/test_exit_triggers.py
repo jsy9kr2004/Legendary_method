@@ -46,7 +46,35 @@ def test_A1_stop_loss_price():
     assert "A1_stop_price" in kinds
     a1 = next(e for e in events if e.kind == "A1_stop_price")
     assert a1.is_stop_loss is True
-    assert "손절선" in a1.text
+    # 카드 안 한 줄 사유 포맷 (round 17): "A1 가격 손절 -1.5% — ..."
+    assert "A1" in a1.text or "손절" in a1.text
+
+
+def test_trigger_text_is_card_format_not_push():
+    """정정 round 17: TriggerEvent.text 는 카드 한 줄 사유. 푸시 prefix 없어야."""
+    h, now = _entry(100_000)
+    events = evaluate_triggers(h, now=now, current_price=98_500)
+    a1 = next(e for e in events if e.kind == "A1_stop_price")
+    # 폐기된 푸시 prefix
+    assert "[손절선 도달]" not in a1.text
+    assert "[매도 트리거]" not in a1.text
+    # 시각 prefix 도 카드용엔 X (카드 자체에 시각 표시)
+    assert now.strftime("%H:%M:%S") not in a1.text
+    # 한 줄 (개행 없음) — 카드 안 한 줄로 표시되어야
+    assert "\n" not in a1.text
+
+
+def test_trigger_text_no_push_prefix_for_C():
+    """C 시그널 청산도 카드용 한 줄 — 푸시 prefix X."""
+    h, now = _entry(100_000)
+    events = evaluate_triggers(
+        h, now=now, current_price=100_500,
+        vp_5ma_prev=105.0, vp_5ma_now=98.0,
+    )
+    c1 = next(e for e in events if e.kind == "C1_vp_below_100")
+    assert "[매도 트리거]" not in c1.text
+    assert "\n" not in c1.text
+    assert "C1" in c1.text or "VP" in c1.text
 
 
 def test_A1_no_trigger_above_stop():

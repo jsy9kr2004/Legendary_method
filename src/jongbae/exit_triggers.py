@@ -2,9 +2,11 @@
 
 `docs/jongbae-strategy.md` R15 참조. 정정 이력 round 16.
 
-핵심 정책:
-    **모든 매도 트리거는 텔레그램 푸시 알림.** KIS 실주문 자동 등록 X.
-    CLAUDE.md "자동 매매 절대 금지" 정책 유지 — 단타 시스템도 예외 아님.
+핵심 정책 (정정 round 17):
+    **모든 매도 트리거 = 보유 모드 카드 안 표시.** 별도 텔레그램 푸시 알림 X.
+    카드 렌더러가 `TriggerEvent.text` (한 줄 사유) 와 `holding.triggers_fired`
+    상태를 보고 "🔔 매도 트리거 상태" 섹션을 ❌ → ✅ 갱신.
+    KIS 실주문 자동 등록 X. CLAUDE.md "자동 매매 절대 금지" 정책 유지.
 
 상태:
     감시 모드 ←→ 보유 모드
@@ -127,10 +129,18 @@ class Holding:
 
 @dataclass
 class TriggerEvent:
+    """매도 트리거 발화 1건. 정정 round 17 후엔 카드 안 표시 전용 (별도 푸시 X).
+
+    Attributes:
+        kind: 트리거 종류 (A1~C5).
+        code: 종목코드.
+        text: 카드 안 한 줄 사유. 예: "A1 가격 손절 89,930 (-1.50%)".
+        is_stop_loss: A* 손절선 — 카드 헤더 이모지 🛑 / 우선순위 강조.
+    """
     kind: TriggerKind
     code: str
-    text: str          # 텔레그램 푸시 본문
-    is_stop_loss: bool # A* 손절선 = 최우선 (이모지/우선순위 다름)
+    text: str
+    is_stop_loss: bool
 
 
 # ── 평가 함수 (pure, 1 tick 마다 호출) ────────────────────────────────────────
@@ -176,35 +186,35 @@ def evaluate_triggers(
     pnl = holding.pnl_pct(current_price)
 
     def fire(kind: TriggerKind, is_stop_loss: bool, detail: str) -> None:
+        """카드 안 한 줄 사유 — 별도 푸시 발송 X (round 17)."""
         if kind in ONESHOT_TRIGGERS and kind in holding.triggers_fired:
             return
         holding.triggers_fired.add(kind)
-        emoji = "🛑" if is_stop_loss else "🔔"
-        prefix = "[손절선 도달]" if kind.startswith(("A1", "A2", "A3", "A4")) else (
-            "[익절선 도달]" if kind.startswith("B") else "[매도 트리거]"
-        )
         events.append(TriggerEvent(
             kind=kind,
             code=holding.code,
             is_stop_loss=is_stop_loss,
-            text=(
-                f"{emoji} {prefix} {now.strftime('%H:%M:%S')}\n"
-                f"{holding.code}  매수 {int(holding.entry_price):,} "
-                f"→ 현재 {int(current_price):,} ({pnl:+.2f}%)\n"
-                f"트리거: {TRIGGER_LABELS[kind]}\n"
-                f"{detail}"
-            ),
+            text=f"{TRIGGER_LABELS[kind]} — {detail}",
         ))
 
     # ── A: 손절 (최우선) ─────────────────────────────────────────────────────
     if current_price <= holding.stop_loss_price:
-        fire("A1_stop_price", True, f"손절선 {int(holding.stop_loss_price):,}")
+        fire(
+            "A1_stop_price", True,
+            f"{int(holding.stop_loss_price):,} 도달 (현 {int(current_price):,}, {pnl:+.2f}%)",
+        )
 
     if holding.entry_bar_low > 0 and current_price < holding.entry_bar_low:
-        fire("A2_stop_bar_low", True, f"진입봉 저점 {int(holding.entry_bar_low):,}")
+        fire(
+            "A2_stop_bar_low", True,
+            f"진입봉 저점 {int(holding.entry_bar_low):,} 이탈",
+        )
 
     if minute_ma_5 is not None and minute_ma_5 > 0 and current_price < minute_ma_5:
-        fire("A3_stop_ma", True, f"5분 이평 {int(minute_ma_5):,}")
+        fire(
+            "A3_stop_ma", True,
+            f"5분 이평 {int(minute_ma_5):,} 이탈",
+        )
 
     elapsed_min = (now - holding.entry_time).total_seconds() / 60.0
     if elapsed_min >= holding.time_stop_minutes and pnl < TIME_STOP_REQUIRED_PROFIT_PCT:
@@ -215,17 +225,23 @@ def evaluate_triggers(
 
     # ── B: 익절 ───────────────────────────────────────────────────────────────
     if current_price >= holding.take_profit_1_price:
-        fire("B1_take_profit_1", False, f"+{TAKE_PROFIT_1_PCT}% 도달 — 1/3 청산 권장")
+        fire(
+            "B1_take_profit_1", False,
+            f"+{TAKE_PROFIT_1_PCT}% 도달 ({int(current_price):,}) — 1/3 청산 권장",
+        )
 
     if current_price >= holding.take_profit_2_price:
-        fire("B2_take_profit_2", False, f"+{TAKE_PROFIT_2_PCT}% 도달 — 1/3 청산 권장")
+        fire(
+            "B2_take_profit_2", False,
+            f"+{TAKE_PROFIT_2_PCT}% 도달 ({int(current_price):,}) — 1/3 청산 권장",
+        )
 
     # B3 트레일링 — B1 발화 후 활성
     if "B1_take_profit_1" in holding.triggers_fired:
         ts = holding.trailing_stop_price()
         if ts > 0 and current_price <= ts:
-            # 트레일링은 멱등 X — 한번 발화 후 추가 하락 시 재발화 가능
-            # 다만 동일 tick 에 중복 추가 방지 위해 events 내 dedup
+            # 트레일링은 멱등 X — 한번 발화 후 추가 하락 시 재발화 가능.
+            # 동일 tick 에 중복 추가 방지 위해 events 내 dedup.
             if not any(e.kind == "B3_trailing" for e in events):
                 holding.triggers_fired.add("B3_trailing")
                 events.append(TriggerEvent(
@@ -233,10 +249,10 @@ def evaluate_triggers(
                     code=holding.code,
                     is_stop_loss=False,
                     text=(
-                        f"🔔 [트레일링 스탑] {now.strftime('%H:%M:%S')}\n"
-                        f"{holding.code}  고점 {int(holding.high_since_entry):,} "
-                        f"× {1.0 + TRAILING_STOP_PCT/100.0:.3f} = {int(ts):,}\n"
-                        f"현재 {int(current_price):,} ({pnl:+.2f}%) — 잔여 청산 권장"
+                        f"{TRIGGER_LABELS['B3_trailing']} — "
+                        f"고점 {int(holding.high_since_entry):,} × "
+                        f"{1.0 + TRAILING_STOP_PCT/100.0:.3f} = {int(ts):,} "
+                        f"이탈 (현 {int(current_price):,}, {pnl:+.2f}%)"
                     ),
                 ))
 
@@ -248,27 +264,16 @@ def evaluate_triggers(
     ):
         holding.triggers_fired.add("C1_vp_below_100")
         events.append(TriggerEvent(
-            kind="C1_vp_below_100",
-            code=holding.code,
-            is_stop_loss=False,
-            text=(
-                f"🔔 [매도 트리거] {now.strftime('%H:%M:%S')}\n"
-                f"{holding.code}  현재 {int(current_price):,} ({pnl:+.2f}%)\n"
-                f"트리거: {TRIGGER_LABELS['C1_vp_below_100']}\n"
-                f"VP_5MA {vp_5ma_prev:.0f} → {vp_5ma_now:.0f} 하향 돌파"
-            ),
+            kind="C1_vp_below_100", code=holding.code, is_stop_loss=False,
+            text=f"{TRIGGER_LABELS['C1_vp_below_100']} — VP_5MA {vp_5ma_prev:.0f} → {vp_5ma_now:.0f}",
         ))
 
     if divergence is not None and divergence.bearish and "C2_bearish_divergence" not in holding.triggers_fired:
         holding.triggers_fired.add("C2_bearish_divergence")
         events.append(TriggerEvent(
-            kind="C2_bearish_divergence",
-            code=holding.code,
-            is_stop_loss=False,
+            kind="C2_bearish_divergence", code=holding.code, is_stop_loss=False,
             text=(
-                f"🔔 [매도 트리거] {now.strftime('%H:%M:%S')}\n"
-                f"{holding.code}  현재 {int(current_price):,} ({pnl:+.2f}%)\n"
-                f"트리거: {TRIGGER_LABELS['C2_bearish_divergence']}\n"
+                f"{TRIGGER_LABELS['C2_bearish_divergence']} — "
                 f"가격 {divergence.price_change_pct:+.2f}% / VP_5MA {divergence.vp_5ma_delta:+.0f}"
             ),
         ))
@@ -284,13 +289,9 @@ def evaluate_triggers(
             ):
                 holding.triggers_fired.add("C3_vol_drain")
                 events.append(TriggerEvent(
-                    kind="C3_vol_drain",
-                    code=holding.code,
-                    is_stop_loss=False,
+                    kind="C3_vol_drain", code=holding.code, is_stop_loss=False,
                     text=(
-                        f"🔔 [매도 트리거] {now.strftime('%H:%M:%S')}\n"
-                        f"{holding.code}  현재 {int(current_price):,} ({pnl:+.2f}%)\n"
-                        f"트리거: {TRIGGER_LABELS['C3_vol_drain']}\n"
+                        f"{TRIGGER_LABELS['C3_vol_drain']} — "
                         f"vol_accel_1m {vol_accel_1m_value:.2f} (임계 {VOL_ACCEL_1M_DRAIN})"
                     ),
                 ))
@@ -305,15 +306,8 @@ def evaluate_triggers(
     ):
         holding.triggers_fired.add("C4_bearish_candle")
         events.append(TriggerEvent(
-            kind="C4_bearish_candle",
-            code=holding.code,
-            is_stop_loss=False,
-            text=(
-                f"🔔 [매도 트리거] {now.strftime('%H:%M:%S')}\n"
-                f"{holding.code}  현재 {int(current_price):,} ({pnl:+.2f}%)\n"
-                f"트리거: {TRIGGER_LABELS['C4_bearish_candle']}\n"
-                f"윗꼬리 {candle.upper_wick*100:.0f}% 음봉"
-            ),
+            kind="C4_bearish_candle", code=holding.code, is_stop_loss=False,
+            text=f"{TRIGGER_LABELS['C4_bearish_candle']} — 윗꼬리 {candle.upper_wick*100:.0f}% 음봉",
         ))
 
     # C5 VI 재상승 실패
@@ -327,14 +321,10 @@ def evaluate_triggers(
     ):
         holding.triggers_fired.add("C5_vi_failure")
         events.append(TriggerEvent(
-            kind="C5_vi_failure",
-            code=holding.code,
-            is_stop_loss=False,
+            kind="C5_vi_failure", code=holding.code, is_stop_loss=False,
             text=(
-                f"🔔 [매도 트리거] {now.strftime('%H:%M:%S')}\n"
-                f"{holding.code}  현재 {int(current_price):,} ({pnl:+.2f}%)\n"
-                f"트리거: {TRIGGER_LABELS['C5_vi_failure']}\n"
-                f"VI 발동 {holding.vi_triggered_at.strftime('%H:%M:%S')} 후 5분 내 회복 X"
+                f"{TRIGGER_LABELS['C5_vi_failure']} — "
+                f"VI {holding.vi_triggered_at.strftime('%H:%M:%S')} 후 5분 내 회복 X"
             ),
         ))
 
