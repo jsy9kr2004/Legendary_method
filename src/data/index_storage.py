@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.data.storage import _safe_read_parquet
+
 INDEX_DAILY_COLUMNS = ["date", "close"]
 
 _INDEX_FILENAMES = {
@@ -34,11 +36,12 @@ def index_daily_path(data_dir: Path, index_code: str) -> Path:
 
 
 def read_index_daily(data_dir: Path, index_code: str) -> pd.DataFrame:
-    """지수 일봉 parquet 읽기. 없으면 빈 DF (스키마 유지)."""
-    path = index_daily_path(data_dir, index_code)
-    if not path.exists():
-        return pd.DataFrame(columns=INDEX_DAILY_COLUMNS)
-    return pd.read_parquet(path)
+    """지수 일봉 parquet 읽기. 없거나 손상 시 빈 DF (스키마 유지)."""
+    return _safe_read_parquet(
+        index_daily_path(data_dir, index_code),
+        INDEX_DAILY_COLUMNS,
+        f"index daily ({index_code})",
+    )
 
 
 def write_index_daily(df: pd.DataFrame, data_dir: Path, index_code: str) -> None:

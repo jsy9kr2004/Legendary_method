@@ -38,6 +38,10 @@ import pandas as pd
 from loguru import logger
 
 from src.jongbae.config_thresholds import (
+    CANDIDATE_POOL_TOP_N,
+    LEADER_CANDIDATE_RANK_MAX,
+    LEADER_EXCLUDE_DAILY_RETURN_PCT,
+    LEADER_MIN_DAILY_RETURN_PCT,
     LEADING_SECTOR_COUNT,
     LEADING_SECTOR_TOP_N,
     LEADING_STOCK_TOP_PER_SECTOR,
@@ -206,6 +210,9 @@ def identify_early_morning_leaders(
     snapshot_df: pd.DataFrame,
     leading_themes: list[dict[str, Any]],
     top_per_theme: int = LEADING_STOCK_TOP_PER_SECTOR,
+    rank_max: int | None = None,
+    exclude_daily_return_pct: float | None = None,
+    min_daily_return_pct: float | None = None,
 ) -> list[dict[str, Any]]:
     """장초반 고주파 모니터링용 주도주 식별 (pre-limit-up). M5.5 재정의.
 
@@ -240,9 +247,31 @@ def identify_early_morning_leaders(
     if snapshot_df.empty or not leading_themes:
         return []
 
+    if rank_max is None:
+        rank_max = LEADER_CANDIDATE_RANK_MAX
+    if exclude_daily_return_pct is None:
+        exclude_daily_return_pct = LEADER_EXCLUDE_DAILY_RETURN_PCT
+    if min_daily_return_pct is None:
+        min_daily_return_pct = LEADER_MIN_DAILY_RETURN_PCT
+
+    # 후보 자격 (사용자 명시):
+    #   (1) 절대 거래대금 N위 안 — 회전율만 보면 시총 작은 노이즈 종목이 1위로 잡힘.
+    #   (2) min < 일일 상승률 < max — 상한가 도달/임박은 매수 불가, 하한가/하락은
+    #       인버스 매매를 안 하므로 후보 X. 종배는 상한가 *전* 진입 + 상승 중인 종목.
+    eligible_df = snapshot_df
+    if "rank" in eligible_df.columns and rank_max > 0:
+        eligible_df = eligible_df[eligible_df["rank"] <= rank_max]
+    if "daily_return" in eligible_df.columns:
+        dr = eligible_df["daily_return"].fillna(0.0)
+        eligible_df = eligible_df[
+            (dr > min_daily_return_pct) & (dr < exclude_daily_return_pct)
+        ]
+    if eligible_df.empty:
+        return []
+
     has_turnover = (
-        "turnover" in snapshot_df.columns
-        and snapshot_df["turnover"].notna().any()
+        "turnover" in eligible_df.columns
+        and eligible_df["turnover"].notna().any()
     )
     sort_key = "turnover" if has_turnover else "trading_value"
     if not has_turnover:
@@ -261,7 +290,7 @@ def identify_early_morning_leaders(
         if not theme_codes:
             continue
 
-        in_theme = snapshot_df[snapshot_df["code"].astype(str).isin(theme_codes)].copy()
+        in_theme = eligible_df[eligible_df["code"].astype(str).isin(theme_codes)].copy()
         if in_theme.empty:
             continue
 
@@ -298,6 +327,91 @@ def identify_early_morning_leaders(
         return -float(v)
 
     return sorted(by_code.values(), key=_key)
+
+
+def identify_rising_candidates(
+    snapshot_df: pd.DataFrame,
+    top_n: int = CANDIDATE_POOL_TOP_N,
+    rank_max: int | None = None,
+    exclude_daily_return_pct: float | None = None,
+    min_daily_return_pct: float | None = None,
+    theme_mapping_df: pd.DataFrame | None = None,
+) -> list[dict[str, Any]]:
+    """주도주 후보 풀 (주도섹터 무관) — first-mover 단계 모니터링용.
+
+    `identify_early_morning_leaders` 는 주도섹터 내 회전율 1위만 잡지만,
+    그 단계 이전에 시총 대비 거래대금이 갑자기 늘어나는 종목도 보고 싶다는
+    사용자 명시 요구. 주도섹터 분류 없이 거래대금 상위에서 회전율 상위 N 개.
+
+    동일 자격 필터:
+        - rank ≤ rank_max (default 50): 거래대금 절대값 50위 안
+        - min < daily_return < max (default 0% < dr < 29%): 상승 중 + 매수 가능
+
+    Args:
+        snapshot_df: SNAPSHOT_COLUMNS DataFrame.
+        top_n: 회전율 상위 몇 개.
+        rank_max / exclude_daily_return_pct / min_daily_return_pct:
+            `identify_early_morning_leaders` 와 동일 의미, None 이면 상수 사용.
+        theme_mapping_df: 있으면 후보 themes 라벨 채움 ([code, theme] long format).
+
+    Returns:
+        leaders 와 동일 스키마 dict 리스트. 회전율 내림차순.
+        themes 는 후보가 속한 모든 테마(있다면) 또는 [].
+    """
+    if snapshot_df.empty:
+        return []
+
+    if rank_max is None:
+        rank_max = LEADER_CANDIDATE_RANK_MAX
+    if exclude_daily_return_pct is None:
+        exclude_daily_return_pct = LEADER_EXCLUDE_DAILY_RETURN_PCT
+    if min_daily_return_pct is None:
+        min_daily_return_pct = LEADER_MIN_DAILY_RETURN_PCT
+
+    eligible_df = snapshot_df
+    if "rank" in eligible_df.columns and rank_max > 0:
+        eligible_df = eligible_df[eligible_df["rank"] <= rank_max]
+    if "daily_return" in eligible_df.columns:
+        dr = eligible_df["daily_return"].fillna(0.0)
+        eligible_df = eligible_df[
+            (dr > min_daily_return_pct) & (dr < exclude_daily_return_pct)
+        ]
+    if eligible_df.empty:
+        return []
+
+    has_turnover = (
+        "turnover" in eligible_df.columns
+        and eligible_df["turnover"].notna().any()
+    )
+    sort_key = "turnover" if has_turnover else "trading_value"
+    pool = eligible_df.copy()
+    pool["_sort_key"] = pool[sort_key].fillna(float("-inf"))
+    top = pool.sort_values("_sort_key", ascending=False).head(top_n)
+
+    # 종목 코드 → 테마 목록 (선택)
+    code_to_themes: dict[str, list[str]] = {}
+    if theme_mapping_df is not None and not theme_mapping_df.empty:
+        grouped = theme_mapping_df.groupby("code")["theme"].apply(list)
+        code_to_themes = grouped.to_dict()
+
+    out: list[dict[str, Any]] = []
+    for _, row in top.iterrows():
+        code = str(row["code"])
+        out.append({
+            "code": code,
+            "name": str(row.get("name", "")),
+            "themes": code_to_themes.get(code, []),
+            "rank": int(row.get("rank", 0)),
+            "price": int(row.get("price", 0)),
+            "daily_return": float(row.get("daily_return", 0.0))
+                if pd.notna(row.get("daily_return")) else 0.0,
+            "is_limit_up": bool(row.get("is_limit_up", False)),
+            "turnover": float(row.get("turnover", float("nan")))
+                if pd.notna(row.get("turnover")) else float("nan"),
+            "trading_value": int(row.get("trading_value", 0)),
+            "market_cap": int(row.get("market_cap", 0)),
+        })
+    return out
 
 
 # ── R3 v1: 테마 z-score 합산 (M5.5) ──────────────────────────────────────────

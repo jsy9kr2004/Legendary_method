@@ -26,6 +26,9 @@ from src.jongbae.config_thresholds import (
     ACCEL_BASELINE_MINUTES,
     ACCEL_RECENT_BAR_MINUTES,
     EXIT_ACCEL_RATIO,
+    ONE_MIN_EXIT_ACCEL_RATIO,
+    ONE_MIN_RISE_ACCEL_RATIO,
+    ONE_MIN_RISE_MIN_BAR_VALUE,
     RECENT_HIGH_LOOKBACK_DAYS,
     STRONG_RISE_ACCEL_RATIO,
     TRANSITION_ACCEL_RATIO,
@@ -141,6 +144,26 @@ def is_transition_candidate(
     if candidate_turnover != candidate_turnover:
         return False
     return candidate_turnover >= incumbent_turnover * turnover_ratio_threshold
+
+
+def is_one_min_rise(accel_ratio_1m: float, last_bar_value: int) -> bool:
+    """1분봉 first-mover 진입 신호 — 가속 ≥ 3배 AND 1분봉 거래대금 ≥ 5억.
+
+    5분봉 가속(STRONG_RISE) 보다 lag 짧음. "거래대금 막 몰리기 시작" 단계 감지.
+    """
+    if accel_ratio_1m != accel_ratio_1m:  # NaN
+        return False
+    return (
+        accel_ratio_1m >= ONE_MIN_RISE_ACCEL_RATIO
+        and last_bar_value >= ONE_MIN_RISE_MIN_BAR_VALUE
+    )
+
+
+def is_one_min_exit(accel_ratio_1m: float) -> bool:
+    """1분봉 자금 이탈 — 가속 < 0.4 (직전 10분 대비 -60% 이하)."""
+    if accel_ratio_1m != accel_ratio_1m:  # NaN
+        return False
+    return 0 <= accel_ratio_1m < ONE_MIN_EXIT_ACCEL_RATIO
 
 
 def is_exit_signal(accel_ratio: float, baseline_ratio_threshold: float | None = None) -> bool:

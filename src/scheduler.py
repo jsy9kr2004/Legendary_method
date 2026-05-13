@@ -563,9 +563,15 @@ def _dashboard_start(client: KISClient, settings: Settings) -> None:
 
 @_business_day_only("모니터링 tick")
 def _dashboard_tick_job(client: KISClient, settings: Settings) -> None:
-    """5초마다 호출 — 모니터링 한 사이클. 시간창은 worker 안에서 가드."""
+    """3초마다 호출 — 모니터링 한 사이클. 시간창은 worker 안에서 가드."""
+    # master/theme 미로딩 상태에서 사용자가 /on (force_on) 으로 강제 켜면
+    # dashboard_start 를 lazy 호출해서 데이터 로딩. 그 외에는 그냥 return.
     if _dashboard_master_df is None or _dashboard_theme_df is None:
-        return
+        if _dashboard_session.force_on and not _dashboard_session.paused:
+            logger.info("[M6] force_on — _dashboard_start lazy 호출")
+            _dashboard_start(client, settings)
+        else:
+            return
     if not (settings.telegram_bot_token and settings.telegram_chat_id):
         return
 
@@ -702,11 +708,11 @@ def run() -> None:
     )
     scheduler.add_job(
         _dashboard_tick_job,
-        trigger=IntervalTrigger(seconds=5),
+        trigger=IntervalTrigger(seconds=3),
         args=[client, settings],
         id="dashboard_tick",
-        name="모니터링 tick (5s)",
-        misfire_grace_time=10,
+        name="모니터링 tick (3s)",
+        misfire_grace_time=6,
         max_instances=1,
         coalesce=True,
     )
@@ -727,6 +733,26 @@ def run() -> None:
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
+
+    # ── 모니터링 catch-up ──────────────────────────────────────────────
+    # scheduler 가 09:00~10:30 사이에 (재)시작되면 dashboard_start cron 은
+    # 이미 지나가서 misfire_grace_time(120s)도 못 잡고 missed 된다.
+    # 그 결과 _dashboard_master_df/_dashboard_theme_df 가 None → tick 잡이
+    # 5초마다 돌긴 하지만 가드(L567-568)에서 return → 메시지 0건.
+    # 시작 시 모니터링 시간대면 즉시 _dashboard_start 호출해서 catch up.
+    _dt_now = now_kst()
+    if is_business_day(_dt_now.date()):
+        _start_t = _dt_now.replace(hour=9, minute=0, second=0, microsecond=0)
+        _stop_t = _dt_now.replace(hour=10, minute=30, second=0, microsecond=0)
+        if _start_t <= _dt_now < _stop_t:
+            logger.info(
+                f"[M6] 모니터링 시간대 안에서 시작됨 ({_dt_now:%H:%M:%S}) — "
+                "_dashboard_start catch-up 호출"
+            )
+            try:
+                _dashboard_start(client, settings)
+            except Exception as e:  # noqa: BLE001
+                logger.error(f"[M6] catch-up _dashboard_start 실패: {e}")
 
     try:
         scheduler.start()

@@ -2,9 +2,11 @@
 
 명령어:
     /pause   자동/수동 모니터링 전체 ON/OFF 토글
+    /on      모니터링 강제 ON (시간창 09:00~10:30 무시, 임의 시각에 켜기)
+    /off     모니터링 강제 OFF (시간창 안이라도 끄기)
     /list    현재 모니터링 종목 출력
     /clear   수동 추가분만 해제
-    NNNNNN   6자리 숫자 → 토글 추가/해제
+    NNNNNN   6자리 숫자 → 토글 추가/해제 (force_on 이면 시간창 외에서도 가능)
     그 외    "장 시간 외" 안내 또는 무시
 
 설계:
@@ -21,7 +23,7 @@ from typing import Literal
 from src.dashboard.state import MonitoringSession, in_monitoring_window
 
 
-CommandKind = Literal["pause", "list", "clear", "toggle_code", "unknown", "ignore"]
+CommandKind = Literal["pause", "on", "off", "list", "clear", "toggle_code", "unknown", "ignore"]
 
 
 @dataclass
@@ -48,6 +50,10 @@ def parse_command(text: str) -> Command:
     if lower in ("/pause", "/start"):
         # /start 도 pause 토글로 (봇 첫 시작 시)
         return Command(kind="pause")
+    if lower == "/on":
+        return Command(kind="on")
+    if lower == "/off":
+        return Command(kind="off")
     if lower == "/list":
         return Command(kind="list")
     if lower == "/clear":
@@ -77,6 +83,18 @@ def apply_command(
         _, msg = session.toggle_pause()
         return msg
 
+    if cmd.kind == "on":
+        # 시간창 우회하고 강제 ON. master/theme 미로딩이면 다음 tick 에서 lazy 로딩됨.
+        session.force_on = True
+        session.paused = False
+        return "▶ 모니터링 강제 ON (시간창 무시). 다음 tick부터 동작."
+
+    if cmd.kind == "off":
+        # 시간창 내부라도 강제 OFF. /pause 와 동일 효과지만 명시적.
+        session.paused = True
+        session.force_on = False
+        return "⏸ 모니터링 OFF. /on 으로 재시작 또는 다음 평일 09:00 자동 ON."
+
     if cmd.kind == "list":
         return session.list_monitored()
 
@@ -85,8 +103,9 @@ def apply_command(
         return msg
 
     if cmd.kind == "toggle_code":
-        if not in_monitoring_window(now):
-            return f"장 시간 외입니다. (모니터링 운영: 평일 09:00~10:30)"
+        # force_on 이면 시간창 외부에서도 /add 허용 (모니터링 자체가 켜져 있으므로).
+        if not session.force_on and not in_monitoring_window(now):
+            return f"장 시간 외입니다. (모니터링 운영: 평일 09:00~10:30, 또는 /on 으로 강제 켜기)"
         if cmd.code is None:
             return ""
         _, msg = session.add_manual(cmd.code, now)

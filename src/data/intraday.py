@@ -131,7 +131,15 @@ def fetch_volume_rank(
         trading_value = _to_int(row.get("acml_tr_pbmn"))
         lup = _is_limit_up_price(price, prev_close) if prev_close > 0 else False
         market_cap = master_lookup.get(code, 0)
-        turnover = compute_turnover(trading_value, market_cap)
+        # KIS 는 거래대금회전율(`tr_pbmn_tnrt`, %)을 자체 계산해서 응답에 넣어준다.
+        # 우리 식 = 누적거래대금 / 상장시가총액 × 100 — 정의 동일.
+        # master_df.market_cap 이 0(미적재) 인 경우에도 회전율이 정상으로 나오게
+        # KIS 값을 우선 사용. 비어있을 때만 자체 계산으로 fallback.
+        kis_turnover = _to_float(row.get("tr_pbmn_tnrt"))
+        if pd.notna(kis_turnover) and kis_turnover > 0:
+            turnover = kis_turnover
+        else:
+            turnover = compute_turnover(trading_value, market_cap)
         records.append(
             {
                 "rank": rank,
