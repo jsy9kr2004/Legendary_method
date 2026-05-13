@@ -88,3 +88,74 @@ ACCEL_BASELINE_MINUTES: int = 30     # 직전 30분 평균
 
 # 신고가 임계 (보조 지표).
 RECENT_HIGH_LOOKBACK_DAYS: int = 20
+
+
+# ── R10 체결강도 (Volume Power, VP) ───────────────────────────────────────────
+
+VP_BALANCED: float = 100.0                  # 균형선 (매수=매도 체결)
+VP_STRONG_THRESHOLD: float = 110.0          # VP > 110 + 5MA > 100 = 강한 매수 우세 (+2)
+VP_WEAK_THRESHOLD: float = 100.0            # VP < 100 = 매수 압력 약함 (-2)
+VP_MA_SHORT_MINUTES: int = 5                # 5MA
+VP_MA_LONG_MINUTES: int = 20                # 20MA
+
+
+# ── R11 다중 윈도우 거래대금 가속 (매수 점수/매도 트리거 전용) ─────────────────
+# R3' 30분 분모 ACCEL_RECENT_BAR_MINUTES/ACCEL_BASELINE_MINUTES 와는 별개 용도
+
+VOL_ACCEL_1M_RECENT: int = 1                # 최근 1분
+VOL_ACCEL_1M_BASELINE: int = 5              # 직전 5분 평균
+VOL_ACCEL_5M_RECENT: int = 5                # 최근 5분
+VOL_ACCEL_5M_BASELINE: int = 20             # 직전 20분 평균
+
+# R14 매수 점수 임계
+VOL_ACCEL_5M_STRONG: float = 1.2            # +2점 (1분도 > 1.0 동반 시)
+VOL_ACCEL_1M_STRONG: float = 1.0
+VOL_ACCEL_5M_WEAK: float = 0.8              # -3점 (1분도 < 0.5 동반 시)
+VOL_ACCEL_1M_WEAK: float = 0.5
+VOL_ACCEL_1M_VERY_STRONG: float = 2.0       # +1점 (단일)
+VOL_ACCEL_1M_DRAIN: float = 0.5             # -1점 (단일) / R15 자금 고갈 트리거
+VOL_ACCEL_DRAIN_PERSIST_SECONDS: int = 120  # 자금 고갈 2분 지속 시 R15 C3
+
+
+# ── R12 봉 패턴 ───────────────────────────────────────────────────────────────
+
+CANDLE_BAR_MINUTES: int = 5                 # 5분봉 기준
+UPPER_WICK_LONG: float = 0.4                # 0.4 초과 = 긴 윗꼬리 (-2)
+UPPER_WICK_CLEAN: float = 0.3               # 0.3 미만 = 깨끗한 양봉 (+2 with bullish)
+UPPER_WICK_BEARISH_EXIT: float = 0.5        # R15 C4 윗꼬리 50%↑ 음봉 트리거
+
+
+# ── R12.5 위치/맥락 ────────────────────────────────────────────────────────────
+
+DIST_FROM_HIGH_MAX_PCT: float = -2.0        # 진입 필수조건: 당일고점 -2% 이내
+
+
+# ── R13 다이버전스 ─────────────────────────────────────────────────────────────
+
+DIVERGENCE_PRICE_WINDOW_MINUTES: int = 5    # 가격 변화 측정 윈도우
+
+
+# ── R14 매수 점수 등급 ─────────────────────────────────────────────────────────
+
+GRADE_STRONG: float = 5.0
+GRADE_WATCH: float = 2.0
+GRADE_NEUTRAL: float = -1.0
+# 그 외 = AVOID
+
+# 거래대금 회전율 순위 임계
+VOLUME_TURNOVER_TOP_N: int = 10             # 회전율 10위 이내 (+1)
+
+# 호가잔량 보조 가산
+BID_ASK_RATIO_THRESHOLD: float = 3.0        # +0.5 (강등된 가중치)
+
+
+# ── R15 매도 트리거 ────────────────────────────────────────────────────────────
+
+STOP_LOSS_PCT: float = -1.5                 # A1 진입가 대비 -1.5%
+TAKE_PROFIT_1_PCT: float = 2.0              # B1 +2.0% (1/3)
+TAKE_PROFIT_2_PCT: float = 3.5              # B2 +3.5% (1/3)
+TRAILING_STOP_PCT: float = -1.5             # B3 고점 대비 -1.5%
+TIME_STOP_MINUTES_DEFAULT: int = 10         # A4 시간 손절 (오버라이드 가능)
+TIME_STOP_REQUIRED_PROFIT_PCT: float = 0.5  # A4 N분 내 +0.5% 미달 시 발화
+ENTRY_BAR_MA_MINUTES: int = 5               # A3 5분 이평 이탈 기준
+VI_FAILURE_WINDOW_SECONDS: int = 300        # C5 VI 발동 후 5분 내 고가 회복 X

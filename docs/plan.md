@@ -114,20 +114,48 @@
 
 **목표:** 09:00~10:30 평일 자동 운영. 주도주 + 사용자 관심 종목을 1~2초 간격으로 텔레그램에서 실시간 모니터링 (메시지 편집 방식, 푸시 알림은 최초 1회만).
 
-- [ ] **분봉 fetcher** — KIS API `FHKST03010200`. 5분봉/1분봉 거래대금 시계열. `src/data/intraday.py` `fetch_minute_bars()`
-- [ ] **체결강도 fetcher** — KIS API `inquire-ccnl`. 매수체결/매도체결 비율. `fetch_ccnl_strength()`
-- [ ] **호가잔량 fetcher** — KIS API `inquire-asking-price-exp-ccn`. 매수/매도 호가 잔량. `fetch_asking_price()`
+**[Fetcher / 기본 인프라]**
+
+- [ ] **분봉 fetcher** — KIS API `FHKST03010200`. 5분봉/1분봉 OHLC + 거래대금 시계열. `src/data/intraday.py` `fetch_minute_bars()` (R11 가속 / R12 봉패턴 공용)
+- [ ] **체결강도 fetcher** — KIS API `inquire-ccnl`. 매수체결/매도체결 비율 → R10 VP. `fetch_ccnl_strength()`
+- [ ] **호가잔량 fetcher** — KIS API `inquire-asking-price-exp-ccn`. 매수/매도 호가 잔량 (R10 보조 강등). `fetch_asking_price()`
 - [ ] **투자자별 순매수 fetcher** — KIS API `inquire-investor`. 외국인/기관/프로그램 순매수. `fetch_investor_flow()`
-- [ ] **거래대금 가속배율 계산** — 현재 5분봉 거래대금 / 직전 30분 평균. `src/jongbae/momentum.py`. 양수→치고 올라옴 / 음수→자금 이탈 동일 인프라
+- [ ] **거래대금 가속배율 계산** — 현재 5분봉 거래대금 / 직전 30분 평균 (R3' 주도주 교체용). `src/jongbae/momentum.py`. 양수→치고 올라옴 / 음수→자금 이탈
 - [ ] **상태 머신** (M5.5와 공유) — 종목 추가/제거/유예기 카운트다운
-- [ ] **Telegram 양방향 봇** — long polling으로 incoming 메시지 수신. 명령어: `/pause`(자동/수동 전체 토글), `/list`, `/clear`(수동분만), 6자리 숫자(토글). `src/notify/telegram_bot.py`
+
+**[R10~R15 매수 점수/매도 트리거 신규]**
+
+- [ ] **R10 체결강도(VP)** — `src/jongbae/volume_power.py`. VP + 5MA/20MA. KIS `inquire-ccnl` `체결강도` 필드 직접 사용. 메모리 deque 시계열
+- [ ] **R11 다중 윈도우 거래대금 가속** — `momentum.py` 확장. `vol_accel_1m` (분모 5분), `vol_accel_5m` (분모 20분). 기존 30분 분모 가속배율은 유지
+- [ ] **R12 봉 패턴 분석** — `src/jongbae/candle.py`. 5분봉 OHLC → bullish/bearish/doji + upper_wick/lower_wick 비율
+- [ ] **R12.5 위치/맥락** — 당일 고점 / 시초 / 전일 종가 거리 %. VI 발동은 v0 휴리스틱(분봉 ±10% 1분 내), v1 정밀
+- [ ] **R13 가격-체결강도 다이버전스** — `src/jongbae/divergence.py`. bearish/bullish 자동 감지
+- [ ] **R14 매수 점수 grader** — `src/jongbae/grader.py`. score 계산 + 등급(STRONG/WATCH/NEUTRAL/AVOID) + 사유 텍스트 + 필수조건 체크
+- [ ] **R15 매도 트리거 + 상태 머신** — `src/jongbae/exit_triggers.py`. 감시/보유 모드, 트리거 A/B/C, 멱등성(B1/B2 1회만)
+- [ ] **보유 상태 영속화** — `data/state/holdings.json` atomic write. `/buy`/`/sell` 명령 시 갱신, worker 재시작 시 로드
+- [ ] **R10/R12 메모리 시계열** — `src/dashboard/state.py` 확장. `intraday_series[code]` deque 구조 (data-infra.md 참조)
+
+**[Telegram 봇 / 메시지 인프라]**
+
+- [ ] **Telegram 양방향 봇** — long polling으로 incoming 메시지 수신. 명령어: `/pause`, `/list`, `/clear`, 6자리 숫자(토글), **`/buy CODE PRICE [TIME_STOP_MIN]`**, **`/sell CODE`**, **`/status CODE`**. `src/notify/telegram_bot.py`
 - [ ] **메시지 편집 인프라** — `editMessageText`로 종목당 메시지 1개 유지 갱신. 종목 1~2개=2초, 3~5개=3초, 6~10개=5초 동적 간격. `src/notify/telegram.py` 확장
+- [ ] **감시/보유 카드 렌더러** — `src/dashboard/render.py` 확장. 두 모드 분리 템플릿 (report-spec.md 4.5 참조). 모든 상태 변화(TRANSITION/GRACE/강한 부상/자금 이탈/AVOID/R15 매도 트리거)를 카드 안 색상·이모지·사유 한 줄로 통합 표시 — 별도 푸시 발송 코드 작성 X (round 17)
 - [ ] **자동 운영 시간** — 평일 09:00 자동 ON, 10:30 자동 OFF. `/pause` 상태도 매일 자동 ON 리셋. 휴장일 스킵
 - [ ] **장 시간 외 안내** — 시간 외 사용자 입력 시 "장 시간 외입니다" 안내 한 줄
-- [ ] **임계값 설정** — `src/jongbae/config_thresholds.py`. 가속배율/거래대금/회전율비/유예시간. 운영 중 사용자 피드백으로 튜닝
-- [ ] **테스트** — 상태 전이, 명령 파싱, 임계 트리거, rate limit 핸들링
+- [ ] **임계값 설정** — `src/jongbae/config_thresholds.py`. R10~R15 임계값 일괄 관리. 운영 중 사용자 피드백으로 튜닝
 
-**완료 기준:** 평일 09:00~10:30 동안 주도주 1~2개 자동 모니터링 + 사용자 임의 종목 추가/해제 가능. 알림 폭주 없이 푸시는 신규 종목 진입 시점만.
+**[테스트]**
+
+- [ ] **상태 전이 / 명령 파싱 / 임계 트리거 / rate limit 핸들링** (기존)
+- [ ] **R14 회귀 — 흥아해운 시나리오** — `tests/test_grader.py`. 입력(거래대금 1316억 1위, 회전율 +19.4%, vol_accel_5m=0.8, vol_accel_1m=0.4, 호가 5.3배, 윗꼬리 음봉, VP=95, VP_5MA=98) → 점수 ≤ -3, 등급 🔴 AVOID
+- [ ] **R14 회귀 — STRONG 케이스** — 제룡전기 상한가 모멘텀(VP=142, vol_accel_5m=1.6, 장대양봉) → 점수 ≥ 5
+- [ ] **R15 트리거 멱등성** — B1 익절 1차는 1회만 발화, A1 손절선은 매 tick 발화 가능
+- [ ] **R12 봉 패턴 경계** — 윗꼬리 30%/40%/50% 경계, doji
+- [ ] **추가 회귀 케이스 5~10건** (사용자 과거 사례 입력 필요 — TODO)
+
+**완료 기준:** 평일 09:00~10:30 동안 주도주 1~2개 자동 모니터링 + 사용자 임의 종목 추가/해제 가능 + 보유 종목 손절/익절 카드 표시. 카드 외 별도 푸시 알림 X (정정 round 17). 푸시는 모니터링 외부 이벤트(상한가 진입, 자동 주도주 첫 추가)만.
+
+**정책 확인 (CLAUDE.md `자동 매매 절대 금지`):** R15 매도 트리거는 카드 표시 전용. 텔레그램 별도 푸시 X, KIS 실주문 자동 등록 X. 손절 자동화 / 분할 익절 자동화는 영구 미지원.
 
 ---
 
