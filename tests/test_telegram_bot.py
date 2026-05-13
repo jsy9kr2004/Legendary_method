@@ -10,10 +10,14 @@ from src.notify.telegram_bot import apply_command, parse_command
 # ── parse_command ────────────────────────────────────────────────────────────
 
 
-def test_parse_pause():
-    assert parse_command("/pause").kind == "pause"
-    assert parse_command(" /PAUSE ").kind == "pause"
-    assert parse_command("/start").kind == "pause"
+def test_parse_on_off_start():
+    """round 18: /on, /off 정식 명령. /start = /on, /pause = /off alias."""
+    assert parse_command("/on").kind == "on"
+    assert parse_command(" /ON ").kind == "on"
+    assert parse_command("/start").kind == "on"
+    assert parse_command("/off").kind == "off"
+    assert parse_command(" /OFF ").kind == "off"
+    assert parse_command("/pause").kind == "off"
 
 
 def test_parse_list():
@@ -46,15 +50,42 @@ def test_parse_empty():
 # ── apply_command ────────────────────────────────────────────────────────────
 
 
-def test_apply_pause_toggles():
+def test_apply_on_off_explicit():
+    """/on /off 명시 명령 (round 18)."""
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    msg1 = apply_command(parse_command("/pause"), s, now)
-    assert s.paused is True
-    assert "OFF" in msg1
-    msg2 = apply_command(parse_command("/pause"), s, now)
+    # 기본 ON 상태 — /on 은 "이미 ON"
+    msg = apply_command(parse_command("/on"), s, now)
     assert s.paused is False
-    assert "ON" in msg2
+    assert "이미" in msg
+    # /off
+    msg = apply_command(parse_command("/off"), s, now)
+    assert s.paused is True
+    assert "OFF" in msg
+    # /on 으로 복귀
+    msg = apply_command(parse_command("/on"), s, now)
+    assert s.paused is False
+    assert "ON" in msg
+
+
+def test_apply_start_is_on_alias():
+    """/start 가 /on alias (이전엔 /pause 토글이었음, round 18)."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.set_off()  # OFF 상태로 만들고
+    assert s.paused is True
+    msg = apply_command(parse_command("/start"), s, now)
+    assert s.paused is False
+    assert "ON" in msg
+
+
+def test_apply_pause_is_off_alias():
+    """/pause 는 /off alias 로 흡수."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    msg = apply_command(parse_command("/pause"), s, now)
+    assert s.paused is True
+    assert "OFF" in msg
 
 
 def test_apply_list():
@@ -84,19 +115,21 @@ def test_apply_toggle_code_in_window():
     assert s.monitored["005930"].source == Source.MANUAL
 
 
-def test_apply_toggle_code_out_of_window_returns_notice():
+def test_apply_toggle_code_24h_allowed():
+    """24h 허용 (round 18) — 운영시간 외에도 종목 추가 가능."""
     s = MonitoringSession()
-    now = datetime(2026, 5, 11, 14, 30)  # 평일이지만 14:30
-    msg = apply_command(parse_command("005930"), s, now)
-    assert "장 시간 외" in msg
-    assert "005930" not in s.monitored
+    # 평일 14:30
+    msg = apply_command(parse_command("005930"), s, datetime(2026, 5, 11, 14, 30))
+    assert "005930" in msg
+    assert "005930" in s.monitored
 
 
-def test_apply_toggle_code_weekend_returns_notice():
+def test_apply_toggle_code_weekend_allowed():
+    """주말도 24h 허용 — KIS 시세는 변동 없지만 등록은 됨 (round 18)."""
     s = MonitoringSession()
-    now = datetime(2026, 5, 9, 9, 30)  # 토요일
-    msg = apply_command(parse_command("005930"), s, now)
-    assert "장 시간 외" in msg
+    msg = apply_command(parse_command("000660"), s, datetime(2026, 5, 9, 9, 30))
+    assert "000660" in msg
+    assert "000660" in s.monitored
 
 
 def test_apply_unknown_returns_empty():
@@ -111,11 +144,20 @@ def test_apply_ignore_empty():
     assert msg == ""
 
 
-def test_apply_pause_works_outside_window():
-    """/pause 는 시간 무관하게 동작."""
+def test_apply_off_works_24h():
+    """/off (= /pause alias) 는 시간 무관하게 동작."""
     s = MonitoringSession()
-    msg = apply_command(parse_command("/pause"), s, datetime(2026, 5, 9, 23, 0))
+    msg = apply_command(parse_command("/off"), s, datetime(2026, 5, 9, 23, 0))
     assert s.paused is True
+
+
+def test_apply_on_works_24h_outside_business_hours():
+    """/on 도 24h 허용 — 주말/심야 임의 시점 (round 18)."""
+    s = MonitoringSession()
+    s.set_off()
+    msg = apply_command(parse_command("/on"), s, datetime(2026, 5, 10, 3, 0))  # 일요일 새벽
+    assert s.paused is False
+    assert "ON" in msg
 
 
 # ── /buy /sell /status (R15) ─────────────────────────────────────────────────
@@ -172,11 +214,28 @@ def test_parse_status_basic():
     assert cmd.code == "091340"
 
 
-def test_apply_buy_outside_window():
-    """장 시간 외 /buy 는 거부."""
+def test_apply_buy_24h_allowed(tmp_path, monkeypatch):
+    """/buy 24h 허용 (round 18) — 운영시간 외에도 보유 모드 진입 가능.
+
+    사용자가 NXT/장중 임의 시점에 매수했음을 봇에 알리는 용도.
+    """
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
     s = MonitoringSession()
-    msg = apply_command(parse_command("/buy 091340 91300"), s, datetime(2026, 5, 11, 14, 30))
-    assert "장 시간 외" in msg
+    # 평일 14:30 (운영시간 외)
+    msg = bot.apply_command(
+        bot.parse_command("/buy 091340 91300"),
+        s,
+        datetime(2026, 5, 11, 14, 30),
+    )
+    assert "장 시간 외" not in msg
+    assert "091340" in msg
 
 
 def test_apply_buy_creates_holding(tmp_path, monkeypatch):

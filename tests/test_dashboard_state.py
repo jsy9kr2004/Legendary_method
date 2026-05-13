@@ -87,13 +87,26 @@ def test_remove_manual_all_keeps_auto():
     assert "075180" in s.monitored  # 자동은 유지
 
 
-def test_toggle_pause():
+def test_set_on_off_idempotent():
+    """/on /off 는 멱등 — 같은 상태 재호출 시 (False, '이미 ...') 반환."""
     s = MonitoringSession()
-    paused, _ = s.toggle_pause()
-    assert paused is True
+    # 기본 ON 상태
+    assert s.paused is False
+    changed, msg = s.set_on()
+    assert changed is False
+    assert "이미" in msg
+    # OFF
+    changed, msg = s.set_off()
+    assert changed is True
     assert s.paused is True
-    paused, _ = s.toggle_pause()
-    assert paused is False
+    assert s.off_cleanup_pending is True
+    # OFF 중복
+    changed, _ = s.set_off()
+    assert changed is False
+    # ON 복귀
+    changed, _ = s.set_on()
+    assert changed is True
+    assert s.paused is False
 
 
 def test_list_monitored_empty():

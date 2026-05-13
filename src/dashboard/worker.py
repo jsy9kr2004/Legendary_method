@@ -30,7 +30,6 @@ from src.dashboard.state import (
     Alert,
     LeaderState,
     MonitoringSession,
-    in_monitoring_window,
 )
 from src.data.intraday import fetch_volume_rank
 from src.data.intraday_realtime import (
@@ -130,8 +129,10 @@ def dashboard_tick(
     """
     if session.paused:
         return
-    if not in_monitoring_window(now):
-        return
+    # in_monitoring_window 가드 폐지 (round 18) — /on 으로 24h 임의 시점에 켤
+    # 수 있음. 평일/주말, 정규장 외 시간이어도 KIS 시세를 받아 카드 표시.
+    # 시세 변동이 없는 시간대(주말/장 외)엔 카드가 정적으로 유지될 뿐 동작은
+    # 정상.
 
     # 1) 시장 스냅샷 + 주도섹터/주도주
     snapshot = fetch_volume_rank(client, top_n=LEADING_SECTOR_TOP_N, master_df=master_df)
