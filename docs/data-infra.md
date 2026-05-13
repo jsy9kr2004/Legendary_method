@@ -11,10 +11,12 @@
 | 네이버 금융 테마 | 네이버 금융 크롤링 | 월 1회 (7일 신선도 체크) | 무료 |
 | 장중 거래대금 순위 | KIS API `FHPST01710000` | 정기 4회 + 09:00~10:30 1~2초 | KIS 계좌 필요 |
 | 장중 종목 시세 | KIS API `FHKST01010100` | 정기 4회 + 상한가 폴링 + M6 모니터링 | KIS 계좌 필요 |
-| **분봉 시계열** (M6) | KIS API `FHKST03010200` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
-| **체결강도** (M6) | KIS API `inquire-ccnl` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
-| **호가잔량** (M6) | KIS API `inquire-asking-price-exp-ccn` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **분봉 시계열 OHLC** (M6, R12 봉 패턴 / R11 가속) | KIS API `FHKST03010200` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **체결강도 VP** (M6, R10) | KIS API `inquire-ccnl` `체결강도` 필드 | 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **호가잔량** (M6, R10 보조 강등) | KIS API `inquire-asking-price-exp-ccn` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
 | **투자자별 순매수** (M6) | KIS API `inquire-investor` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **VI 발동 시각** (M6, R12.5) | KIS endpoint 미확정 — v0 분봉 ±10% 휴리스틱, v1 정밀 | 이벤트 | KIS 계좌 필요 |
+| **매수가/보유 상태** (M6, R15) | 텔레그램 `/buy` 명령 → 메모리 + JSON 영속 | 명령 시점 | — |
 | 시간외 단일가 | KIS API | 16:00~18:00 폴링 | KIS 계좌 필요 |
 | KRX 휴장일 | weekday 기반 (v0) → 정밀 (v1 TODO) | 연 1회 | 무료 |
 
@@ -273,6 +275,50 @@ https://www.wiseindex.com/Index/IndexList?ftype=WICS
 - 대분류 (10개): 에너지, 소재, 산업재, 자유소비재, 필수소비재, 건강관리, 금융, IT, 통신서비스, 유틸리티
 - 중분류 (24개): 본 프로젝트 사용
 - 소분류
+
+## 장중 메모리 시계열 (M6 매수 점수/매도 트리거용)
+
+R10~R15 지표 계산에 필요한 장중 시계열은 **메모리 deque + JSON 스냅샷**으로 운영. 영구 적재(parquet)는 v1.
+
+### 메모리 캐시 (worker process)
+
+```
+intraday_series[code] = {
+    'vp':         deque(maxlen=1200)   # (timestamp, vp) — 20분 1초 단위
+    'vol_1m':     deque(maxlen=30)     # (timestamp, value)  — 30분
+    'vol_5m':     deque(maxlen=12)     # (timestamp, value)  — 60분
+    'minute_ohlc':deque(maxlen=20)     # (timestamp, o,h,l,c) — 5분봉 직전 100분
+    'price':      deque(maxlen=600)    # (timestamp, price) — 10분 1초 단위
+    'high_since_entry': float          # 보유 모드 전용
+    'vi_triggered_at':  datetime|None
+}
+```
+
+→ 종목 10개 × 평균 항목 1KB ≈ 10KB 상주. RSS 부담 없음.
+
+### 보유 상태 영속화 (재시작 대비)
+
+```
+data/state/holdings.json
+{
+  "091340": {
+    "entry_price": 91300,
+    "entry_time":  "2026-05-13T13:42:11+09:00",
+    "entry_bar_low": 90800,
+    "time_stop_minutes": 10,
+    "triggers_fired": ["B1"]   # 멱등성: 익절 1차는 1회만
+  }
+}
+```
+
+- `/buy` / `/sell` 시 atomic write (tmp file + rename)
+- worker 재시작 시 load → 메모리 복원. 시계열은 비어 있음 → 5MA/20MA는 워밍업 후 사용
+
+### KIS API 호출수 영향 (R10~R15 추가)
+
+기존 M6 표(종목당 4지표)에 변화 없음. R10 체결강도/R12 분봉 OHLC/R10 호가잔량/투자자별 순매수 모두 기존 4 fetcher 결과 재사용. 추가 호출 X.
+
+---
 
 ## 데이터 무결성 체크
 

@@ -30,6 +30,10 @@ from src.jongbae.config_thresholds import (
     STRONG_RISE_ACCEL_RATIO,
     TRANSITION_ACCEL_RATIO,
     TRANSITION_MIN_BAR_VALUE,
+    VOL_ACCEL_1M_BASELINE,
+    VOL_ACCEL_1M_RECENT,
+    VOL_ACCEL_5M_BASELINE,
+    VOL_ACCEL_5M_RECENT,
 )
 
 
@@ -196,6 +200,33 @@ def is_recent_high(
         return False
 
     return today_high > int(df["high"].max())
+
+
+def vol_accel_1m(minute_bars: pd.DataFrame) -> float:
+    """R11 분당 거래대금 가속 — 1분 윈도우.
+
+    `vol_accel_1m = 최근 1분 거래대금 / 직전 5분 평균 분당거래대금`
+
+    R3' 30분 분모(`compute_accel_ratio`)와는 별개 용도 — R14 매수 점수 /
+    R15 매도 트리거 전용.
+    """
+    return compute_accel_ratio(
+        minute_bars,
+        recent_minutes=VOL_ACCEL_1M_RECENT,
+        baseline_minutes=VOL_ACCEL_1M_BASELINE,
+    )
+
+
+def vol_accel_5m(minute_bars: pd.DataFrame) -> float:
+    """R11 분당 거래대금 가속 — 5분 윈도우.
+
+    `vol_accel_5m = 최근 5분 거래대금 / 직전 20분 평균 5분 거래대금`
+    """
+    return compute_accel_ratio(
+        minute_bars,
+        recent_minutes=VOL_ACCEL_5M_RECENT,
+        baseline_minutes=VOL_ACCEL_5M_BASELINE,
+    )
 
 
 def short_trend_sparkline(

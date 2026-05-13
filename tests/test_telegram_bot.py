@@ -116,3 +116,143 @@ def test_apply_pause_works_outside_window():
     s = MonitoringSession()
     msg = apply_command(parse_command("/pause"), s, datetime(2026, 5, 9, 23, 0))
     assert s.paused is True
+
+
+# ── /buy /sell /status (R15) ─────────────────────────────────────────────────
+
+
+def test_parse_buy_basic():
+    cmd = parse_command("/buy 091340 91300")
+    assert cmd.kind == "buy"
+    assert cmd.code == "091340"
+    assert cmd.price == 91300.0
+    assert cmd.time_stop_minutes is None
+
+
+def test_parse_buy_with_time_override():
+    cmd = parse_command("/buy 091340 91300 5")
+    assert cmd.kind == "buy"
+    assert cmd.time_stop_minutes == 5
+
+
+def test_parse_buy_price_with_comma():
+    cmd = parse_command("/buy 091340 91,300")
+    assert cmd.kind == "buy"
+    assert cmd.price == 91300.0
+
+
+def test_parse_buy_missing_args():
+    assert parse_command("/buy").kind == "unknown"
+    assert parse_command("/buy 091340").kind == "unknown"
+
+
+def test_parse_buy_invalid_code():
+    assert parse_command("/buy 12345 100").kind == "unknown"
+
+
+def test_parse_buy_invalid_price():
+    assert parse_command("/buy 091340 abc").kind == "unknown"
+    assert parse_command("/buy 091340 -100").kind == "unknown"
+
+
+def test_parse_sell_basic():
+    cmd = parse_command("/sell 091340")
+    assert cmd.kind == "sell"
+    assert cmd.code == "091340"
+
+
+def test_parse_sell_invalid_code():
+    assert parse_command("/sell 12345").kind == "unknown"
+    assert parse_command("/sell").kind == "unknown"
+
+
+def test_parse_status_basic():
+    cmd = parse_command("/status 091340")
+    assert cmd.kind == "status"
+    assert cmd.code == "091340"
+
+
+def test_apply_buy_outside_window():
+    """장 시간 외 /buy 는 거부."""
+    s = MonitoringSession()
+    msg = apply_command(parse_command("/buy 091340 91300"), s, datetime(2026, 5, 11, 14, 30))
+    assert "장 시간 외" in msg
+
+
+def test_apply_buy_creates_holding(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
+
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    msg = bot.apply_command(bot.parse_command("/buy 091340 91300"), s, now)
+    assert "보유 모드" in msg
+    assert "91,300" in msg or "91300" in msg
+
+    holdings = et.load_holdings()
+    assert "091340" in holdings
+    assert holdings["091340"].entry_price == 91_300
+    assert holdings["091340"].time_stop_minutes == 10
+
+
+def test_apply_buy_with_time_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
+
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    bot.apply_command(bot.parse_command("/buy 091340 91300 5"), s, now)
+    holdings = et.load_holdings()
+    assert holdings["091340"].time_stop_minutes == 5
+
+
+def test_apply_sell_removes_holding(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
+
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    bot.apply_command(bot.parse_command("/buy 091340 91300"), s, now)
+    msg = bot.apply_command(bot.parse_command("/sell 091340"), s, now)
+    assert "감시 모드" in msg
+    assert "091340" not in et.load_holdings()
+
+
+def test_apply_sell_no_holding():
+    s = MonitoringSession()
+    msg = apply_command(parse_command("/sell 091340"), s, datetime(2026, 5, 11, 9, 30))
+    assert "보유 모드 아님" in msg
+
+
+def test_apply_status_resets_message_id():
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("091340", now)
+    s.monitored["091340"].message_id = 12345
+    msg = apply_command(parse_command("/status 091340"), s, now)
+    assert "재발송" in msg
+    assert s.monitored["091340"].message_id is None
+
+
+def test_apply_status_unknown_code():
+    s = MonitoringSession()
+    msg = apply_command(parse_command("/status 091340"), s, datetime(2026, 5, 11, 9, 30))
+    assert "모니터링 중이 아님" in msg

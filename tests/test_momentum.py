@@ -11,6 +11,8 @@ from src.jongbae.momentum import (
     is_strong_rise,
     is_transition_candidate,
     short_trend_sparkline,
+    vol_accel_1m,
+    vol_accel_5m,
 )
 
 
@@ -236,3 +238,41 @@ def test_sparkline_constant_values():
 
 def test_sparkline_empty():
     assert short_trend_sparkline(pd.DataFrame()) == ""
+
+
+# ── R11 vol_accel_1m / vol_accel_5m ──────────────────────────────────────────
+
+
+def test_vol_accel_1m_basic():
+    """1분 recent / 5분 baseline 평균."""
+    # baseline 5분 = 각 분 1억 → 합 5억, 5 windows 합산 = 5억 / 5 = 1억 per_window
+    # recent 1분 = 3억
+    # accel = 3억 / 1억 = 3.0
+    bars = _bars([100_000_000] * 5 + [300_000_000])
+    ratio = vol_accel_1m(bars)
+    assert ratio == pytest.approx(3.0, rel=1e-3)
+
+
+def test_vol_accel_5m_basic():
+    """5분 recent / 20분 baseline."""
+    # baseline 20분 = 각 분 1억 → 20억, 4 windows → 5억/window
+    # recent 5분 = 각 분 4억 = 20억
+    # accel = 20 / 5 = 4.0
+    bars = _bars([100_000_000] * 20 + [400_000_000] * 5)
+    ratio = vol_accel_5m(bars)
+    assert ratio == pytest.approx(4.0, rel=1e-3)
+
+
+def test_vol_accel_1m_drain():
+    """자금 고갈 — accel < 0.5."""
+    bars = _bars([1_000_000_000] * 5 + [200_000_000])
+    ratio = vol_accel_1m(bars)
+    # 1분 = 2억 / per_window = 10억 = 0.2배
+    assert ratio == pytest.approx(0.2, rel=1e-3)
+
+
+def test_vol_accel_1m_insufficient_bars():
+    """recent + recent 미만이면 NaN (compute_accel_ratio 가드)."""
+    bars = _bars([100_000_000])  # 1개만 — recent(1) + recent(1) = 2 미만
+    ratio = vol_accel_1m(bars)
+    assert ratio != ratio  # NaN

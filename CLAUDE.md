@@ -31,7 +31,7 @@
 ### 작업 시작 전
 
 - 새 파일/모듈 만들기 전에 반드시 `docs/plan.md`의 현재 마일스톤과 체크리스트 확인
-- 매매 룰이 관련된 작업이면 `docs/jongbae-strategy.md`의 정량 룰(R1~R8) 재확인
+- 매매 룰이 관련된 작업이면 `docs/jongbae-strategy.md`의 정량 룰(R1~R15) 재확인
 - 데이터 모듈 작업이면 `docs/data-infra.md` 재확인
 - 레포트 모듈 작업이면 `docs/report-spec.md` 재확인
 - 정정 이력(`docs/jongbae-strategy.md` 하단) 확인 — 같은 실수 반복 방지
@@ -107,6 +107,14 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 | 일봉 +20%↑ | 종가 기준 전일 대비 수익률 +20% 이상 |
 | 갭상 (gap up) | 다음날 시가가 전일 종가보다 높은 것 |
 | 상한가 | KOSPI/KOSDAQ +30%. 종배의 1순위 진입 시점 |
+| 체결강도 (VP, Volume Power) | 능동 매수체결량 / 능동 매도체결량 × 100. 100=균형. R10. 호가 잔량을 메인에서 강등하고 VP가 메인 |
+| VP_5MA / VP_20MA | 체결강도 5분/20분 이동평균. 장중 메모리 시계열 |
+| vol_accel_1m / vol_accel_5m | R11 분당 거래대금 가속. 1m=최근1분/직전5분평균, 5m=최근5분/직전20분평균. R3' 30분 분모와는 별개 용도 |
+| 매수 점수 / 등급 | R14. 점수 합산 → 🟢STRONG(≥5)/🟡WATCH(≥2)/⚫NEUTRAL(≥-1)/🔴AVOID. 개별 시그널 색상 부여 폐기 후 도입 |
+| Bearish/Bullish Divergence | R13. 가격 변화와 VP_5MA 변화의 부호 반대. Bearish=고점 신호, Bullish=매집 신호 |
+| 감시 모드 / 보유 모드 | R15. 모니터링 종목의 두 상태. `/buy CODE PRICE`로 보유 전환, `/sell`로 복귀. TRANSITION/GRACE(주도주 교체)와는 다른 축 |
+| R15 매도 트리거 A/B/C | A=손절(가격/봉저점/이평/시간) / B=익절(1차/2차/트레일링) / C=시그널(VP이탈/Bearish/자금고갈/윗꼬리음봉/VI). OR 조건 |
+| 흥아해운 케이스 | 모멘텀 죽음 + 호가만 5.3배라 가짜 매수 신호 발생. R14 회귀 테스트 입력 |
 
 ## 절대 헷갈리지 말 것
 
@@ -203,6 +211,8 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 - 검증 안 된 자작 가중합 스코어 → 위험. 한국 단타 통설 그대로 따른다
 - 텔레그램에 1~2초마다 send → 푸시 폭주. **반드시 editMessageText**
 - ETF/ETN/리츠/스팩 미필터 시 KODEX/TIGER/`100030` 같은 종목이 후보로 잡힘
+- **호가 잔량 비율만으로 매수 판단 X** — 허매수/스푸핑 함정. 체결강도(VP) + 봉 패턴 + 모멘텀과 조합 점수(R14)로만 판단
+- **R15 매도 트리거 = 알림만**. 자동 주문 코드 작성 절대 X. CLAUDE.md "자동 매매 절대 금지" 정책 유지 — 단타 시스템도 예외 아님
 
 ## 파일 작성 시 참고 문서
 
