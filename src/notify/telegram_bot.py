@@ -1,19 +1,20 @@
 """Telegram 양방향 봇 — 사용자 명령 수신 및 응답 (M6).
 
 명령어:
-    /pause                       자동/수동 모니터링 전체 ON/OFF 토글
+    /on, /start                  모니터링 ON (멱등). 24h 허용.
+    /off, /pause                 모니터링 OFF (멱등).
     /list                        현재 모니터링 종목 출력
     /clear                       수동 추가분만 해제
     NNNNNN                       6자리 숫자 → 감시 모드 토글 추가/해제
     /buy NNNNNN PRICE [MIN]      보유 모드 진입 (R15). 매수가 등록, 시간손절 N분(기본 10)
     /sell NNNNNN                 보유 모드 해제 (감시 모드 복귀)
     /status NNNNNN               해당 종목 풀 카드 강제 재발송 트리거
-    그 외                        "장 시간 외" 안내 또는 무시
+    그 외                        무시
 
 설계:
     `parse_command()` 는 pure — 메시지 텍스트 → 명령 + 인자.
     실행은 `apply_command()` 가 MonitoringSession 에 위임.
-    long polling worker 는 `src.dashboard.worker` 에서 호출.
+    long polling worker 는 `src.dashboard.worker` 에서 24h 상시 호출.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from src.dashboard.state import MonitoringSession, in_monitoring_window
+from src.dashboard.state import MonitoringSession
 from src.jongbae.config_thresholds import TIME_STOP_MINUTES_DEFAULT
 from src.jongbae.exit_triggers import (
     Holding,
@@ -31,7 +32,7 @@ from src.jongbae.exit_triggers import (
 
 
 CommandKind = Literal[
-    "pause", "list", "clear", "toggle_code",
+    "on", "off", "list", "clear", "toggle_code",
     "buy", "sell", "status",
     "unknown", "ignore",
 ]
@@ -75,8 +76,10 @@ def parse_command(text: str) -> Command:
     head = parts[0]
     lower = head.lower()
 
-    if lower in ("/pause", "/start"):
-        return Command(kind="pause")
+    if lower in ("/on", "/start"):
+        return Command(kind="on")
+    if lower in ("/off", "/pause"):
+        return Command(kind="off")
     if lower == "/list":
         return Command(kind="list")
     if lower == "/clear":
@@ -134,8 +137,12 @@ def apply_command(
     if cmd.kind == "ignore":
         return ""
 
-    if cmd.kind == "pause":
-        _, msg = session.toggle_pause()
+    if cmd.kind == "on":
+        _, msg = session.set_on()
+        return msg
+
+    if cmd.kind == "off":
+        _, msg = session.set_off()
         return msg
 
     if cmd.kind == "list":
@@ -146,16 +153,14 @@ def apply_command(
         return msg
 
     if cmd.kind == "toggle_code":
-        if not in_monitoring_window(now):
-            return "장 시간 외입니다. (모니터링 운영: 평일 09:00~10:30)"
+        # 24h 허용 (round 18) — /on 24h 정책과 일관성.
         if cmd.code is None:
             return ""
         _, msg = session.add_manual(cmd.code, now)
         return msg
 
     if cmd.kind == "buy":
-        if not in_monitoring_window(now):
-            return "장 시간 외입니다. (보유 모드는 운영시간 내 등록)"
+        # 24h 허용 (round 18) — 사용자가 NXT/장중/임의 시점 매수했음을 봇에 알림.
         if cmd.code is None or cmd.price is None:
             return ""
         return _apply_buy(cmd.code, cmd.price, cmd.time_stop_minutes, session, now)

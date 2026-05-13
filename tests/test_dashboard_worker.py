@@ -44,19 +44,20 @@ def test_dashboard_tick_skips_when_paused():
     fvr.assert_not_called()
 
 
-def test_dashboard_tick_skips_outside_window():
+def test_dashboard_tick_24h_no_window_guard():
+    """round 18: in_monitoring_window 가드 폐지. 운영시간 외에도 paused=False면 tick 실행."""
     s = MonitoringSession()
     msg_ids: dict = {}
-    with patch("src.dashboard.worker.fetch_volume_rank") as fvr:
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=_empty_snapshot()) as fvr:
         dashboard_tick(
             session=s, message_ids=msg_ids,
             client=MagicMock(), master_df=pd.DataFrame(),
             theme_mapping_df=pd.DataFrame(),
             daily_ohlcv=None,
             token="t", chat_id="c",
-            now=datetime(2026, 5, 11, 14, 0),  # 14:00 (장중이지만 모니터링 시간 외)
+            now=datetime(2026, 5, 11, 14, 0),  # 14:00 — 이전엔 스킵, 이제는 fetch 호출됨
         )
-    fvr.assert_not_called()
+    fvr.assert_called_once()
 
 
 def test_dashboard_tick_empty_snapshot_returns_early():

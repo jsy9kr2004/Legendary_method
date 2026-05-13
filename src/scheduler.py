@@ -521,15 +521,9 @@ def _send_limit_up_alert(
 # ── M6 대시보드 잡 함수 ──────────────────────────────────────────────────────
 
 
-@_business_day_only("모니터링 시작")
-def _dashboard_start(client: KISClient, settings: Settings) -> None:
-    """09:00 매일 자동 ON — 데이터 캐시 로드 + paused 리셋 + 명령 thread 시작."""
+def _load_dashboard_data(settings: Settings) -> None:
+    """데이터 캐시(마스터/테마/일봉) 로드. run() 시작과 평일 09:00 cron 시 호출."""
     global _dashboard_master_df, _dashboard_theme_df, _dashboard_daily_df
-    global _dashboard_command_thread, _dashboard_command_stop
-
-    from src.dashboard.worker import reset_daily, start_command_thread
-
-    logger.info("[M6] 모니터링 대시보드 시작")
     try:
         _dashboard_master_df = read_stock_master(settings.data_dir)
     except FileNotFoundError:
@@ -545,28 +539,56 @@ def _dashboard_start(client: KISClient, settings: Settings) -> None:
     except FileNotFoundError:
         _dashboard_daily_df = None
 
+
+@_business_day_only("모니터링 자동 시작")
+def _dashboard_start(client: KISClient, settings: Settings) -> None:
+    """평일 09:00 자동 ON — 데이터 캐시 재로드 + session.set_on().
+
+    polling thread 는 scheduler.run() 시점에 24h 상시 가동 중. 여기서는 다시
+    띄우지 않음. /off 로 끈 다음날 09:00 에 다시 자동 ON 되는 흐름.
+    """
+    from src.dashboard.worker import reset_daily
+
+    logger.info("[M6] 모니터링 자동 시작 (평일 09:00)")
+    _load_dashboard_data(settings)
     reset_daily(_dashboard_session)
     _dashboard_message_ids.clear()
 
-    # 사용자 명령 long polling thread (이미 동작 중이면 stop 후 재시작)
-    if _dashboard_command_stop is not None:
-        _dashboard_command_stop.set()
-    if settings.telegram_bot_token and settings.telegram_chat_id:
-        _dashboard_command_thread, _dashboard_command_stop = start_command_thread(
-            _dashboard_session,
-            settings.telegram_bot_token,
-            settings.telegram_chat_id,
-        )
-    else:
-        logger.warning("[M6] 텔레그램 미설정 — 명령 thread 미시작")
 
-
-@_business_day_only("모니터링 tick")
 def _dashboard_tick_job(client: KISClient, settings: Settings) -> None:
-    """5초마다 호출 — 모니터링 한 사이클. 시간창은 worker 안에서 가드."""
-    if _dashboard_master_df is None or _dashboard_theme_df is None:
+    """5초마다 호출 — 모니터링 한 사이클.
+
+    가드 (모두 통과해야 tick 실행):
+        1) session.paused 가 False (사용자가 /on 으로 켰거나 09:00 cron 으로 자동 ON)
+        2) 텔레그램 설정 존재
+        3) 데이터 캐시 로드됨
+
+    평일/주말 가드 X — 사용자가 24h 임의 시점에 /on 으로 켤 수 있음 (정책).
+    주말/휴장일에 켜놓아도 KIS 시세는 변동 없으니 카드는 정적으로 유지.
+    """
+    if _dashboard_session.paused:
+        # /off 직후 첫 tick — 카드 메시지 정리 1회.
+        if (
+            _dashboard_session.off_cleanup_pending
+            and settings.telegram_bot_token
+            and settings.telegram_chat_id
+        ):
+            try:
+                from src.dashboard.worker import cleanup_messages
+                cleanup_messages(
+                    token=settings.telegram_bot_token,
+                    chat_id=settings.telegram_chat_id,
+                    session=_dashboard_session,
+                    message_ids=_dashboard_message_ids,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[M6] /off 카드 정리 실패: {e}")
+            _dashboard_session.off_cleanup_pending = False
         return
     if not (settings.telegram_bot_token and settings.telegram_chat_id):
+        return
+    if _dashboard_master_df is None or _dashboard_theme_df is None:
+        # 09:00 자동 cron 전이거나 마스터/테마 파일 미존재 — tick 미실행.
         return
 
     from src.dashboard.worker import dashboard_tick
@@ -581,27 +603,6 @@ def _dashboard_tick_job(client: KISClient, settings: Settings) -> None:
         chat_id=settings.telegram_chat_id,
         now=now_kst(),
     )
-
-
-@_business_day_only("모니터링 종료")
-def _dashboard_stop(settings: Settings) -> None:
-    """10:30 종료 — 모니터링 메시지 정리 + 명령 thread stop."""
-    global _dashboard_command_thread, _dashboard_command_stop
-
-    from src.dashboard.worker import cleanup_messages
-
-    logger.info("[M6] 모니터링 대시보드 종료")
-    if settings.telegram_bot_token and settings.telegram_chat_id:
-        cleanup_messages(
-            token=settings.telegram_bot_token,
-            chat_id=settings.telegram_chat_id,
-            session=_dashboard_session,
-            message_ids=_dashboard_message_ids,
-        )
-    if _dashboard_command_stop is not None:
-        _dashboard_command_stop.set()
-    _dashboard_command_thread = None
-    _dashboard_command_stop = None
 
 
 def _make_scheduler() -> BlockingScheduler:
@@ -621,6 +622,31 @@ def run() -> None:
     client = KISClient(settings)
     dispatcher = Dispatcher(settings)
     scheduler = _make_scheduler()
+
+    # M6 모니터링: 데이터 캐시 1회 로드 + 봇 명령 polling thread 24h 상시 가동.
+    # daemon 시작 시점이 평일 09:00 자동 cron 전/후라면 OFF 시작 — 사용자가 /on
+    # 으로 명시 ON 또는 다음 평일 09:00 cron 으로 자동 ON.
+    _load_dashboard_data(settings)
+    _n = now_kst()
+    _auto_on_window = is_business_day(_n.date()) and (
+        _n.hour == 9 or (_n.hour == 10 and _n.minute <= 30)
+    )
+    if not _auto_on_window:
+        _dashboard_session.paused = True
+    global _dashboard_command_thread, _dashboard_command_stop
+    if settings.telegram_bot_token and settings.telegram_chat_id:
+        from src.dashboard.worker import start_command_thread
+        _dashboard_command_thread, _dashboard_command_stop = start_command_thread(
+            _dashboard_session,
+            settings.telegram_bot_token,
+            settings.telegram_chat_id,
+        )
+        logger.info(
+            f"[M6] 봇 명령 polling thread 24h 상시 가동 (현재 모니터링: "
+            f"{'OFF' if _dashboard_session.paused else 'ON'})"
+        )
+    else:
+        logger.warning("[M6] 텔레그램 미설정 — 명령 thread 미시작")
 
     # 매일 08:30 글로벌 상태 리셋 (월~금)
     scheduler.add_job(
@@ -691,15 +717,19 @@ def run() -> None:
         coalesce=True,
     )
 
-    # ── M6 모니터링 대시보드 (09:00 시작 / 10:30 종료, 5초 tick) ─────────────
+    # ── M6 모니터링 대시보드 ─────────────────────────────────────────────────
+    # 평일 09:00 자동 ON (사용자가 미리 끄지 않았으면) — 데이터 재로드 + paused=False.
+    # 자동 OFF cron 폐지 (round 18) — /off 명령으로만 종료. 사용자가 임의 시점에
+    # 켜고 끄도록.
     scheduler.add_job(
         _dashboard_start,
         trigger=CronTrigger(day_of_week="mon-fri", hour=9, minute=0),
         args=[client, settings],
         id="dashboard_start",
-        name="모니터링 시작",
+        name="모니터링 자동 시작",
         misfire_grace_time=120,
     )
+    # tick: 5초 간격. session.paused / 캐시 / 텔레그램 설정 가드는 job 안에서.
     scheduler.add_job(
         _dashboard_tick_job,
         trigger=IntervalTrigger(seconds=5),
@@ -710,18 +740,23 @@ def run() -> None:
         max_instances=1,
         coalesce=True,
     )
-    scheduler.add_job(
-        _dashboard_stop,
-        trigger=CronTrigger(day_of_week="mon-fri", hour=10, minute=30),
-        args=[settings],
-        id="dashboard_stop",
-        name="모니터링 종료",
-        misfire_grace_time=300,
-    )
 
     def _shutdown(signum, frame):
         logger.info("종료 시그널 수신 — 스케줄러 셧다운")
         scheduler.shutdown(wait=False)
+        if _dashboard_command_stop is not None:
+            _dashboard_command_stop.set()
+        if settings.telegram_bot_token and settings.telegram_chat_id:
+            try:
+                from src.dashboard.worker import cleanup_messages
+                cleanup_messages(
+                    token=settings.telegram_bot_token,
+                    chat_id=settings.telegram_chat_id,
+                    session=_dashboard_session,
+                    message_ids=_dashboard_message_ids,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[M6] 종료 시 카드 정리 실패: {e}")
         client.close()
         sys.exit(0)
 

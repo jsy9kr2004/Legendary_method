@@ -99,6 +99,8 @@ class MonitoringSession:
     paused: bool = False
     monitored: dict[str, MonitoredStock] = field(default_factory=dict)
     trackers: dict[str, LeaderTracker] = field(default_factory=dict)  # sector -> tracker
+    # /off 시 카드 메시지 정리를 tick job 이 1회 수행하기 위한 플래그.
+    off_cleanup_pending: bool = False
 
     # ── 종목 추가/제거 ────────────────────────────────────────────────────────
 
@@ -149,12 +151,23 @@ class MonitoringSession:
                 lines.append(f"  • {m.code} {m.name}")
         return "\n".join(lines)
 
-    def toggle_pause(self) -> tuple[bool, str]:
-        """/pause — 전체 모니터링 ON/OFF 토글."""
-        self.paused = not self.paused
+    def set_on(self) -> tuple[bool, str]:
+        """/on /start — 모니터링 ON (멱등). 이미 ON 이면 안내만."""
+        if not self.paused:
+            return False, "▶ 이미 모니터링 ON 상태"
+        self.paused = False
+        return True, "▶ 모니터링 ON — 카드 갱신 시작"
+
+    def set_off(self) -> tuple[bool, str]:
+        """/off — 모니터링 OFF (멱등). 이미 OFF 이면 안내만.
+
+        카드 메시지 정리는 tick job 이 다음 사이클에 1회 수행 (off_cleanup_pending).
+        """
         if self.paused:
-            return True, "⏸ 모니터링 전체 OFF (다시 /pause 로 ON 또는 다음 평일 09:00 자동 ON)"
-        return False, "▶ 모니터링 전체 ON"
+            return False, "⏸ 이미 모니터링 OFF 상태"
+        self.paused = True
+        self.off_cleanup_pending = True
+        return True, "⏸ 모니터링 OFF — /on 으로 재개 (다음 평일 09:00 자동 ON)"
 
     # ── 자동 주도주 갱신 ──────────────────────────────────────────────────────
 
