@@ -527,6 +527,7 @@ def dashboard_tick(
             # A/B/C 전체 표시는 triggers_fired (sticky) 기반.
             trigger_states = dict.fromkeys([
                 "A1_stop_price", "A2_stop_bar_low", "A3_stop_ma", "A4_stop_time",
+                "A5_eod_ma_break",
                 "B1_take_profit_1", "B2_take_profit_2", "B3_trailing",
                 "C1_vp_below_100", "C2_bearish_divergence", "C3_vol_drain",
                 "C4_bearish_candle", "C5_vi_failure",
