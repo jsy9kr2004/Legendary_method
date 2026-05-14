@@ -189,15 +189,17 @@ WebSocket 메시지:
 
 ---
 
-## 7. 결정 필요 항목 (작업 시작 전 합의)
+## 7. 확정 사항 (2026-05-14)
 
-| # | 항목 | 옵션 | 권고 |
+| # | 항목 | 확정 | 비고 |
 |---|---|---|---|
-| 1 | 외부 접근 방식 | Tailscale / Cloudflare Tunnel | **Tailscale** — 본인 디바이스 한정 |
-| 2 | 인증 강화 | Tailscale only / + token / + SSO | **Tailscale only** — 디바이스 인증으로 충분 |
-| 3 | 차트 라이브러리 | Chart.js / lightweight-charts / 텍스트 sparkline | **텍스트 sparkline 부터** (Phase 3 까진 의존성 0) → Phase 4 에서 lightweight-charts |
-| 4 | 분봉 영속화 범위 | 보유/모니터링 종목만 / 전체 후보 / 사용 안 함 | **모니터링 종목만** — 디스크 부담 ↓ + 복기 도구와 공유 |
-| 5 | 텔레그램 봇 위상 | 동시 운영 / PWA 완성 후 축소 | **동시 운영** — 이벤트 푸시 + PWA 미접속 시 fallback |
+| 1 | 외부 접근 방식 | **Tailscale** | 본인 디바이스 한정 (데스크탑/아이패드/폰). 도메인·Cloudflare 불필요 |
+| 2 | 인증 강화 | **Tailscale only** | 디바이스 인증으로 충분. 별도 토큰/SSO 없음. 디바이스 늘면 재검토 |
+| 3 | 차트 라이브러리 | **텍스트 sparkline → 후반 lightweight-charts** | Phase 1~3 까진 의존성 0. Phase 4 후반 lightweight-charts CDN 추가 |
+| 4 | 분봉 영속화 범위 | **모니터링 종목만** | `data/intraday_series/YYYY-MM-DD/CODE.parquet`. 디스크 부담 ↓, 복기 도구와 공유 |
+| 5 | 텔레그램 봇 위상 | **동시 운영** | 이벤트 푸시 + PWA 미접속 시 fallback. 점진 축소는 운영 6개월 후 재검토 |
+
+상기 항목 변경 시 본 표를 갱신하고 `docs/plan.md` M7 도 동기화.
 
 ---
 
@@ -255,3 +257,4 @@ PWA 측은 빌드 도구 없이 CDN 만 사용:
 | 일자 | 변경 | 사유 |
 |---|---|---|
 | 2026-05-14 | 초안 작성 | M6 카드를 텔레그램 + PWA 두 채널로 확장. KIS 주문 input 영구 X 정책 명시 |
+| 2026-05-14 | §7 결정 5항목 확정 | Tailscale / Tailscale only / sparkline→lightweight-charts / 모니터링 종목만 / 텔레그램 동시 운영 |

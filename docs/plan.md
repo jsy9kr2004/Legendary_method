@@ -237,13 +237,15 @@
 
 **완료 기준 (M7 v0):** 아이패드 홈화면 풀스크린에서 종목 6~10개 카드 + 보유 토글 버튼 동작. 텔레그램과 동일 데이터, 같은 1~3초 갱신. PWA 에서 보유 등록 시 텔레그램 카드도 동기화. `/on` / `/off` 양방향 동작. KIS 주문 input 부재 확인.
 
-**결정 필요 항목 (작업 시작 전 합의):**
+**확정 사항 (2026-05-14):**
 
-1. **외부 접근 방식**: Tailscale (권고) vs Cloudflare Tunnel
-2. **인증 강화 여부**: Tailscale only (권고) vs + 토큰 인증
-3. **차트 라이브러리**: 텍스트 sparkline 부터 (권고) → 후반 lightweight-charts vs Chart.js 처음부터
-4. **분봉 영속화 범위**: 모니터링 종목만 (권고) vs 전체 후보 vs 사용 안 함
-5. **텔레그램 봇 위상**: 동시 운영 (권고) vs PWA 완성 후 점진 축소
+1. **외부 접근**: Tailscale (본인 디바이스 한정)
+2. **인증**: Tailscale only (별도 토큰/SSO 없음)
+3. **차트 라이브러리**: 텍스트 sparkline → Phase 4 후반 lightweight-charts CDN
+4. **분봉 영속화 범위**: 모니터링 종목만 (`data/intraday_series/YYYY-MM-DD/CODE.parquet`)
+5. **텔레그램 봇 위상**: 동시 운영 (이벤트 푸시 + PWA fallback)
+
+상세는 `docs/dashboard-pwa.md` §7.
 
 ---
 
