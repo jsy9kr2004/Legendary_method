@@ -224,4 +224,5 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 - 데이터 모듈 작성 시: `docs/data-infra.md`
 - 종배 분석 모듈 작성 시: `docs/jongbae-strategy.md`
 - 레포트 모듈 작성 시: `docs/report-spec.md`
+- 실시간 모니터링 카드/funnel/매수 점수/매도 시그널 설명 (초보자용): `docs/monitoring-guide.md`
 - 전체 진행 상황: `docs/plan.md`

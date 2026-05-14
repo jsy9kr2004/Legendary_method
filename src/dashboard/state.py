@@ -106,6 +106,9 @@ class MonitoringSession:
     # 인자 없이 들어와도 여기서 자동 보충 (round 20). 다른 thread (telegram_bot.
     # _apply_buy) 가 읽으므로 단순 dict 로 두고 GIL 에 의존 (atomic dict 읽기/쓰기).
     last_prices: dict[str, float] = field(default_factory=dict)
+    # round 22: 종목별 체결강도(VP) 시계열. worker tick 에서 VP push, 카드/트리거에서
+    # ma_1/ma_5/ma_20 조회. memory-only, 데몬 재시작 시 워밍업 다시 시작 (5분 내 정상화).
+    vp_series: dict[str, Any] = field(default_factory=dict)  # code -> VPSeries
 
     # ── 종목 추가/제거 ────────────────────────────────────────────────────────
 

@@ -42,7 +42,8 @@ def test_render_basic_fields():
     assert "4.2배" in msg
     assert "체결강도" in msg
     assert "142" in msg
-    assert "외국인" in msg
+    # 외국인/기관/프로그램 라인은 round 22 에서 제거 (데이터 신뢰도 낮음).
+    assert "외국인" not in msg
     # sparkline 라인은 사용자 요청으로 render 에서 제거 (2026-05-13).
     assert "▁▂▃▅▇█" not in msg
     # 시각 + 가격은 한 줄로 합쳐졌고 구분선(─) 제거됨.
@@ -184,6 +185,92 @@ def test_render_one_min_exit_mark():
     )
     assert "🔴⚠" in msg
     assert "1분봉 급감" in msg
+
+
+def test_render_holding_mode_basic():
+    """round 22: 보유 모드 카드 — [보유] 헤더 + 합쳐진 시간/가격 라인 + 청산 시그널."""
+    from src.jongbae.exit_triggers import Holding
+    from src.jongbae.divergence import DivergenceState
+
+    entry = datetime(2026, 5, 14, 10, 3, 45)
+    now = datetime(2026, 5, 14, 10, 23, 45)
+    holding = Holding(
+        code="091340", entry_price=91300, entry_time=entry,
+        high_since_entry=92800,
+    )
+    triggers = {
+        "A1_stop_price": False, "C1_vp_below_100": False,
+        "C2_bearish_divergence": False, "C3_vol_drain": False,
+        "C4_bearish_candle": False, "C5_vi_failure": False,
+    }
+    div = DivergenceState(bearish=False, bullish=False,
+                         price_change_pct=0.8, vp_5ma_delta=-3.0)
+    msg = render_monitor_message(
+        _stock(code="091340", name="대한광통신", source=Source.MANUAL),
+        snapshot_row={"price": 92500, "prev_close": 70200, "daily_return": 31.8,
+                      "is_limit_up": True, "turnover": 19.0,
+                      "trading_value": 135_000_000_000, "rank": 1},
+        accel_ratio=4.8, recent_bar_value=4_500_000_000,
+        ccnl={"ccnl_strength": 138.0, "buy_ratio": 58.0},
+        asking=None, investor=None, sparkline="", now=now,
+        accel_ratio_1m=3.5, last_bar_value=900_000_000,
+        vp_5ma=135.0, vp_1ma=123.0,
+        holding=holding, trigger_states=triggers, divergence=div,
+    )
+    # 헤더 — [보유] prefix + source emoji 없음 (중복 제거)
+    assert "[보유] 대한광통신 (091340)" in msg
+    assert "🔵수동" not in msg
+    # 합쳐진 시간/가격 라인 — 매수가 + 손익 + 경과 초
+    assert "(+1,200초)" in msg
+    assert "92,500원" in msg
+    assert "91,300" in msg
+    assert "(+1.3%)" in msg  # 손익률
+    # 체결강도 5MA + 1MA
+    assert "5MA 135" in msg
+    assert "1MA 123" in msg
+    # 청산 시그널 섹션
+    assert "─ 청산 시그널 ─" in msg
+    assert "❌ 체결강도 5MA 100 하향 (현재 5MA 135 / 1MA 123)" in msg
+    assert "❌ Bearish Divergence" in msg
+    assert "가격 +0.80%" in msg
+    assert "체결강도 -3" in msg
+    assert "❌ 자금 고갈 (1분 가속 < 0.5) — 현재 3.5배" in msg
+    assert "❌ 윗꼬리 50%↑ 음봉 (1분봉 기준)" in msg
+    assert "❌ VI 발동 후 5분 내 재상승 실패" in msg
+    # +29% 매도가 라인은 보유 모드에서 미표시
+    assert "+29% 매도가" not in msg
+
+
+def test_render_holding_mode_with_fired_triggers():
+    """발화된 트리거는 ✅, 미발화는 ❌."""
+    from src.jongbae.exit_triggers import Holding
+
+    entry = datetime(2026, 5, 14, 10, 3, 45)
+    now = datetime(2026, 5, 14, 10, 23, 45)
+    holding = Holding(code="091340", entry_price=91300, entry_time=entry,
+                      high_since_entry=92800)
+    triggers = {
+        "C1_vp_below_100": True,    # 발화
+        "C2_bearish_divergence": True,  # 발화
+        "C3_vol_drain": False,
+        "C4_bearish_candle": False,
+        "C5_vi_failure": False,
+    }
+    msg = render_monitor_message(
+        _stock(code="091340", name="대한광통신", source=Source.MANUAL),
+        snapshot_row={"price": 90000, "prev_close": 91000, "daily_return": -1.1,
+                      "is_limit_up": False, "turnover": 8.0,
+                      "trading_value": 50_000_000_000, "rank": 5},
+        accel_ratio=0.4, recent_bar_value=500_000_000,
+        ccnl={"ccnl_strength": 85.0, "buy_ratio": 45.0},
+        asking=None, investor=None, sparkline="", now=now,
+        accel_ratio_1m=0.3, last_bar_value=80_000_000,
+        vp_5ma=92.0, vp_1ma=85.0,
+        holding=holding, trigger_states=triggers,
+    )
+    assert "✅ 체결강도 5MA 100 하향" in msg
+    assert "✅ Bearish Divergence" in msg
+    assert "❌ 자금 고갈" in msg
 
 
 def test_render_themes_slash_join():

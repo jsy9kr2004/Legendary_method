@@ -52,6 +52,12 @@ from src.jongbae.config_thresholds import (
     RISING_STAGE3_VP_MIN,
     TRANSITION_TURNOVER_RATIO,
 )
+from src.jongbae.divergence import compute_divergence
+from src.jongbae.exit_triggers import (
+    Holding,
+    evaluate_triggers,
+    load_holdings,
+)
 from src.jongbae.grader import GraderSnapshot, calculate_buy_score
 from src.jongbae.leading_theme import (
     identify_early_morning_leaders,
@@ -62,6 +68,7 @@ from src.jongbae.momentum import (
     compute_accel_ratio,
     short_trend_sparkline,
 )
+from src.jongbae.volume_power import VPSeries
 from src.notify.telegram import (
     delete_message,
     edit_message,
@@ -260,6 +267,11 @@ def dashboard_tick(
     # 수 있음. 평일/주말, 정규장 외 시간이어도 KIS 시세를 받아 카드 표시.
     # force_on 은 명시적으로 사용자가 /on 한 상태를 추적할 뿐 가드는 아님.
 
+    # round 22: 보유 종목 메타데이터 로드 (R15 트리거 평가용).
+    # /buy /sell 가 holdings.json 을 갱신하므로 매 tick 디스크 로드. 종목 수는
+    # 단타 운영상 한 자릿수라 비용 무시 가능.
+    holdings: dict[str, Holding] = load_holdings()
+
     # 1) 시장 스냅샷 + 주도섹터/주도주
     snapshot = fetch_volume_rank(client, top_n=LEADING_SECTOR_TOP_N, master_df=master_df)
     if snapshot.empty:
@@ -394,6 +406,25 @@ def dashboard_tick(
         )
         sparkline = short_trend_sparkline(bars, n_recent=6)
 
+        # round 22: VP 시계열 push + 5MA / 1MA / 20MA 산출 (체결강도 라인 보강 + R15 C1)
+        vp_now = float("nan")
+        vp_1ma = float("nan")
+        vp_5ma = float("nan")
+        vp_5ma_prev = float("nan")
+        if ccnl is not None:
+            raw_vp = ccnl.get("ccnl_strength")
+            if raw_vp is not None and raw_vp == raw_vp:
+                vp_now = float(raw_vp)
+                series = session.vp_series.get(code)
+                if series is None:
+                    series = VPSeries()
+                    session.vp_series[code] = series
+                # push 전에 직전 5MA 캡처 — C1 cross 판정용
+                vp_5ma_prev = series.ma_5(now)
+                series.push(now, vp_now)
+                vp_1ma = series.ma_1(now)
+                vp_5ma = series.ma_5(now)
+
         # GRACE 잔여 시간 (a2 카드 측 표시용)
         grace_remaining = None
         for tracker in session.trackers.values():
@@ -405,6 +436,56 @@ def dashboard_tick(
 
         # 이 종목이 a1 (현재 주도주) 이면 TRANSITION/GRACE 부상 후보 정보 전달
         transition_info = tracker_info_by_a1.get(code)
+
+        # round 22: 보유 모드 = holdings 에 등록된 종목. evaluate_triggers 매 tick 호출,
+        # 결과 + holding 메타데이터를 render 에 전달. 트리거 발화는 카드에 표시만 (push X).
+        holding = holdings.get(code)
+        trigger_states: dict[str, bool] | None = None
+        divergence_state = None
+        if holding is not None:
+            # 5분 이평 (A3 입력) 분봉의 최근 5봉 종가 평균 — 1분봉 5개 = 5분 이평
+            minute_ma_5 = None
+            if not bars.empty and "close" in bars.columns:
+                tail = bars.tail(5)["close"].dropna()
+                if not tail.empty:
+                    minute_ma_5 = float(tail.mean())
+            # 직전 candle (1분봉) — C4 입력
+            candle_for_trig = cached.get("candle") or latest_completed_candle(bars)
+            # 다이버전스 — VP_5MA 의 5분 전 값과 현재 가격 5분 전 값 비교
+            price_now = float(snap_row.get("price", 0)) if snap_row else 0.0
+            price_5m_ago = price_now
+            if not bars.empty and len(bars) >= 5 and "close" in bars.columns:
+                price_5m_ago = float(bars.iloc[-5]["close"])
+            # VP_5MA 5분 전 값은 시계열 캐시에서 5분 전 ma 계산 (근사: ma 함수에 과거 now 인자)
+            # 간단화 — 직전 tick 5MA 를 사용 (vp_5ma_prev)
+            divergence_state = compute_divergence(
+                price_now=price_now,
+                price_5m_ago=price_5m_ago,
+                vp_5ma_now=vp_5ma,
+                vp_5ma_5m_ago=vp_5ma_prev,
+            )
+            events = evaluate_triggers(
+                holding=holding,
+                now=now,
+                current_price=price_now,
+                minute_ma_5=minute_ma_5,
+                candle=candle_for_trig,
+                vp_5ma_prev=vp_5ma_prev if vp_5ma_prev == vp_5ma_prev else None,
+                vp_5ma_now=vp_5ma if vp_5ma == vp_5ma else None,
+                divergence=divergence_state,
+                vol_accel_1m_value=accel_1m if accel_1m == accel_1m else None,
+            )
+            for ev in events:
+                logger.info(f"[R15 트리거] {code} {ev.kind} — {ev.text}")
+            # 카드 표시는 holding.triggers_fired 전체 + 분기별 현재 상태 사용
+            trigger_states = dict.fromkeys([
+                "A1_stop_price", "A2_stop_bar_low", "A3_stop_ma", "A4_stop_time",
+                "B1_take_profit_1", "B2_take_profit_2", "B3_trailing",
+                "C1_vp_below_100", "C2_bearish_divergence", "C3_vol_drain",
+                "C4_bearish_candle", "C5_vi_failure",
+            ], False)
+            for k in holding.triggers_fired:
+                trigger_states[k] = True
 
         text = render_monitor_message(
             monitored=monitored,
@@ -420,6 +501,11 @@ def dashboard_tick(
             accel_ratio_1m=accel_1m if accel_1m == accel_1m else None,
             last_bar_value=last_bar_value or None,
             transition_info=transition_info,
+            vp_1ma=vp_1ma if vp_1ma == vp_1ma else None,
+            vp_5ma=vp_5ma if vp_5ma == vp_5ma else None,
+            holding=holding,
+            trigger_states=trigger_states,
+            divergence=divergence_state,
         )
         _send_or_edit_monitor(token, chat_id, code, text, message_ids)
 

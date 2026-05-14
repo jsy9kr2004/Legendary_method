@@ -78,6 +78,11 @@ def render_monitor_message(
     accel_ratio_1m: float | None = None,
     last_bar_value: int | None = None,
     transition_info: dict[str, Any] | None = None,
+    vp_1ma: float | None = None,
+    vp_5ma: float | None = None,
+    holding: Any = None,            # Holding 객체 (보유 모드일 때만)
+    trigger_states: dict[str, bool] | None = None,  # R15 12개 트리거 발화 상태
+    divergence: Any = None,         # DivergenceState
 ) -> str:
     """종목별 모니터링 카드 (editMessageText 갱신용).
 
@@ -97,8 +102,14 @@ def render_monitor_message(
         transition_info: 이 종목이 a1 일 때 부상 후보 a2 정보 (state/candidate_code/
             candidate_turnover). 카드 헤더에 통합 표시 (round 19 정책).
     """
-    # 헤더 — source 별 emoji + 라벨
-    if monitored.source == Source.AUTO:
+    # 헤더 — 보유/감시 모드 분기 (round 22).
+    # 보유 모드 = holding 인자 있을 때. source emoji prefix 없이 [보유] 만 표시
+    # (CLAUDE.md 정책: source 라벨 중복 방지).
+    is_holding = holding is not None
+    if is_holding:
+        src_emoji = ""
+        header_kind = "보유"
+    elif monitored.source == Source.AUTO:
         src_emoji = "⭐자동/주도주"
         header_kind = "모니터링"
     elif monitored.source == Source.RISING:
@@ -124,8 +135,9 @@ def render_monitor_message(
         }.get(monitored.buy_grade, "")
         grade_label = f"  {grade_emoji} {monitored.buy_grade} {monitored.buy_score:+.1f}점"
 
+    src_part = f" {src_emoji}" if src_emoji else ""
     lines = [
-        f"[{header_kind}] {name} ({monitored.code}) {src_emoji}{grace_label}{grade_label}",
+        f"[{header_kind}] {name} ({monitored.code}){src_part}{grace_label}{grade_label}",
         f"테마: {themes_str}",
     ]
     if monitored.buy_reasons:
@@ -153,12 +165,23 @@ def render_monitor_message(
         trading_value = snapshot_row.get("trading_value", 0)
 
         lup_mark = " 🔴상한가" if is_lup else ""
-        lines.append(
-            f"{now.strftime('%H:%M:%S')}  {price:,}원 ({_fmt_pct(ret)}){lup_mark}"
-        )
-        # +29% 매도가 (상한가 +30% 직전 — 매매 정지 + 매도 호가 압박 회피)
-        # 호가 단위로 내림 → 그대로 매도 주문 가능. 사용자는 정정매매로 미세 조정.
-        if prev_close > 0:
+        # round 22: 보유 모드면 매수가 + 손익 + 경과 시간(초) 합친 라인.
+        if is_holding and holding is not None:
+            elapsed_sec = int((now - holding.entry_time).total_seconds())
+            pnl_pct = holding.pnl_pct(price) if price else float("nan")
+            buy_marker = "🔴" if is_lup else "🔵"  # 보유 매수가 기준선 (현재가 색상과 일관)
+            cur_marker = "🔴" if is_lup else "🔵"
+            lines.append(
+                f"{now.strftime('%H:%M:%S')} (+{elapsed_sec:,}초)  "
+                f"{cur_marker}{price:,}원 ({_fmt_pct(ret)}) / "
+                f"{buy_marker}{int(holding.entry_price):,}({_fmt_pct(pnl_pct)})"
+            )
+        else:
+            lines.append(
+                f"{now.strftime('%H:%M:%S')}  {price:,}원 ({_fmt_pct(ret)}){lup_mark}"
+            )
+        # +29% 매도가 — 감시 모드만 표시 (보유 모드는 매수가 기준 손절/익절선이 의미).
+        if not is_holding and prev_close > 0:
             target_29_raw = prev_close * 1.29
             tick = _krx_tick_size(int(target_29_raw))
             target_29 = (int(target_29_raw) // tick) * tick
@@ -219,7 +242,7 @@ def render_monitor_message(
     else:
         lines.append("⚪ 1분봉가속: —")
 
-    # 체결강도 — 색상 (≥120 매수강세 / 80~120 균형 / <80 매도강세)
+    # 체결강도 — 색상 (≥120 매수강세 / 80~120 균형 / <80 매도강세) + 5MA / 1MA (round 22)
     if ccnl:
         strength = ccnl.get("ccnl_strength")
         buy_ratio = ccnl.get("buy_ratio")
@@ -230,8 +253,13 @@ def render_monitor_message(
                 color_c = "🔴"; balance = "매도 우세"
             else:
                 color_c = "🟡"; balance = "균형"
+            ma_part = ""
+            if vp_5ma is not None and vp_5ma == vp_5ma:
+                ma_part += f"  5MA {vp_5ma:.0f}"
+            if vp_1ma is not None and vp_1ma == vp_1ma:
+                ma_part += f"  1MA {vp_1ma:.0f}"
             lines.append(
-                f"{color_c} 체결강도: {strength:.0f} ({balance})  매수비율 "
+                f"{color_c} 체결강도: {strength:.0f} ({balance}){ma_part}  매수비율 "
                 f"{_fmt_pct(buy_ratio) if buy_ratio is not None else '—'}"
             )
 
@@ -267,17 +295,48 @@ def render_monitor_message(
                 f"매도 {ask1_p:,}원 ({ask1_v:,})"
             )
 
-    # 외국인 / 기관 / 프로그램
-    if investor:
-        f = investor.get("foreign_net_buy", 0)
-        i = investor.get("institution_net_buy", 0)
-        p = investor.get("program_net_buy", 0)
-        lines.append(
-            f"외국인 {_fmt_int_signed(f)} 주  기관 {_fmt_int_signed(i)} 주  "
-            f"프로그램 {_fmt_int_signed(p)} 주"
-        )
+    # 외국인 / 기관 / 프로그램 — round 22: 데이터 신뢰도 낮아 카드에서 제거.
+    # 단 investor 인자는 호환 위해 유지.
 
-    # sparkline 라인 제거 — 5분봉/1분봉 가속으로 충분 (사용자 요청)
+    # round 22: 보유 모드 청산 시그널 섹션 (R15 C 그룹만 — A/B 가격선은 위에서 인지).
+    if is_holding and trigger_states is not None:
+        lines.append("─ 청산 시그널 ─")
+        # C1: 체결강도 5MA 100 하향
+        c1_mark = "✅" if trigger_states.get("C1_vp_below_100") else "❌"
+        c1_detail_parts = []
+        if vp_5ma is not None and vp_5ma == vp_5ma:
+            c1_detail_parts.append(f"5MA {vp_5ma:.0f}")
+        if vp_1ma is not None and vp_1ma == vp_1ma:
+            c1_detail_parts.append(f"1MA {vp_1ma:.0f}")
+        c1_detail = " / ".join(c1_detail_parts) if c1_detail_parts else "—"
+        lines.append(f"{c1_mark} 체결강도 5MA 100 하향 (현재 {c1_detail})")
+        # C2: Bearish Divergence
+        c2_mark = "✅" if trigger_states.get("C2_bearish_divergence") else "❌"
+        if divergence is not None:
+            p_str = (
+                f"{divergence.price_change_pct:+.2f}%"
+                if divergence.price_change_pct == divergence.price_change_pct else "—"
+            )
+            v_str = (
+                f"{divergence.vp_5ma_delta:+.0f}"
+                if divergence.vp_5ma_delta == divergence.vp_5ma_delta else "—"
+            )
+            lines.append(f"{c2_mark} Bearish Divergence (가격 {p_str} / 체결강도 {v_str})")
+        else:
+            lines.append(f"{c2_mark} Bearish Divergence")
+        # C3: 자금 고갈 (1분 가속 < 0.5)
+        c3_mark = "✅" if trigger_states.get("C3_vol_drain") else "❌"
+        c3_detail = (
+            f" — 현재 {accel_ratio_1m:.1f}배"
+            if accel_ratio_1m is not None and accel_ratio_1m == accel_ratio_1m else ""
+        )
+        lines.append(f"{c3_mark} 자금 고갈 (1분 가속 < 0.5){c3_detail}")
+        # C4: 윗꼬리 50%↑ 음봉 (1분봉)
+        c4_mark = "✅" if trigger_states.get("C4_bearish_candle") else "❌"
+        lines.append(f"{c4_mark} 윗꼬리 50%↑ 음봉 (1분봉 기준)")
+        # C5: VI 발동 후 재상승 실패
+        c5_mark = "✅" if trigger_states.get("C5_vi_failure") else "❌"
+        lines.append(f"{c5_mark} VI 발동 후 5분 내 재상승 실패")
 
     # RISING 한정: 사용자 명령 안내 — 바로 복사해서 수동 모니터링 승격 가능
     if monitored.source == Source.RISING:
