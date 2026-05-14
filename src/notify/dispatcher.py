@@ -123,6 +123,15 @@ class Dispatcher:
         results = self.telegram(report)
         _log_results("사후", results)
 
+    def send_jongbae_open_exit(self, report: str) -> None:
+        """종배 청산 시초가 권고 발송 (round 32, P3-2 wiring).
+
+        09:01~09:05 사이 보유 종목별 evaluate_jongbae_open_exit 결과를
+        텔레그램으로. 자동 주문 X — 권고만 (CLAUDE.md 정책).
+        """
+        results = self.telegram(report)
+        _log_results("시초청산", results)
+
     # send_early_morning 은 폐기됨 (M5.5/M6). M6 dashboard worker 가 직접
     # send_message_single / edit_message 호출로 대체.
 

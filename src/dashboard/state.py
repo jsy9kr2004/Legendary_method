@@ -109,6 +109,11 @@ class MonitoringSession:
     # round 22: 종목별 체결강도(VP) 시계열. worker tick 에서 VP push, 카드/트리거에서
     # ma_1/ma_5/ma_20 조회. memory-only, 데몬 재시작 시 워밍업 다시 시작 (5분 내 정상화).
     vp_series: dict[str, Any] = field(default_factory=dict)  # code -> VPSeries
+    # round 32 (P1-1 wiring): 종목별 상한가 도달 시각. scheduler 의 상한가 감지
+    # 시점에 저장, worker funnel 에서 GraderSnapshot.limit_up_hit_time 으로 전달.
+    # R14c 가산점(9:30 이전 +1, 10:30 이전 +0.5). 데몬 재시작 시 비어있음 — 당일
+    # 재감지 시 채워짐.
+    limit_up_hit_times: dict[str, time] = field(default_factory=dict)
 
     # ── 종목 추가/제거 ────────────────────────────────────────────────────────
 

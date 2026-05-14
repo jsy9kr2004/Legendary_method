@@ -82,11 +82,30 @@ from src.notify.telegram import (
 from src.notify.telegram_bot import apply_command, parse_command
 
 
+def _prev_day_volume(daily_ohlcv: pd.DataFrame | None, code: str) -> float:
+    """종목별 가장 최근 일봉의 거래량 (round 32, P2-2 wiring).
+
+    R14d volume_ratio_vs_prev_day 분모. 데이터 없으면 NaN.
+    """
+    if daily_ohlcv is None or daily_ohlcv.empty:
+        return float("nan")
+    df = daily_ohlcv[daily_ohlcv["code"].astype(str) == code]
+    if df.empty:
+        return float("nan")
+    df = df.sort_values("date")
+    v = df.iloc[-1].get("volume")
+    if v is None or v != v or float(v) <= 0:
+        return float("nan")
+    return float(v)
+
+
 def _evaluate_rising_funnel(
     stage1_candidates: list[dict[str, Any]],
     client: Any,
     snap_by_code: dict[str, dict[str, Any]],
     tick_cache: dict[str, dict[str, Any]],
+    daily_ohlcv: pd.DataFrame | None = None,
+    limit_up_hit_times: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """부상 후보 다단계 funnel — Stage 2~4 (round 21).
 
@@ -187,6 +206,14 @@ def _evaluate_rising_funnel(
         ma5_pct = price_vs_ma_pct(price, ma5) if price > 0 else float("nan")
         ma20_pct = price_vs_ma_pct(price, ma20) if price > 0 else float("nan")
 
+        # round 28 wiring (P2-2): 오늘 누적 거래량 / 전일 일봉 거래량.
+        today_volume = float(snap.get("volume") or 0)
+        prev_volume = _prev_day_volume(daily_ohlcv, code)
+        if today_volume > 0 and prev_volume == prev_volume and prev_volume > 0:
+            vol_ratio = today_volume / prev_volume
+        else:
+            vol_ratio = float("nan")
+
         gsnap = GraderSnapshot(
             volume_turnover_rank=int(snap.get("rank") or 0) or None,
             vol_accel_1m=cache["accel_1m"] if cache["accel_1m"] == cache["accel_1m"] else float("nan"),
@@ -202,8 +229,10 @@ def _evaluate_rising_funnel(
             price_vs_vwap_pct=vwap_pct,
             price_vs_ma5_pct=ma5_pct,
             price_vs_ma20_pct=ma20_pct,
-            # limit_up_hit_time: 상한가 도달 시각 추적 인프라 필요 (별도 round). None.
-            # volume_ratio_vs_prev_day: 일봉 fetcher 의존, snap 에 없으면 NaN.
+            volume_ratio_vs_prev_day=vol_ratio,
+            limit_up_hit_time=(
+                limit_up_hit_times.get(code) if limit_up_hit_times else None
+            ),
         )
         score_card = calculate_buy_score(gsnap)
         if score_card.score < RISING_MIN_SCORE:
@@ -330,6 +359,8 @@ def dashboard_tick(
     tick_cache: dict[str, dict[str, Any]] = {}
     rising_scored = _evaluate_rising_funnel(
         rising_stage1, client, snap_by_code, tick_cache,
+        daily_ohlcv=daily_ohlcv,
+        limit_up_hit_times=session.limit_up_hit_times,
     )
     prev_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
     rising_changes = session.update_rising_candidates(rising_scored, now)

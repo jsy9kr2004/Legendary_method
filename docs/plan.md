@@ -165,8 +165,12 @@
 - [x] **R14d 거래량 비율 검증** (round 28, P2-2) — 전일 대비 1~3배 +0.5 / 10배↑ -1. test 8
 - [x] **R29 거래원 분석 KIS API 가용성 조사** (round 29, P3-1) — fetch_investor_flow 가용성 확인, R14 가산은 검증 후 결정 (`data-infra.md` "투자자별 순매수 R14 추가 가능성" 섹션)
 - [x] **R7' 종배 청산 시초가 룰** (round 30, P3-2) — 신규 모듈 `src/jongbae/jongbae_exit.py`. ≤+1% 전량 / +1%~+6% 익절 / ≥+6% 40% 분할. test 13
-- [ ] **wiring: worker → grader** — minute_bars 받아 VWAP/MA5/MA20 계산 → GraderSnapshot 채우기. 상한가 감지 시 `limit_up_hit_time` 저장. 일봉 fetcher 에서 거래량 비율 계산
-- [ ] **wiring: scheduler → jongbae_exit** — 09:01~09:05 일봉 fetch + `evaluate_jongbae_open_exit` 호출 → 텔레그램 권고 발송 (보유 종목별)
+- [x] **wiring: worker → grader** (round 32) — funnel 에서 VWAP/MA5/MA20 자동 계산 + `volume_ratio_vs_prev_day` (`_prev_day_volume` 헬퍼 + daily_ohlcv 인자) + `limit_up_hit_time` (`session.limit_up_hit_times` dict 경유). scheduler 의 상한가 감지 2 지점에서 시각 저장
+- [x] **wiring: scheduler → jongbae_exit** (round 32) — `_send_jongbae_open_exit_recommendation` 09:01 cron + `Dispatcher.send_jongbae_open_exit`. holdings.json 비면 no-op
+- [x] **ritual 2 자동화: paper_trade 기록기** (round 32) — `src/jongbae/paper_trade.py` 신규. `PaperTradeRecord` dataclass + `record_decision/record_open_result/load_records/compute_summary` (Spearman ρ 자체 구현). atomic write. test 15
+- [x] **ritual 3 자동화: 통설 가중치 invariant** (round 32) — `test_grader.py::test_invariant_consensus_weights_dominate_positive/negative` + `_divergence_weight_capped_at_one` 3 케이스
+- [ ] **wiring: 14:50 결정 → paper_trade.record_decision** — 결정 레포트에서 STRONG/WATCH 자동 저장 (호출 한 줄)
+- [ ] **wiring: 09:30 모닝 → paper_trade.record_open_result** — 보유 종목 + 14:50 후보들 시초가/오전고가 추가 (호출 한 줄)
 
 **완료 기준 (round 18):** 24h 봇 명령 polling 상시 가동. 사용자 `/on` 시점부터 `/off` 까지 주도주 1~2개 + 사용자 임의 종목 모니터링 + 보유 종목 손절/익절 카드 표시. 평일 09:00 자동 ON, 10:30 자동 OFF 폐지. 카드 외 별도 푸시 알림 X (round 17). 푸시는 M6 외부 이벤트(상한가 진입, 자동 주도주 첫 추가, 정기 레포트)만.
 
@@ -278,7 +282,7 @@
 - 6개월 누적 목표 30~50개. 가중치 변경 시 **회귀 통과율 90% 이상** 가드레일
 - 신규 케이스 발견 시 즉시 docs/jongbae-strategy.md "검증 가능한 사용자 발화" 섹션에도 기록
 
-### ritual 2: paper-trade 일일 검증 (자동화 필요)
+### ritual 2: paper-trade 일일 검증 (round 32 자동화 완료)
 
 - 14:50 결정 레포트의 STRONG/WATCH 종목을 `data/paper_trade/YYYY-MM-DD.json` 에 자동 기록
   - 필드: 종목코드/등급/점수/사유 reasons[]/14:50 가격
@@ -287,21 +291,22 @@
   - **점수 ↔ 갭상 확률 상관계수** (Spearman ρ ≥ 0.3 가드레일)
   - **STRONG 등급의 평균 시초가 수익률** > 0%
   - **AVOID 권고된 종목 표본 추출 검증** (false positive 비율)
-- TODO: 자동 기록기 모듈 `src/jongbae/paper_trade.py` 신설 (현재 미구현)
+- 구현 완료: `src/jongbae/paper_trade.py` (`PaperTradeRecord`, `record_decision`, `record_open_result`, `load_records`, `compute_summary`).
+  남은 wiring: 14:50 결정 레포트 + 09:30 모닝 레포트에서 호출 한 줄 (다음 라운드).
 
-### ritual 3: 통설 제약 가드레일 (코드 검증)
+### ritual 3: 통설 제약 가드레일 (round 32 자동화 완료)
 
 가중치 변경 PR 마다 다음 invariant 가 깨지지 않는지 자동 검증:
 
 ```
-sum(통설 가중치) ≥ sum(비통설 가중치)
+sum(통설 가중치) ≥ sum(비통설 가중치) × 2
 
 통설(R3/R10/R11/R12/R14a/R14b/R14c/R14d): 회전율/VP/가속/봉/VWAP/이평/상한가시간/거래량비율
 비통설(R13 다이버전스): ±1 강등됨
 ```
 
-- 구현 위치: `tests/test_grader.py::test_invariant_consensus_weights_dominate`
-- 가중치 상수만으로 합산 가능 (실제 점수 계산 X)
+- 구현: `tests/test_grader.py::test_invariant_consensus_weights_dominate_positive/negative` + `_divergence_weight_capped_at_one`. 3 케이스.
+- 통설 양/음수 합산이 비통설의 2배 이상. R13 가중치를 통설 합산의 50% 이상으로 키우면 테스트 깨짐 → 의식적 결정 강제.
 
 ### gate criteria — "가중치 추정치 → 운영 가중치" 전환 기준
 

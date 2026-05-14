@@ -520,6 +520,83 @@ def test_volume_ratio_nan_no_change():
     assert card.score == 0.0
 
 
+# ── ritual 3 가드레일: 통설 가중치 합 ≥ 비통설 (round 31) ────────────────────
+#
+# docs/plan.md "R14/R15 가중치 검증 ritual" 참조.
+# 가중치 변경 PR 마다 통설 우위 invariant 가 깨지지 않는지 자동 검증.
+#
+# 통설: R3(회전율) / R10(VP) / R11(가속) / R12(봉) / R14a~d(VWAP/MA/시간/거래량)
+# 비통설: R13(다이버전스) — 한국 단타 통설 검색에서 거의 안 나옴
+#
+# 가드레일: 통설 양/음수 합산이 비통설의 2배 이상. R13 가중치를 통설 합산의
+# 50% 이상으로 키우면 테스트 깨짐 → 의식적 결정 강제.
+
+
+def test_invariant_consensus_weights_dominate_positive():
+    """통설 가산 최대 케이스 vs 비통설(Bullish Div) 단일 — 2배 이상."""
+    consensus_only = GraderSnapshot(
+        volume_turnover_rank=1,
+        vol_accel_5m=2.5, vol_accel_1m=2.5,
+        candle=classify_candle(100, 110, 99, 109),
+        vp=120, vp_5ma=110,
+        bid_ask_ratio=5.0,
+        dist_from_intraday_high_pct=-0.5,
+        price_vs_vwap_pct=1.0,
+        price_vs_ma5_pct=1.0, price_vs_ma20_pct=1.0,
+        limit_up_hit_time=dt.time(9, 15),
+        volume_ratio_vs_prev_day=2.0,
+    )
+    div_bull = compute_divergence(
+        price_now=90, price_5m_ago=100, vp_5ma_now=110, vp_5ma_5m_ago=100,
+    )
+    non_consensus_only = GraderSnapshot(divergence=div_bull)
+
+    cs = calculate_buy_score(consensus_only).score
+    ns = calculate_buy_score(non_consensus_only).score
+
+    assert cs >= 2.0 * ns, (
+        f"통설 양수 합 {cs} 가 비통설 {ns} 의 2배 미만. "
+        f"R13 가중치를 너무 키웠는지 가중치 변경 PR 점검."
+    )
+
+
+def test_invariant_consensus_penalties_dominate_negative():
+    """통설 페널티 최대 케이스 vs 비통설(Bearish Div) — 2배 이상 (음수)."""
+    weak = classify_candle(100, 115, 90, 92)
+    consensus_neg = GraderSnapshot(
+        vol_accel_5m=0.5, vol_accel_1m=0.3,
+        candle=weak,
+        vp=80,
+        price_vs_vwap_pct=-1.0,
+        price_vs_ma5_pct=-1.0, price_vs_ma20_pct=-1.0,
+        volume_ratio_vs_prev_day=15.0,
+    )
+    div_bear = compute_divergence(
+        price_now=110, price_5m_ago=100, vp_5ma_now=90, vp_5ma_5m_ago=100,
+    )
+    non_consensus_neg = GraderSnapshot(divergence=div_bear)
+
+    cs = calculate_buy_score(consensus_neg).score
+    ns = calculate_buy_score(non_consensus_neg).score
+
+    assert cs <= 2.0 * ns, (
+        f"통설 음수 합 {cs} 가 비통설 {ns} 의 2배 미달 (절댓값). "
+        f"R13 페널티 가중치를 너무 키웠는지 점검."
+    )
+
+
+def test_invariant_divergence_weight_capped_at_one():
+    """다이버전스 단일 ±1 — 가중치 강등 유지 검증 (round 27)."""
+    div_bull = compute_divergence(
+        price_now=90, price_5m_ago=100, vp_5ma_now=110, vp_5ma_5m_ago=100,
+    )
+    div_bear = compute_divergence(
+        price_now=110, price_5m_ago=100, vp_5ma_now=90, vp_5ma_5m_ago=100,
+    )
+    assert abs(calculate_buy_score(GraderSnapshot(divergence=div_bull)).score) <= 1.0
+    assert abs(calculate_buy_score(GraderSnapshot(divergence=div_bear)).score) <= 1.0
+
+
 def test_limit_up_compounds_with_jeryung_strong():
     """제룡전기 + 09:15 조기 상한가 → 점수 폭증."""
     candle = classify_candle(o=70000, h=91500, l=69800, c=91300)

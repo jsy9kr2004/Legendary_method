@@ -187,6 +187,8 @@ def _collect_snapshot(
             code = str(row["code"])
             if code not in _already_limit_up:
                 _already_limit_up.add(code)
+                # round 32 (P1-1 wiring): 도달 시각 저장 → R14c 가산점
+                _dashboard_session.limit_up_hit_times[code] = dt.time()
                 _send_limit_up_alert(row.to_dict(), settings, dispatcher, dt)
 
     # 14:50 은 결정 레포트로 별도 처리 (정기 레포트 발송 안 함)
@@ -224,7 +226,64 @@ def _poll_limit_up(
         return
 
     for entry in new_entries:
+        # round 32 (P1-1 wiring): 도달 시각 저장 → R14c 가산점
+        code = str(entry.get("code", ""))
+        if code:
+            _dashboard_session.limit_up_hit_times[code] = dt.time()
         _send_limit_up_alert(entry, settings, dispatcher, dt)
+
+
+@_business_day_only("종배 시초 청산 권고")
+def _send_jongbae_open_exit_recommendation(
+    client: KISClient,
+    settings: Settings,
+    dispatcher: Dispatcher,
+) -> None:
+    """09:01 보유 종목 시초가 청산 권고 (round 32, P3-2 wiring).
+
+    `data/state/holdings.json` 의 보유 종목 각각에 대해 KIS 현재가 +
+    `evaluate_jongbae_open_exit` 호출 → 권고 메시지 발송. **자동 주문 X**.
+    """
+    from src.data.intraday import fetch_quote
+    from src.jongbae.exit_triggers import load_holdings
+    from src.jongbae.jongbae_exit import evaluate_jongbae_open_exit
+
+    holdings = load_holdings()
+    if not holdings:
+        return
+
+    lines = ["🌅 [종배 시초가 청산 권고]"]
+    any_decision = False
+    for code in holdings:
+        q = fetch_quote(client, code)
+        if q is None:
+            lines.append(f"• {code} — 시세 조회 실패")
+            continue
+        price = q.get("price", 0)
+        prev = q.get("prev_close", 0)
+        if not price or not prev or price <= 0 or prev <= 0:
+            lines.append(f"• {code} — 시세 데이터 부족")
+            continue
+        try:
+            decision = evaluate_jongbae_open_exit(
+                open_price=float(price), prev_close=float(prev),
+            )
+        except ValueError:
+            lines.append(f"• {code} — 시세 유효성 실패")
+            continue
+        any_decision = True
+        name = q.get("name") or code
+        emoji = "🟢" if decision.action == "sell_partial" else "🟡"
+        lines.append(
+            f"{emoji} {name}({code}) — {decision.reason} "
+            f"[매도 비중 {int(decision.partial_ratio * 100)}%]"
+        )
+
+    if not any_decision:
+        return  # 보유 종목 있어도 시세 모두 실패면 푸시 X
+    lines.append("")
+    lines.append("_자동 주문 X — 사용자가 HTS 에서 직접 청산_")
+    dispatcher.send_jongbae_open_exit("\n".join(lines))
 
 
 @_business_day_only("모닝")
@@ -661,6 +720,17 @@ def run() -> None:
         id="state_reset",
         name="일별 상태 리셋",
         misfire_grace_time=600,
+    )
+
+    # 09:01 종배 시초가 청산 권고 (round 32, P3-2 wiring)
+    # KRX 09:00 단일가 형성 직후 KIS 시세 안정화 1분 후. 보유 종목 없으면 no-op.
+    scheduler.add_job(
+        _send_jongbae_open_exit_recommendation,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=9, minute=1),
+        args=[client, settings, dispatcher],
+        id="jongbae_open_exit",
+        name="종배 시초 청산 권고",
+        misfire_grace_time=300,
     )
 
     # 09:30 모닝 레포트
