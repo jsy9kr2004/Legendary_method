@@ -266,6 +266,26 @@
 - [ ] **parquet atomic write** — `write_daily_ohlcv` / `write_index_daily` / `write_stock_master` 등 모두 `to_parquet(path)` in-place. 쓰는 도중 프로세스 죽으면 footer 손상. tmp 파일 → fsync → os.replace 패턴으로 변경 필요. 재발 방지.
 - [ ] **일봉 ohlcv.parquet 재백필** — 2026-05-12 footer 손상으로 corrupted 파일(`data/daily/ohlcv.parquet`, 12MB, 05-12 02:01) 그대로 남아있음. 현재는 graceful degradation으로 빈 DF 취급되어 모니터링은 동작하지만 historical 매칭/모닝 갭 분석은 무력화. `mv data/daily/ohlcv.parquet data/daily/ohlcv.parquet.corrupted-20260512 && ./go init --years 5` 필요.
 - [ ] **fail-loud 텔레그램 알림 (parquet 손상)** — 현재는 logger.error로만 남김. corruption 발견 시 텔레그램 에러 채널 1회 발송(중복 억제 포함) 추가 가능.
+- [ ] **복기 도구 (post-mortem replay) — 새 세션에서 진행** (2026-05-14 컨셉만 박아둠)
+  - **목적**: 사용자가 단타 초보로서 "이 때 들어갔어야 / 빠져나왔어야 / 어떤 지표를 봤어야"를 차분히 학습. 그날 매매 끝난 후 종목 + 날짜를 입력하면 분봉 타임라인 + 변곡점 + what-if + 놓친 시그널 분석을 생성.
+  - **핵심 기능 4가지**:
+    1. 타임라인 (분봉 단위 가격/VP/회전율/accel + R14 점수 + R15 트리거 상태)
+    2. 변곡점 자동 추출 — 가격 +5%/-3% 5분 윈도우 + 그 직전 5분 지표 변화 ("VP가 가격을 5분 선행")
+    3. What-if 시나리오 — "X시점 진입했다면 / Y시점 청산했다면" 자동 계산
+    4. 놓친 시그널 분석 — 매도 트리거가 발화 안 한 이유 (임계 미달 폭) / 발화했으나 카드만 떠 있었던 시점
+  - **데이터 의존성 (블로커)**: 현재 분봉/VP가 메모리만이라 복기 자체 불가능. 영속화 인프라 결정 필요. 옵션:
+    - (A) KIS 에서 그날 끝난 후 분봉 재호출 (디스크 0, KIS 호출 비용 발생)
+    - (B) 처음엔 모든 종목 저장, 6개월 후 보존 정책
+    - (C) 1분봉 대신 5분봉만 (디스크 1/5, 정밀도 ↓)
+    - (D) 1시간 간격 거친 스냅샷만 paper_trade 에 추가 (복기 정밀도 매우 낮음, 작업 가벼움)
+    - (E) 사용자가 직접 결정 — 새 세션에서 결정 후 진행
+  - **추가 컨셉 후보** (사용자가 새 세션에서 선택):
+    - 종목별 복기 외에 **시장 전체 분위기 복기** (테마 회전, breadth 변화)
+    - 여러 날짜 **패턴 비교** ("월요일 vs 금요일 단타 차이", "강세장 vs 약세장")
+    - **AI 자동 코멘트** ("오늘 STRONG 5개 중 4개 갭상 — 강세장 가정 유지 가능")
+  - **발송 채널**: 마크다운 파일 (`data/replay/YYYY-MM-DD-CODE.md`) 권장 / 텔레그램은 4096자 제한 + 텍스트 차트 가독성 떨어짐 / CLI 즉시 출력 옵션도
+  - **시각화**: short_trend_sparkline 패턴(▁▂▃▄▅▆▇█) 텍스트 sparkline 권장. ASCII 라인차트 또는 matplotlib 은 v0 "터미널 친화" 원칙(CLAUDE.md) 위반 우려
+  - **이미 있는 기반**: paper_trade.py (14:50 + 다음날 09:30 결과 골격) — 복기 도구가 이걸 확장하거나 별도 모듈로 분리 가능
 
 ---
 
