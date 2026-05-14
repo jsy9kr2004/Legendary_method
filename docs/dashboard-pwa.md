@@ -198,6 +198,7 @@ WebSocket 메시지:
 | 3 | 차트 라이브러리 | **텍스트 sparkline → 후반 lightweight-charts** | Phase 1~3 까진 의존성 0. Phase 4 후반 lightweight-charts CDN 추가 |
 | 4 | 분봉 영속화 범위 | **모니터링 종목만** | `data/intraday_series/YYYY-MM-DD/CODE.parquet`. 디스크 부담 ↓, 복기 도구와 공유 |
 | 5 | 텔레그램 봇 위상 | **동시 운영** | 이벤트 푸시 + PWA 미접속 시 fallback. 점진 축소는 운영 6개월 후 재검토 |
+| 6 | 트랙 순서 | **Phase 1 MVP 먼저, M5.5·분봉 영속화는 후속** | 아이패드 dogfooding 빠르게. 분봉 영속화는 복기 도구 컨셉 정해질 때 합류. v0 미니차트는 M6 메모리 deque 로 충분 |
 
 상기 항목 변경 시 본 표를 갱신하고 `docs/plan.md` M7 도 동기화.
 
@@ -258,3 +259,4 @@ PWA 측은 빌드 도구 없이 CDN 만 사용:
 |---|---|---|
 | 2026-05-14 | 초안 작성 | M6 카드를 텔레그램 + PWA 두 채널로 확장. KIS 주문 input 영구 X 정책 명시 |
 | 2026-05-14 | §7 결정 5항목 확정 | Tailscale / Tailscale only / sparkline→lightweight-charts / 모니터링 종목만 / 텔레그램 동시 운영 |
+| 2026-05-14 | 트랙 순서 확정 (#6) | M5.5/분봉 영속화와 분리. Phase 1 MVP 먼저 → 아이패드 dogfooding → 후속 트랙 |

@@ -244,6 +244,7 @@
 3. **차트 라이브러리**: 텍스트 sparkline → Phase 4 후반 lightweight-charts CDN
 4. **분봉 영속화 범위**: 모니터링 종목만 (`data/intraday_series/YYYY-MM-DD/CODE.parquet`)
 5. **텔레그램 봇 위상**: 동시 운영 (이벤트 푸시 + PWA fallback)
+6. **트랙 순서**: M5.5 / 분봉 영속화와 **분리**. **Phase 1 MVP 먼저** (M6 메모리 deque 그대로 사용) → 아이패드 dogfooding → M5.5(시총)·분봉 영속화는 후속 트랙. 복기 도구 컨셉 정해질 때 분봉 영속화 같이 진행
 
 상세는 `docs/dashboard-pwa.md` §7.
 
