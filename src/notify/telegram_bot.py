@@ -6,7 +6,9 @@
     /list                        현재 모니터링 종목 출력
     /clear                       수동 추가분만 해제
     NNNNNN                       6자리 숫자 → 감시 모드 토글 추가/해제
-    /buy NNNNNN PRICE [MIN]      보유 모드 진입 (R15). 매수가 등록, 시간손절 N분(기본 10)
+    /buy NNNNNN [PRICE] [MIN]    보유 모드 진입 (R15).
+                                 PRICE 생략 시 모니터링 최근 시세를 매수가로 사용.
+                                 MIN 은 시간손절 N분(기본 10).
     /sell NNNNNN                 보유 모드 해제 (감시 모드 복귀)
     /status NNNNNN               해당 종목 풀 카드 강제 재발송 트리거
     그 외                        무시
@@ -86,18 +88,20 @@ def parse_command(text: str) -> Command:
         return Command(kind="clear")
 
     if lower == "/buy":
-        # /buy CODE PRICE [MIN]
-        if len(parts) < 3:
+        # /buy CODE [PRICE] [MIN] — PRICE 생략 시 worker 가 추적 중인 최근 시세 사용.
+        if len(parts) < 2:
             return Command(kind="unknown")
         code = parts[1]
         if not _is_valid_code(code):
             return Command(kind="unknown")
-        try:
-            price = float(parts[2].replace(",", ""))
-        except ValueError:
-            return Command(kind="unknown")
-        if price <= 0:
-            return Command(kind="unknown")
+        price: float | None = None
+        if len(parts) >= 3:
+            try:
+                price = float(parts[2].replace(",", ""))
+            except ValueError:
+                return Command(kind="unknown")
+            if price <= 0:
+                return Command(kind="unknown")
         min_override: int | None = None
         if len(parts) >= 4:
             try:
@@ -161,7 +165,8 @@ def apply_command(
 
     if cmd.kind == "buy":
         # 24h 허용 (round 18) — 사용자가 NXT/장중/임의 시점 매수했음을 봇에 알림.
-        if cmd.code is None or cmd.price is None:
+        # PRICE 생략 시 _apply_buy 가 session.last_prices 에서 자동 보충 (round 20).
+        if cmd.code is None:
             return ""
         return _apply_buy(cmd.code, cmd.price, cmd.time_stop_minutes, session, now)
 
@@ -191,7 +196,7 @@ def apply_command(
 
 def _apply_buy(
     code: str,
-    price: float,
+    price: float | None,
     time_stop_minutes: int | None,
     session: MonitoringSession,
     now: datetime,
@@ -199,11 +204,22 @@ def _apply_buy(
     """보유 모드 진입.
 
     감시 모드에 없는 종목이면 자동으로 수동 추가까지 함께 진행.
+    price 가 None 이면 `session.last_prices` (worker tick 이 매 사이클 채움) 에서
+    최근 시세를 매수가로 사용 (round 20 — UX 단순화). 모니터링 안 하던 종목이거나
+    아직 첫 tick 전이라 시세가 없으면 명시 입력 요구.
     """
     if code not in session.monitored:
         ok, add_msg = session.add_manual(code, now)
         if not ok:
             return add_msg  # 슬롯 가득 등
+
+    if price is None:
+        price = session.last_prices.get(code)
+        if price is None or price <= 0:
+            return (
+                f"⚠ {code} — 최근 시세 미확보. "
+                f"`/buy {code} PRICE` 로 매수가를 명시해 주세요."
+            )
 
     holdings = load_holdings()
     minutes = time_stop_minutes or TIME_STOP_MINUTES_DEFAULT

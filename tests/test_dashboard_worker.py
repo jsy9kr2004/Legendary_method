@@ -161,6 +161,124 @@ def test_dashboard_tick_edits_existing_message():
     assert not send.called
 
 
+def test_dashboard_tick_updates_last_prices():
+    """round 20: 매 tick 마다 session.last_prices 에 snapshot 현재가 채워짐.
+    `/buy CODE` (가격 생략) UX 를 위한 inter-thread 시세 공유.
+    """
+    s = MonitoringSession()
+    msg_ids: dict = {}
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "091340", "name": "대한광통신",
+        "price": 91400, "prev_close": 90000, "daily_return": 1.56,
+        "intraday_high": 91500, "intraday_low": 89500,
+        "volume": 500_000, "trading_value": 30_000_000_000,
+        "is_limit_up": False, "market_cap": 1_000_000, "turnover": 5.0,
+    }])
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
+         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         patch("src.dashboard.worker.send_message_single"), \
+         patch("src.dashboard.worker.edit_message"):
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=datetime(2026, 5, 11, 9, 30),
+        )
+    assert s.last_prices.get("091340") == 91400.0
+
+
+def test_rising_funnel_filters_heunga_haewoon():
+    """round 21 회귀 — 흥아해운 시나리오는 Stage 2 모멘텀에서 drop, RISING 카드 X.
+
+    입력: 거래대금 1위 / 회전율 19.4% / 5분봉가속 0.8 / 1분봉가속 0.4 / 음봉 윗꼬리 큰 봉.
+    기대: Stage 1 통과 (회전율 상위), Stage 2 에서 is_weak_candle 또는 vol_accel 임계
+    미달로 탈락 → update_rising_candidates 에 들어가지 않음.
+    """
+    from src.dashboard.worker import _evaluate_rising_funnel
+
+    snap = {
+        "rank": 1, "code": "003280", "name": "흥아해운",
+        "price": 2825, "intraday_high": 2900,
+        "turnover": 19.4, "trading_value": 131_600_000_000,
+        "daily_return": 1.6,
+    }
+    snap_by_code = {"003280": snap}
+    stage1 = [{"code": "003280", "name": "흥아해운", "themes": ["해운"],
+               "turnover": 19.4, "rank": 1}]
+
+    # 5분봉 가속 0.8 = 임계 미달 (RISING_STAGE2_VOL_ACCEL_MIN). vol_accel_5m 계산을
+    # 직접 임의 값으로 만들려면 mock 필요 — fetch_minute_bars 가 윗꼬리 큰 음봉 +
+    # 거래대금 감소 데이터를 반환하도록 패치.
+    weak_bars = pd.DataFrame([
+        # 30분 baseline 평균을 만들기 위한 더미 (5분당 큰 거래대금)
+        *[{"open": 2900, "high": 2920, "low": 2880, "close": 2910,
+           "trading_value": 5_000_000_000} for _ in range(6)],
+        # 최근 5분 — 거래대금 급감 + 음봉 윗꼬리 50%
+        *[{"open": 2900, "high": 2950, "low": 2820, "close": 2825,
+           "trading_value": 500_000_000} for _ in range(5)],
+    ])
+    tick_cache: dict = {}
+    with patch("src.dashboard.worker.fetch_minute_bars", return_value=weak_bars), \
+         patch("src.dashboard.worker.fetch_ccnl_strength",
+               return_value={"ccnl_strength": 95.0}), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None):
+        result = _evaluate_rising_funnel(stage1, MagicMock(), snap_by_code, tick_cache)
+    # Stage 2 에서 vol_accel_5m ≈ 0.1 (500M / 5G 평균) → 임계 0.8 미달 → drop
+    # 또는 윗꼬리 큰 음봉 → is_weak_candle drop. 어떤 단계든 통과 불가.
+    assert result == [], f"흥아해운이 funnel 통과해서 RISING 후보로 잡힘: {result}"
+
+
+def test_rising_funnel_passes_strong_candidate():
+    """모멘텀 + VP 강한 종목은 Stage 4 풀스코어까지 통과해 buy_score 가 채워진다."""
+    from src.dashboard.worker import _evaluate_rising_funnel
+
+    snap = {
+        "rank": 3, "code": "091340", "name": "대한광통신",
+        "price": 91300, "intraday_high": 91500,
+        "turnover": 12.0, "trading_value": 80_000_000_000,
+        "daily_return": 15.0,
+    }
+    snap_by_code = {"091340": snap}
+    stage1 = [{"code": "091340", "name": "대한광통신", "themes": ["AI"],
+               "turnover": 12.0, "rank": 3}]
+
+    # 강한 모멘텀 + 깨끗한 양봉 + 거래대금 가속
+    strong_bars = pd.DataFrame([
+        # baseline (30분 평균 작음)
+        *[{"open": 90000, "high": 90100, "low": 89900, "close": 90000,
+           "trading_value": 1_000_000_000} for _ in range(6)],
+        # 최근 5분 — 양봉 + 거래대금 5배 가속
+        *[{"open": 90500, "high": 91500, "low": 90400, "close": 91300,
+           "trading_value": 5_000_000_000} for _ in range(5)],
+    ])
+    tick_cache: dict = {}
+    with patch("src.dashboard.worker.fetch_minute_bars", return_value=strong_bars), \
+         patch("src.dashboard.worker.fetch_ccnl_strength",
+               return_value={"ccnl_strength": 142.0, "buy_ratio": 60.0}), \
+         patch("src.dashboard.worker.fetch_asking_price",
+               return_value={"bid_ask_ratio": 2.5, "bid_total_volume": 0,
+                             "ask_total_volume": 0}), \
+         patch("src.dashboard.worker.fetch_investor_flow",
+               return_value={"foreign_net_buy": 1000, "institution_net_buy": 500,
+                             "program_net_buy": 300}):
+        result = _evaluate_rising_funnel(stage1, MagicMock(), snap_by_code, tick_cache)
+    assert len(result) == 1
+    assert result[0]["code"] == "091340"
+    assert result[0]["buy_score"] >= 2.0  # WATCH 이상
+    assert result[0]["buy_grade"] in ("STRONG", "WATCH")
+    assert "091340" in tick_cache
+    assert "bars" in tick_cache["091340"]
+
+
 def test_cleanup_messages_deletes_all():
     s = MonitoringSession()
     s.add_manual("005930", datetime(2026, 5, 11, 9, 30))

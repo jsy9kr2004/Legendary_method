@@ -171,6 +171,15 @@ def test_parse_buy_basic():
     assert cmd.time_stop_minutes is None
 
 
+def test_parse_buy_code_only():
+    """round 20: 가격 생략 시 None 으로 두고 apply 단에서 last_prices 보충."""
+    cmd = parse_command("/buy 091340")
+    assert cmd.kind == "buy"
+    assert cmd.code == "091340"
+    assert cmd.price is None
+    assert cmd.time_stop_minutes is None
+
+
 def test_parse_buy_with_time_override():
     cmd = parse_command("/buy 091340 91300 5")
     assert cmd.kind == "buy"
@@ -183,9 +192,8 @@ def test_parse_buy_price_with_comma():
     assert cmd.price == 91300.0
 
 
-def test_parse_buy_missing_args():
+def test_parse_buy_missing_code():
     assert parse_command("/buy").kind == "unknown"
-    assert parse_command("/buy 091340").kind == "unknown"
 
 
 def test_parse_buy_invalid_code():
@@ -275,6 +283,46 @@ def test_apply_buy_with_time_override(tmp_path, monkeypatch):
     bot.apply_command(bot.parse_command("/buy 091340 91300 5"), s, now)
     holdings = et.load_holdings()
     assert holdings["091340"].time_stop_minutes == 5
+
+
+def test_apply_buy_code_only_uses_last_prices(tmp_path, monkeypatch):
+    """round 20: `/buy CODE` 만 입력해도 session.last_prices 에서 매수가 자동 보충."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
+
+    s = MonitoringSession()
+    s.last_prices["091340"] = 91_400.0  # worker tick 이 채워둔 상태로 시뮬레이션
+    now = datetime(2026, 5, 11, 9, 30)
+    msg = bot.apply_command(bot.parse_command("/buy 091340"), s, now)
+    assert "보유 모드" in msg
+    holdings = et.load_holdings()
+    assert "091340" in holdings
+    assert holdings["091340"].entry_price == 91_400.0
+
+
+def test_apply_buy_code_only_without_last_price_errors(tmp_path, monkeypatch):
+    """last_prices 미보유 종목 + 가격 생략 → 안내 메시지 반환, 보유 모드 진입 X."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
+
+    s = MonitoringSession()  # last_prices 비어있음
+    now = datetime(2026, 5, 11, 9, 30)
+    msg = bot.apply_command(bot.parse_command("/buy 091340"), s, now)
+    assert "시세 미확보" in msg
+    holdings = et.load_holdings()
+    assert "091340" not in holdings
 
 
 def test_apply_sell_removes_holding(tmp_path, monkeypatch):

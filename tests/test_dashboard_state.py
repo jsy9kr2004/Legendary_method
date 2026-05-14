@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 import pytest
 
 from src.dashboard.state import (
-    Alert,
     LeaderState,
     MonitoringSession,
     Source,
@@ -87,37 +86,50 @@ def test_remove_manual_all_keeps_auto():
     assert "075180" in s.monitored  # 자동은 유지
 
 
-def test_rising_basic_add_and_ttl():
+def test_rising_basic_add():
     s = MonitoringSession()
     now = datetime(2026, 5, 13, 9, 30)
     changes = s.update_rising_candidates(
-        [{"code": "012200", "name": "계양전기", "themes": []}], now, ttl_minutes=2,
+        [{"code": "012200", "name": "계양전기", "themes": []}], now,
     )
     assert "012200" in s.monitored
     assert s.monitored["012200"].source == Source.RISING
-    assert s.monitored["012200"].expires_at == now + timedelta(minutes=2)
-    assert len(changes) == 1 and "012200" in changes[0]
+    assert any("012200" in c for c in changes)
 
 
-def test_rising_ttl_extends_when_still_in_pool():
+def test_rising_persists_while_in_pool():
+    """풀에 다시 들어있으면 RISING 카드 유지 (round 19 — TTL 폐지)."""
     s = MonitoringSession()
     t0 = datetime(2026, 5, 13, 9, 30)
     s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
-    t1 = t0 + timedelta(minutes=1)
+    t1 = t0 + timedelta(minutes=5)
     s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t1)
-    # 풀에 다시 들어오면 TTL rolling
-    assert s.monitored["012200"].expires_at == t1 + timedelta(minutes=2)
+    assert "012200" in s.monitored
+    assert s.monitored["012200"].source == Source.RISING
 
 
-def test_prune_expired_removes_only_rising():
+def test_rising_removed_when_dropped_from_pool():
+    """풀에서 빠지면 즉시 카드 제거 (round 19 — 시간 만료 X, 풀 이탈 기반)."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 13, 9, 30)
+    s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
+    assert "012200" in s.monitored
+    # 다음 tick — 풀에서 빠짐 (+29% 도달 시나리오 시뮬)
+    changes = s.update_rising_candidates([], t0 + timedelta(seconds=5))
+    assert "012200" not in s.monitored
+    assert any("풀 이탈" in c for c in changes)
+
+
+def test_rising_drop_does_not_affect_core():
+    """RISING 풀 동기화가 AUTO/MANUAL 종목을 건드리지 않는다."""
     s = MonitoringSession()
     t0 = datetime(2026, 5, 13, 9, 30)
     s.add_manual("005930", t0)
     s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["T"]}], t0)
-    s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0, ttl_minutes=2)
-    t_future = t0 + timedelta(minutes=3)
-    expired = s.prune_expired(t_future)
-    assert expired == ["012200"]
+    s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
+    # 다음 tick — RISING 풀 비어있음
+    s.update_rising_candidates([], t0 + timedelta(seconds=5))
+    assert "012200" not in s.monitored
     assert "005930" in s.monitored  # MANUAL 유지
     assert "075180" in s.monitored  # AUTO 유지
 
@@ -144,7 +156,7 @@ def test_auto_promote_to_manual_via_add():
 
 
 def test_rising_promote_to_manual_via_add():
-    """RISING 종목을 /add 로 누르면 MANUAL 승격 (해제 X, 만료 해제)."""
+    """RISING 종목을 /add 로 누르면 MANUAL 승격 (해제 X)."""
     s = MonitoringSession()
     t0 = datetime(2026, 5, 13, 9, 30)
     s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
@@ -153,7 +165,6 @@ def test_rising_promote_to_manual_via_add():
     assert "승격" in msg
     m = s.monitored["012200"]
     assert m.source == Source.MANUAL
-    assert m.expires_at is None
 
 
 def test_rising_does_not_consume_core_slot():
@@ -165,7 +176,7 @@ def test_rising_does_not_consume_core_slot():
         s.add_manual(f"00000{i}"[-6:], t0)
     # RISING 추가 — 슬롯 부족 메시지 없어야
     s.update_rising_candidates(
-        [{"code": "999990", "name": "X", "themes": []}], t0, ttl_minutes=2,
+        [{"code": "999990", "name": "X", "themes": []}], t0,
     )
     assert "999990" in s.monitored
     # 새 MANUAL 은 여전히 거부
@@ -258,24 +269,24 @@ def test_tracker_normal_initial():
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
     a1 = _stock("A", "주도A", 18.0)
-    alert = s.step_tracker("전기/전선", a1, candidate=None,
-                           candidate_passed_transition_check=False, now=now)
-    assert alert is None
+    s.step_tracker("전기/전선", a1, candidate=None,
+                   candidate_passed_transition_check=False, now=now)
     assert s.trackers["전기/전선"].state == LeaderState.NORMAL
 
 
 def test_tracker_normal_to_transition():
+    """round 19: alert 반환 폐지 — tracker.state 만 검증."""
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
     a1 = _stock("A", "주도A", 18.0)
     s.step_tracker("전기/전선", a1, candidate=None,
                    candidate_passed_transition_check=False, now=now)
     a2 = _stock("B", "후보B", 12.0)
-    alert = s.step_tracker("전기/전선", a1, candidate=a2,
-                           candidate_passed_transition_check=True, now=now)
-    assert alert is not None
-    assert alert.kind == "transition"
-    assert s.trackers["전기/전선"].state == LeaderState.TRANSITION
+    s.step_tracker("전기/전선", a1, candidate=a2,
+                   candidate_passed_transition_check=True, now=now)
+    tracker = s.trackers["전기/전선"]
+    assert tracker.state == LeaderState.TRANSITION
+    assert tracker.candidate_code == "B"
 
 
 def test_tracker_transition_to_grace_on_overtake():
@@ -288,9 +299,7 @@ def test_tracker_transition_to_grace_on_overtake():
     # a2 회전율이 a1 추월
     a2_high = _stock("B", "후보B", 22.0)
     later = now + timedelta(minutes=2)
-    alert = s.step_tracker("전기/전선", a1, a2_high, True, later)
-    assert alert is not None
-    assert alert.kind == "replacement"
+    s.step_tracker("전기/전선", a1, a2_high, True, later)
     assert s.trackers["전기/전선"].state == LeaderState.GRACE
 
 

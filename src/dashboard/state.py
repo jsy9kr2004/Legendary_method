@@ -1,20 +1,22 @@
 """실시간 모니터링 상태 머신 (M6).
 
 핵심 책임:
-    - 모니터링 대상 종목 set 관리 (자동/수동 출처)
-    - 주도주 교체 상태 머신: NORMAL → TRANSITION → GRACE → NORMAL
+    - 모니터링 대상 종목 set 관리 (자동/수동/부상 후보 출처)
+    - 주도주 교체 상태 머신: NORMAL → TRANSITION → GRACE → NORMAL (카드 헤더에 통합 표시)
     - 5분 GRACE 유예기 카운트다운 (실제 교체 후 a1, a2 함께 표시)
     - 사용자 명령 처리 (/pause, /list, /clear, 6자리 코드 토글)
     - 장 시간 외 입력 안내
 
 I/O 분리:
-    본 모듈은 pure — 시각(now)을 인자로 받고 변경된 알림 리스트를 반환.
+    본 모듈은 pure — 시각(now)을 인자로 받고 상태만 갱신.
     실제 텔레그램 발송/분봉 fetch 는 worker (`src/dashboard/worker.py`).
+    정정 round 19 이후: 카드 외 별도 푸시는 모두 폐기. step_tracker 등은 상태만
+    갱신하며 alert 객체를 만들지 않는다.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from enum import Enum
 from typing import Any
 
@@ -30,14 +32,15 @@ from src.jongbae.config_thresholds import (
     MONITORING_START_MINUTE,
     TRANSITION_EXIT_PERSIST_SECONDS,
     TRANSITION_EXIT_TURNOVER_RATIO,
-    TRANSITION_TURNOVER_RATIO,
 )
 
 
 class Source(str, Enum):
     AUTO = "auto"      # 주도주 (주도섹터 결정 + 회전율 1위)
     MANUAL = "manual"  # 사용자 6자리 코드 입력
-    RISING = "rising"  # 거래대금 급증 후보 — 첫 알림 + 2분 유지, 매매 결정 시 사용자가 MANUAL 로 승격
+    # 거래대금 급증 후보. 시간 만료 없음 — 후보 풀에서 빠지면 즉시 카드 제거
+    # (정정 round 19). 매매 결정 시 사용자가 /add 또는 6자리 토글로 MANUAL 승격.
+    RISING = "rising"
 
 
 class LeaderState(str, Enum):
@@ -54,9 +57,11 @@ class MonitoredStock:
     added_at: datetime
     message_id: int | None = None    # Telegram message id (편집용)
     themes: list[str] = field(default_factory=list)
-    # RISING 한정: 자동 만료 시각 (첫 알림 + 2분 default). None 이면 만료 없음(AUTO/MANUAL).
-    # 만료되면 prune_expired() 가 제거 + 텔레그램 메시지 delete.
-    expires_at: datetime | None = None
+    # round 21: R14 매수 점수 + 등급. worker tick 이 Stage 4 통과 종목에 한해 채움.
+    # 카드 헤더 표시에 사용. RISING 종목은 등록 시점에 score 가 있어야 카드 surface 됨.
+    buy_score: float | None = None
+    buy_grade: str | None = None   # "STRONG" / "WATCH" / "NEUTRAL" / "AVOID"
+    buy_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -75,17 +80,6 @@ class LeaderTracker:
     state: LeaderState = LeaderState.NORMAL
     state_entered_at: datetime | None = None
     transition_weak_since: datetime | None = None  # 후보 약화 지속 시작
-
-
-@dataclass
-class Alert:
-    """상태 전이 / 임계 이벤트 시 사용자에게 보낼 메시지.
-
-    worker 가 텔레그램으로 발송 (편집 X, 새 메시지 + 푸시 ON).
-    """
-    kind: str    # "transition" / "replacement" / "exit" / "strong_rise" / "sector_change"
-    text: str
-    code: str | None = None
 
 
 def in_monitoring_window(now: datetime) -> bool:
@@ -108,19 +102,13 @@ class MonitoringSession:
     trackers: dict[str, LeaderTracker] = field(default_factory=dict)  # sector -> tracker
     # /off 시 카드 메시지 정리를 tick job 이 1회 수행하기 위한 플래그.
     off_cleanup_pending: bool = False
-    # 알림 디바운스: (code, kind) → 마지막 푸시했을 때의 accel 값.
-    # 같은 종목·같은 종류 알림이 5초마다 반복되지 않도록 edge-trigger 가드.
-    # 의미있게 더 악화되거나(0.1배 이상 차이) 한 번 정상권(accel ≥ 1.0) 복귀했다
-    # 다시 트리거되면 재푸시. 자세한 룰은 worker.py 알림 분기 참조.
-    last_alert_accel: dict[tuple[str, str], float] = field(default_factory=dict)
-    # 호가 잔량 색상 추적: code → 직전 색상('green'/'yellow'/'red'). 색상 전환 시 alert.
-    last_asking_color: dict[str, str] = field(default_factory=dict)
-    # 모니터링 메시지 재배치 플래그.
-    # 텔레그램은 메시지 순서 변경 불가 — 새 alert 가 발송되면 모니터링 메시지가
-    # 위로 밀려난다. 이 flag 가 True 면 다음 tick 에서 모든 모니터링 메시지를
-    # delete + 새로 send (silent) 해서 화면 최하단으로 재배치한다.
-    # set 트리거: ⭐ 자동 모니터링 추가/제거, ⚡/⚠ 알림 발송, 사용자 명령 응답.
-    reposition_pending: bool = False
+    # worker tick 이 매 사이클 채우는 code → 최근 현재가. `/buy CODE` 가 PRICE
+    # 인자 없이 들어와도 여기서 자동 보충 (round 20). 다른 thread (telegram_bot.
+    # _apply_buy) 가 읽으므로 단순 dict 로 두고 GIL 에 의존 (atomic dict 읽기/쓰기).
+    last_prices: dict[str, float] = field(default_factory=dict)
+    # round 22: 종목별 체결강도(VP) 시계열. worker tick 에서 VP push, 카드/트리거에서
+    # ma_1/ma_5/ma_20 조회. memory-only, 데몬 재시작 시 워밍업 다시 시작 (5분 내 정상화).
+    vp_series: dict[str, Any] = field(default_factory=dict)  # code -> VPSeries
 
     # ── 종목 추가/제거 ────────────────────────────────────────────────────────
 
@@ -137,9 +125,8 @@ class MonitoringSession:
         if code in self.monitored:
             existing = self.monitored[code]
             if existing.source == Source.RISING:
-                # 부상 후보 → 수동 승격 (만료 해제).
+                # 부상 후보 → 수동 승격.
                 existing.source = Source.MANUAL
-                existing.expires_at = None
                 existing.added_at = now
                 return True, f"🔵 {code} {existing.name} — 부상 후보 → 수동 승격"
             if existing.source == Source.AUTO:
@@ -266,46 +253,54 @@ class MonitoringSession:
         self,
         candidates: list[dict[str, Any]],
         now: datetime,
-        ttl_minutes: int = 2,
         max_count: int = 5,
     ) -> list[str]:
-        """거래대금 급증 후보를 RISING source 로 등록/갱신.
+        """거래대금 급증 후보 풀로 RISING 종목 set 을 동기화.
 
-        - 신규: TTL 분 후 만료 (default 2분). 신규 진입 변경 사항 리스트로 반환.
-        - 기존 RISING: candidates 안에 다시 들어있으면 expires_at 연장 (rolling).
-            없으면 그대로 두고 prune_expired 시점에 정리.
-        - AUTO/MANUAL 이미 있으면 RISING 추가 skip (중복 방지).
+        정책 (정정 round 19):
+            - 시간 만료(TTL) 폐지. 풀에서 안 보이는 RISING 은 즉시 제거.
+            - AUTO/MANUAL 이미 있으면 RISING 으로 덮어쓰지 않음(중복 방지).
+            - 풀 안에서 회전율 상위 max_count 까지만 RISING 카드 유지.
 
         Args:
-            candidates: identify_rising_candidates 결과.
+            candidates: identify_rising_candidates 결과 (회전율 내림차순).
             now: 현재 시각.
-            ttl_minutes: 신규 진입 시 유지 분.
             max_count: 동시 RISING 종목 한도.
 
         Returns:
-            첫 진입 종목 변경 메시지 리스트 (alert 발송용).
+            첫 진입 종목 변경 메시지 리스트 (로그용).
         """
-        from datetime import timedelta
-
         changes: list[str] = []
-        seen_in_pool: set[str] = set()
-        ttl = timedelta(minutes=ttl_minutes)
+        pool_codes = [c["code"] for c in candidates]
+        pool_codes_set = set(pool_codes)
 
+        # 1) 풀에 없는 기존 RISING 종목 제거. AUTO/MANUAL 은 건드리지 않음.
+        for code in list(self.monitored.keys()):
+            m = self.monitored[code]
+            if m.source != Source.RISING:
+                continue
+            if code not in pool_codes_set:
+                self.monitored.pop(code)
+                changes.append(f"💤 {m.name} ({code}) 부상 후보 풀 이탈 — 카드 제거")
+
+        # 2) 풀 상위에서 신규 RISING 추가 + 기존 RISING 점수 갱신.
         for cand in candidates:
             code = cand["code"]
-            seen_in_pool.add(code)
+            # round 21: candidates 에 buy_score/buy_grade/buy_reasons 가 있으면 반영.
+            buy_score = cand.get("buy_score")
+            buy_grade = cand.get("buy_grade")
+            buy_reasons = cand.get("buy_reasons") or []
             if code in self.monitored:
                 m = self.monitored[code]
                 if m.source == Source.RISING:
-                    # 풀에 계속 있으면 TTL 연장 (rolling window)
-                    m.expires_at = now + ttl
-                    # 테마 라벨 갱신 (있다면)
                     new_themes = cand.get("themes", [])
                     if new_themes:
                         m.themes = list(set(m.themes + new_themes))
-                # AUTO/MANUAL 이면 RISING 으로 덮어쓰지 않음
+                    if buy_score is not None:
+                        m.buy_score = buy_score
+                        m.buy_grade = buy_grade
+                        m.buy_reasons = list(buy_reasons)
                 continue
-            # 신규 RISING. core 슬롯은 침범하지 않으나 RISING 한도는 별도.
             rising_count = sum(
                 1 for m in self.monitored.values() if m.source == Source.RISING
             )
@@ -317,25 +312,13 @@ class MonitoringSession:
                 source=Source.RISING,
                 added_at=now,
                 themes=list(cand.get("themes", [])),
-                expires_at=now + ttl,
+                buy_score=buy_score,
+                buy_grade=buy_grade,
+                buy_reasons=list(buy_reasons),
             )
-            changes.append(f"⚡ {cand.get('name', code)} ({code})")
+            score_str = f" [{buy_grade} {buy_score:+.1f}]" if buy_score is not None else ""
+            changes.append(f"⚡ {cand.get('name', code)} ({code}) 부상 후보 신규{score_str}")
         return changes
-
-    def prune_expired(self, now: datetime) -> list[str]:
-        """RISING 중 expires_at 지난 종목 제거. 제거된 code 리스트 반환.
-
-        호출자가 텔레그램 메시지도 함께 delete 한다.
-        """
-        expired: list[str] = []
-        for code in list(self.monitored.keys()):
-            m = self.monitored[code]
-            if m.source != Source.RISING:
-                continue
-            if m.expires_at is not None and now >= m.expires_at:
-                self.monitored.pop(code)
-                expired.append(code)
-        return expired
 
     def promote_rising_to_manual(self, code: str, now: datetime) -> bool:
         """RISING → MANUAL 승격 (사용자 매매 결정 시).
@@ -347,7 +330,6 @@ class MonitoringSession:
         if m is None or m.source != Source.RISING:
             return False
         m.source = Source.MANUAL
-        m.expires_at = None
         m.added_at = now
         return True
 
@@ -360,8 +342,11 @@ class MonitoringSession:
         candidate: dict[str, Any] | None,
         candidate_passed_transition_check: bool,
         now: datetime,
-    ) -> Alert | None:
+    ) -> None:
         """섹터별 상태 머신 한 스텝 진행.
+
+        정정 round 19: alert 객체 반환 폐지 — 모든 상태 전이는 카드 헤더에
+        통합 표시. 본 함수는 tracker 상태만 갱신한다.
 
         Args:
             sector: 주도섹터명.
@@ -370,9 +355,6 @@ class MonitoringSession:
                 후보 판정은 호출자가 미리 (회전율비 + 가속배율) 체크.
             candidate_passed_transition_check: 후보가 TRANSITION 진입 조건 통과 여부.
             now: 현재 시각.
-
-        Returns:
-            상태 전이 시 Alert. 변화 없으면 None.
         """
         tracker = self.trackers.get(sector)
         if tracker is None:
@@ -383,14 +365,14 @@ class MonitoringSession:
                 state_entered_at=now,
             )
             self.trackers[sector] = tracker
-            return None
+            return
 
         # 주도주가 통째로 바뀐 경우 (a1 자체가 사라짐 등) — 트래커 리셋
         if tracker.incumbent_code != incumbent["code"] and tracker.state == LeaderState.NORMAL:
             tracker.incumbent_code = incumbent["code"]
             tracker.incumbent_turnover = float(incumbent.get("turnover", 0.0))
             tracker.state_entered_at = now
-            return None
+            return
 
         tracker.incumbent_turnover = float(incumbent.get("turnover", 0.0))
 
@@ -402,19 +384,7 @@ class MonitoringSession:
                 tracker.candidate_turnover = float(candidate.get("turnover", 0.0))
                 tracker.state_entered_at = now
                 tracker.transition_weak_since = None
-                return Alert(
-                    kind="transition",
-                    code=candidate["code"],
-                    text=(
-                        f"🔥 [부상 후보 감지] {now.strftime('%H:%M:%S')}\n"
-                        f"섹터: {sector}\n"
-                        f"현재 주도주: {incumbent.get('name', incumbent['code'])} "
-                        f"(회전율 {tracker.incumbent_turnover:.1f}%)\n"
-                        f"부상 후보: {candidate.get('name', candidate['code'])} "
-                        f"(회전율 {tracker.candidate_turnover:.1f}%)"
-                    ),
-                )
-            return None
+            return
 
         if tracker.state == LeaderState.TRANSITION:
             if candidate is None or candidate["code"] != tracker.candidate_code:
@@ -423,7 +393,7 @@ class MonitoringSession:
                 tracker.candidate_code = None
                 tracker.candidate_turnover = 0.0
                 tracker.transition_weak_since = None
-                return None
+                return
 
             tracker.candidate_turnover = float(candidate.get("turnover", 0.0))
 
@@ -432,16 +402,7 @@ class MonitoringSession:
                 tracker.state = LeaderState.GRACE
                 tracker.state_entered_at = now
                 tracker.transition_weak_since = None
-                return Alert(
-                    kind="replacement",
-                    code=candidate["code"],
-                    text=(
-                        f"🔄 [주도주 교체 완료] {now.strftime('%H:%M:%S')}\n"
-                        f"{sector} — {incumbent.get('name', incumbent['code'])} "
-                        f"→ {candidate.get('name', candidate['code'])} (회전율 역전)\n"
-                        f"GRACE {GRACE_PERIOD_SECONDS // 60}분 함께 표시"
-                    ),
-                )
+                return
 
             # a2 약화 (a2 회전율 < a1 × 0.4) 가 3분 지속 → 후보 탈락
             if (
@@ -456,10 +417,9 @@ class MonitoringSession:
                     tracker.candidate_code = None
                     tracker.candidate_turnover = 0.0
                     tracker.transition_weak_since = None
-                    return None
             else:
                 tracker.transition_weak_since = None
-            return None
+            return
 
         if tracker.state == LeaderState.GRACE:
             assert tracker.state_entered_at is not None
@@ -476,7 +436,7 @@ class MonitoringSession:
                 tracker.candidate_code = None
                 tracker.candidate_turnover = 0.0
                 tracker.state_entered_at = now
-                return None
+                return
 
             tracker.candidate_turnover = float(candidate.get("turnover", 0.0))
 
@@ -492,7 +452,4 @@ class MonitoringSession:
                 logger.info(
                     f"[{sector}] GRACE 종료 — {old_name} → {candidate.get('name')}"
                 )
-                return None
-            return None
-
-        return None
+            return

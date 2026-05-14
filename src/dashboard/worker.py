@@ -1,13 +1,19 @@
 """실시간 모니터링 워커 (M6).
 
-스케줄러가 5초 간격으로 `dashboard_tick()` 호출 → 한 사이클 처리:
+스케줄러가 3초 간격으로 `dashboard_tick()` 호출 → 한 사이클 처리:
     1) 거래대금 50위 fetch + 주도섹터/주도주 식별 (v1)
     2) 주도주 자동 갱신 → 모니터링 종목 업데이트 (메시지 send/delete)
     3) 각 monitored 종목별 4지표 fetch + 가속배율 계산
     4) 메시지 렌더 → editMessageText (푸시 X)
-    5) 상태 머신 step → Alert 시 새 메시지 + 푸시 (TRANSITION/GRACE/이탈/강한부상)
+    5) 상태 머신 step → tracker 상태만 갱신 (카드 헤더에 통합 표시)
 
 별도 thread `command_poll_loop`: getUpdates long polling — 사용자 명령 수신.
+
+알림 정책 (정정 round 19):
+    카드 외 별도 푸시는 모두 폐기. TRANSITION / GRACE / 강한 부상 / 자금 이탈 /
+    1분봉 부상·급감 / 호가 역전 / 부상 후보 신규 진입은 모두 카드 색상·이모지·
+    사유 한 줄로 통합 표시. 카드 재배치(reposition) 도 함께 폐기 — 새 푸시가
+    없으니 카드가 위로 밀려날 일이 없음.
 
 I/O 분리:
     - state.py: pure 상태
@@ -18,7 +24,6 @@ I/O 분리:
 from __future__ import annotations
 
 import threading
-import time
 from datetime import datetime
 from typing import Any
 
@@ -27,7 +32,6 @@ from loguru import logger
 
 from src.dashboard.render import render_monitor_message
 from src.dashboard.state import (
-    Alert,
     LeaderState,
     MonitoringSession,
 )
@@ -38,12 +42,23 @@ from src.data.intraday_realtime import (
     fetch_investor_flow,
     fetch_minute_bars,
 )
+from src.jongbae.candle import is_weak_candle, latest_completed_candle
 from src.jongbae.config_thresholds import (
     GRACE_PERIOD_SECONDS,
     LEADING_SECTOR_TOP_N,
     LEADING_STOCK_TOP_PER_SECTOR,
+    RISING_MIN_SCORE,
+    RISING_STAGE2_VOL_ACCEL_MIN,
+    RISING_STAGE3_VP_MIN,
     TRANSITION_TURNOVER_RATIO,
 )
+from src.jongbae.divergence import compute_divergence
+from src.jongbae.exit_triggers import (
+    Holding,
+    evaluate_triggers,
+    load_holdings,
+)
+from src.jongbae.grader import GraderSnapshot, calculate_buy_score
 from src.jongbae.leading_theme import (
     identify_early_morning_leaders,
     identify_rising_candidates,
@@ -51,13 +66,9 @@ from src.jongbae.leading_theme import (
 )
 from src.jongbae.momentum import (
     compute_accel_ratio,
-    is_exit_signal,
-    is_one_min_exit,
-    is_one_min_rise,
-    is_strong_rise,
-    is_transition_candidate,
     short_trend_sparkline,
 )
+from src.jongbae.volume_power import VPSeries
 from src.notify.telegram import (
     delete_message,
     edit_message,
@@ -67,48 +78,145 @@ from src.notify.telegram import (
 from src.notify.telegram_bot import apply_command, parse_command
 
 
-def _send_alert(
-    token: str, chat_id: str, alert: Alert, session: MonitoringSession | None = None
-) -> None:
-    """Alert을 별도 메시지로 발송 (편집 X, 푸시 ON).
+def _evaluate_rising_funnel(
+    stage1_candidates: list[dict[str, Any]],
+    client: Any,
+    snap_by_code: dict[str, dict[str, Any]],
+    tick_cache: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """부상 후보 다단계 funnel — Stage 2~4 (round 21).
 
-    Alert 가 발송되면 모니터링 메시지가 위로 밀려나므로 다음 tick 에서 재배치하도록
-    session.reposition_pending 을 set 한다. session 인자가 None 이면 skip.
+    Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N) 통과 후보를 받아 차례로:
+        Stage 2: minute_bars fetch → vol_accel_5m > 0.8 AND not is_weak_candle
+        Stage 3: ccnl fetch → VP ≥ 100
+        Stage 4: asking + investor fetch → R14 풀스코어 → score ≥ RISING_MIN_SCORE
+
+    각 단계에서 탈락한 종목은 다음 단계 fetch 비용을 발생시키지 않는다. 통과한
+    종목의 fetch 결과는 `tick_cache` 에 보존돼서 카드 렌더 단계에서 재사용.
+
+    Args:
+        stage1_candidates: identify_rising_candidates 결과.
+        client: KIS client (None 이면 모든 단계 스킵 — 빈 리스트 반환).
+        snap_by_code: snapshot 의 code → row 매핑 (rank/가격/회전율 등).
+        tick_cache: code → {"bars", "accel_5m", "accel_1m", "candle", "vp",
+            "ccnl", "asking", "investor"} — 본 함수가 통과 종목에 한해 채움.
+
+    Returns:
+        Stage 4 통과 종목 dict 리스트 (원 cand dict + "buy_score" / "buy_grade" /
+        "buy_reasons" 키 추가). 점수 내림차순.
     """
-    send_message_single(token, chat_id, alert.text, parse_mode=None)
-    if session is not None:
-        session.reposition_pending = True
+    if client is None or not stage1_candidates:
+        return []
+
+    # ── Stage 2: 모멘텀 (minute_bars + vol_accel + candle) ────────────────────
+    stage2: list[dict[str, Any]] = []
+    for cand in stage1_candidates:
+        code = cand["code"]
+        bars = fetch_minute_bars(client, code)
+        if bars is None or bars.empty:
+            continue
+        accel_5m = compute_accel_ratio(bars)
+        if not (accel_5m == accel_5m) or accel_5m <= RISING_STAGE2_VOL_ACCEL_MIN:
+            continue
+        candle = latest_completed_candle(bars)
+        if candle is not None and is_weak_candle(candle):
+            continue
+        # 통과 — Stage 4 에서 쓰일 1분 가속도 미리 계산 (분봉 한 번 fetch 재활용)
+        accel_1m = compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
+        tick_cache[code] = {
+            "bars": bars,
+            "accel_5m": accel_5m,
+            "accel_1m": accel_1m,
+            "candle": candle,
+        }
+        stage2.append(cand)
+
+    if not stage2:
+        return []
+
+    # ── Stage 3: 체결강도 ────────────────────────────────────────────────────
+    stage3: list[dict[str, Any]] = []
+    for cand in stage2:
+        code = cand["code"]
+        ccnl = fetch_ccnl_strength(client, code)
+        if ccnl is None:
+            continue
+        vp = ccnl.get("ccnl_strength")
+        if vp is None or not (vp == vp) or vp < RISING_STAGE3_VP_MIN:
+            continue
+        tick_cache[code]["ccnl"] = ccnl
+        tick_cache[code]["vp"] = float(vp)
+        stage3.append(cand)
+
+    if not stage3:
+        return []
+
+    # ── Stage 4: R14 풀스코어 ────────────────────────────────────────────────
+    out: list[dict[str, Any]] = []
+    for cand in stage3:
+        code = cand["code"]
+        asking = fetch_asking_price(client, code)
+        investor = fetch_investor_flow(client, code)
+        tick_cache[code]["asking"] = asking
+        tick_cache[code]["investor"] = investor
+
+        snap = snap_by_code.get(code, {})
+        cache = tick_cache[code]
+        bid_ask = float("nan")
+        if asking is not None:
+            v = asking.get("bid_ask_ratio")
+            if v is not None and v == v:
+                bid_ask = float(v)
+        # 당일 고점 대비 거리 (필수조건 R12.5)
+        price = float(snap.get("price") or 0)
+        high = float(snap.get("intraday_high") or 0)
+        dist_high_pct = (
+            (price - high) / high * 100.0 if high > 0 and price > 0 else float("nan")
+        )
+        gsnap = GraderSnapshot(
+            volume_turnover_rank=int(snap.get("rank") or 0) or None,
+            vol_accel_1m=cache["accel_1m"] if cache["accel_1m"] == cache["accel_1m"] else float("nan"),
+            vol_accel_5m=cache["accel_5m"],
+            candle=cache.get("candle"),
+            vp=cache["vp"],
+            # VP_5MA 시계열은 아직 미보유 (별도 round 에서 추가). 0 = strong/weak
+            # 판정 시 NaN 처리 → 가산점 없이 진행.
+            vp_5ma=float("nan"),
+            divergence=None,
+            bid_ask_ratio=bid_ask,
+            dist_from_intraday_high_pct=dist_high_pct,
+        )
+        score_card = calculate_buy_score(gsnap)
+        if score_card.score < RISING_MIN_SCORE:
+            continue
+        enriched = dict(cand)
+        enriched["buy_score"] = score_card.score
+        enriched["buy_grade"] = score_card.grade
+        enriched["buy_reasons"] = list(score_card.reasons)
+        out.append(enriched)
+
+    # 점수 내림차순
+    out.sort(key=lambda c: c["buy_score"], reverse=True)
+    return out
 
 
 def _send_or_edit_monitor(
     token: str,
     chat_id: str,
-    session: MonitoringSession,
     code: str,
     text: str,
     message_ids: dict[str, int],
-    reposition: bool = False,
 ) -> None:
-    """종목 메시지 발송/편집.
+    """종목 카드 메시지 발송/편집.
 
     - 최초 (message_ids 에 없음): send 후 id 기록.
-    - 기존 (message_ids 에 있음):
-        - reposition=False → edit (조용한 갱신, 화면 위치 유지).
-        - reposition=True  → delete + 새로 send (silent, 푸시 X).
-            최하단으로 위치 이동. 새 alert 직후 화면 최하단에 두기 위함.
+    - 기존 (message_ids 에 있음): editMessageText 로 in-place 갱신, 푸시 X.
     """
     msg_id = message_ids.get(code)
-    if msg_id is not None and not reposition:
+    if msg_id is not None:
         edit_message(token, chat_id, msg_id, text, parse_mode=None)
         return
-    if msg_id is not None and reposition:
-        # delete 실패해도 silent send 시도. 옛 메시지 ID 도 더 이상 추적 X.
-        delete_message(token, chat_id, msg_id)
-        message_ids.pop(code, None)
-    resp = send_message_single(
-        token, chat_id, text, parse_mode=None,
-        disable_notification=reposition,  # 재배치는 silent
-    )
+    resp = send_message_single(token, chat_id, text, parse_mode=None)
     if resp and resp.get("ok"):
         new_id = resp.get("result", {}).get("message_id")
         if isinstance(new_id, int):
@@ -140,7 +248,7 @@ def dashboard_tick(
 ) -> None:
     """한 사이클의 모니터링 처리.
 
-    호출 빈도: 5초 (스케줄러 IntervalTrigger).
+    호출 빈도: 3초 (스케줄러 IntervalTrigger, scheduler.py:741).
 
     Args:
         session: 공유 세션 상태.
@@ -159,6 +267,11 @@ def dashboard_tick(
     # 수 있음. 평일/주말, 정규장 외 시간이어도 KIS 시세를 받아 카드 표시.
     # force_on 은 명시적으로 사용자가 /on 한 상태를 추적할 뿐 가드는 아님.
 
+    # round 22: 보유 종목 메타데이터 로드 (R15 트리거 평가용).
+    # /buy /sell 가 holdings.json 을 갱신하므로 매 tick 디스크 로드. 종목 수는
+    # 단타 운영상 한 자릿수라 비용 무시 가능.
+    holdings: dict[str, Holding] = load_holdings()
+
     # 1) 시장 스냅샷 + 주도섹터/주도주
     snapshot = fetch_volume_rank(client, top_n=LEADING_SECTOR_TOP_N, master_df=master_df)
     if snapshot.empty:
@@ -168,13 +281,12 @@ def dashboard_tick(
     leaders = identify_early_morning_leaders(
         snapshot, sectors, top_per_theme=LEADING_STOCK_TOP_PER_SECTOR,
     )
-    # 부상 후보(거래대금 급증): leaders 와 중복 제거. 모니터링이 아닌 RISING 분기로
-    # 별도 처리 — 첫 알림 + 2분 유지 + 갱신. 사용자가 매매 결정하면 /add 로 승격.
-    rising = identify_rising_candidates(
+    # 부상 후보 Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N). leaders 와 중복 제거.
+    rising_stage1 = identify_rising_candidates(
         snapshot, theme_mapping_df=theme_mapping_df,
     )
     leader_codes_set = {l["code"] for l in leaders}
-    rising = [c for c in rising if c["code"] not in leader_codes_set]
+    rising_stage1 = [c for c in rising_stage1 if c["code"] not in leader_codes_set]
 
     # 2) 자동 모니터링 갱신 (주도주만) — 추가/제거 시 메시지 send/delete
     prev_auto_codes = {c for c, m in session.monitored.items() if m.source.value == "auto"}
@@ -185,207 +297,37 @@ def dashboard_tick(
     for dropped in prev_auto_codes - new_auto_codes:
         _delete_monitor_message(token, chat_id, dropped, message_ids)
 
-    # 2b) 부상 후보 (RISING) 갱신 — 신규 진입은 ⚡ 알림, 만료된 건 제거
-    rising_changes = session.update_rising_candidates(rising, now)
-    for code in session.prune_expired(now):
-        _delete_monitor_message(token, chat_id, code, message_ids)
-        logger.info(f"[부상] {code} 만료 — RISING 메시지 제거")
-    if rising_changes:
-        alert = Alert(
-            kind="rising",
-            code=None,
-            text="⚡ [부상 후보 — 거래대금 급증]\n" + "\n".join(rising_changes)
-                 + "\n\n매매 결정 시 /add <코드> 로 모니터링 승격",
-        )
-        _send_alert(token, chat_id, alert, session=session)
-
-    # auto pool 변경 / 부상 신규 진입 / 만료 / 직전 tick alert → 모니터링 재배치
-    if changes or rising_changes:
-        session.reposition_pending = True
-    reposition_now = session.reposition_pending
-    session.reposition_pending = False  # consume
-
-    # 3) 각 monitored 종목별 4지표 fetch + 렌더 + 편집
-    leader_codes = {l["code"]: l for l in leaders}
     snap_by_code = {str(r["code"]): r.to_dict() for _, r in snapshot.iterrows()}
 
-    for code, monitored in list(session.monitored.items()):
-        snap_row = snap_by_code.get(code)
-        # 보조지표 — 실패해도 None 으로 진행
-        bars = fetch_minute_bars(client, code) if client else pd.DataFrame()
-        # 5분봉 가속 (recent=5, baseline=30) — 기존
-        accel = compute_accel_ratio(bars) if not bars.empty else float("nan")
-        recent_value = (
-            int(bars.tail(5)["trading_value"].sum()) if not bars.empty else 0
-        )
-        # 1분봉 가속 (recent=1, baseline=10) — 갑작스러운 한 봉 급증 감지
-        accel_1m = (
-            compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
-            if not bars.empty else float("nan")
-        )
-        last_bar_value = (
-            int(bars.tail(1)["trading_value"].iloc[0]) if not bars.empty else 0
-        )
-        ccnl = fetch_ccnl_strength(client, code) if client else None
-        asking = fetch_asking_price(client, code) if client else None
-        investor = fetch_investor_flow(client, code) if client else None
-        sparkline = short_trend_sparkline(bars, n_recent=6)
+    # /buy CODE (가격 인자 생략) UX 를 위해 최근 시세를 세션에 노출 (round 20).
+    # telegram_bot._apply_buy 가 다른 thread 에서 읽음.
+    for code, row in snap_by_code.items():
+        price = row.get("price")
+        if price is not None and price == price and price > 0:
+            session.last_prices[code] = float(price)
 
-        # GRACE 잔여 시간 계산 (자동 종목만 의미 있음)
-        grace_remaining = None
-        for tracker in session.trackers.values():
-            if tracker.state == LeaderState.GRACE and tracker.candidate_code == code:
-                if tracker.state_entered_at is not None:
-                    elapsed = (now - tracker.state_entered_at).total_seconds()
-                    grace_remaining = max(0, int(GRACE_PERIOD_SECONDS - elapsed))
-                break
+    # 2b) 부상 후보 Stage 2~4 funnel (round 21) — 모멘텀 → VP → R14 풀스코어.
+    # tick_cache 는 funnel 통과 종목의 fetch 결과를 보관해 카드 렌더에서 재사용.
+    tick_cache: dict[str, dict[str, Any]] = {}
+    rising_scored = _evaluate_rising_funnel(
+        rising_stage1, client, snap_by_code, tick_cache,
+    )
+    prev_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
+    rising_changes = session.update_rising_candidates(rising_scored, now)
+    for ch in rising_changes:
+        logger.info(f"[부상] {ch}")
+    new_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
+    for dropped in prev_rising_codes - new_rising_codes:
+        _delete_monitor_message(token, chat_id, dropped, message_ids)
 
-        text = render_monitor_message(
-            monitored=monitored,
-            snapshot_row=snap_row,
-            accel_ratio=accel if accel == accel else None,
-            recent_bar_value=recent_value or None,
-            ccnl=ccnl,
-            asking=asking,
-            investor=investor,
-            sparkline=sparkline,
-            now=now,
-            grace_remaining_seconds=grace_remaining,
-            accel_ratio_1m=accel_1m if accel_1m == accel_1m else None,
-            last_bar_value=last_bar_value or None,
-        )
-        _send_or_edit_monitor(
-            token, chat_id, session, code, text, message_ids,
-            reposition=reposition_now,
-        )
-
-        # 강한 부상 / 자금 이탈 알림 (별도 푸시)
-        # 디바운스: 같은 종목·같은 kind 가 매 5초 tick 마다 반복 푸시되지 않도록
-        # session.last_alert_accel 로 edge-trigger.
-        #   첫 진입: 푸시 + 기록
-        #   재진입: 마지막 푸시 대비 의미있게 더 악화/강화될 때만 푸시
-        #     - exit:        accel ≤ last - 0.1 (더 떨어짐)
-        #     - strong_rise: accel ≥ last + 1.0 (더 급증)
-        #   복귀(정상권): exit 의 경우 accel ≥ 1.0 시 state 삭제 → 다음 이탈 시 1st 알림
-        if accel == accel:  # not NaN
-            if is_strong_rise(accel, recent_value):
-                key = (code, "strong_rise")
-                last = session.last_alert_accel.get(key)
-                if last is None or accel >= last + 1.0:
-                    alert = Alert(
-                        kind="strong_rise",
-                        code=code,
-                        text=(
-                            f"⚡ [강한 부상] {now.strftime('%H:%M:%S')}\n"
-                            f"{monitored.name} ({code}) 가속배율 {accel:.1f}배 "
-                            f"(임계 10배 초과)\n"
-                            f"분봉 거래대금 {recent_value/1e8:.0f}억"
-                        ),
-                    )
-                    _send_alert(token, chat_id, alert, session=session)
-                    session.last_alert_accel[key] = accel
-                # strong_rise 가 가라앉으면 (accel < 임계) 자연스럽게 다음 분기로 이동
-            elif is_exit_signal(accel):
-                key = (code, "exit")
-                last = session.last_alert_accel.get(key)
-                if last is None or accel <= last - 0.1:
-                    alert = Alert(
-                        kind="exit",
-                        code=code,
-                        text=(
-                            f"⚠️ [자금 이탈 경보] {now.strftime('%H:%M:%S')}\n"
-                            f"{monitored.name} ({code}) 가속배율 {accel:.2f} "
-                            f"(직전 30분 평균 대비 -{(1 - accel) * 100:.0f}%)\n"
-                            f"주도력 약화 — 매도 검토"
-                        ),
-                    )
-                    _send_alert(token, chat_id, alert, session=session)
-                    session.last_alert_accel[key] = accel
-            else:
-                # 정상권 (강한 부상도 자금 이탈도 아님) — 복귀로 간주, state 클리어
-                # 다음에 다시 트리거되면 1st 알림으로 푸시.
-                session.last_alert_accel.pop((code, "exit"), None)
-                session.last_alert_accel.pop((code, "strong_rise"), None)
-
-        # 1분봉 알림 — 5분봉보다 lag 짧음. first-mover / 급감 시그널.
-        if accel_1m == accel_1m:  # not NaN
-            if is_one_min_rise(accel_1m, last_bar_value):
-                key = (code, "one_min_rise")
-                last = session.last_alert_accel.get(key)
-                if last is None or accel_1m >= last + 1.0:
-                    alert = Alert(
-                        kind="one_min_rise",
-                        code=code,
-                        text=(
-                            f"🟢⚡ [1분봉 부상] {now.strftime('%H:%M:%S')}\n"
-                            f"{monitored.name} ({code}) 1분봉 가속 {accel_1m:.1f}배\n"
-                            f"최근 1분 거래대금 {last_bar_value/1e8:.1f}억"
-                        ),
-                    )
-                    _send_alert(token, chat_id, alert, session=session)
-                    session.last_alert_accel[key] = accel_1m
-            elif is_one_min_exit(accel_1m):
-                key = (code, "one_min_exit")
-                last = session.last_alert_accel.get(key)
-                if last is None or accel_1m <= last - 0.1:
-                    alert = Alert(
-                        kind="one_min_exit",
-                        code=code,
-                        text=(
-                            f"🔴⚠ [1분봉 급감] {now.strftime('%H:%M:%S')}\n"
-                            f"{monitored.name} ({code}) 1분봉 가속 {accel_1m:.2f}\n"
-                            f"직전 10분 평균 대비 -{(1 - accel_1m) * 100:.0f}%"
-                        ),
-                    )
-                    _send_alert(token, chat_id, alert, session=session)
-                    session.last_alert_accel[key] = accel_1m
-            else:
-                session.last_alert_accel.pop((code, "one_min_rise"), None)
-                session.last_alert_accel.pop((code, "one_min_exit"), None)
-
-        # 호가 색상 전환 alert (🟢↔🔴) — 매수↔매도 강세 역전은 매매 시그널.
-        if asking is not None:
-            ratio = asking.get("bid_ask_ratio")
-            if ratio is not None and ratio == ratio:
-                if ratio >= 1.5:
-                    color = "green"
-                elif ratio <= 0.67:
-                    color = "red"
-                else:
-                    color = "yellow"
-                prev_color = session.last_asking_color.get(code)
-                # 🟢 → 🔴 (매수강세 → 매도강세): 매도 시그널
-                if prev_color == "green" and color == "red":
-                    _send_alert(token, chat_id, Alert(
-                        kind="asking_flip_sell",
-                        code=code,
-                        text=(
-                            f"🔴 [호가 역전 — 매도 우세] {now.strftime('%H:%M:%S')}\n"
-                            f"{monitored.name} ({code})\n"
-                            f"매수/매도 비율 {ratio:.2f}배 (직전 매수강세 → 매도강세)\n"
-                            f"매도 검토"
-                        ),
-                    ), session=session)
-                # 🔴 → 🟢 (매도강세 → 매수강세): 진입 시그널
-                elif prev_color == "red" and color == "green":
-                    _send_alert(token, chat_id, Alert(
-                        kind="asking_flip_buy",
-                        code=code,
-                        text=(
-                            f"🟢 [호가 역전 — 매수 우세] {now.strftime('%H:%M:%S')}\n"
-                            f"{monitored.name} ({code})\n"
-                            f"매수/매도 비율 {ratio:.1f}배 (직전 매도강세 → 매수강세)"
-                        ),
-                    ), session=session)
-                session.last_asking_color[code] = color
-
-    # 4) 상태 머신 step (섹터별 주도주 교체)
+    # 카드 헤더에 TRANSITION 부상 후보 정보를 통합 표시하기 위해 a1 → a2 매핑 구성.
+    # step_tracker 가 갱신한 후 카드를 렌더해야 정확한 상태를 표시할 수 있으므로
+    # 종목 루프 *전* 에 상태 머신을 먼저 step 한다.
     for sector_info in sectors:
         sector = sector_info["theme"]
         sector_codes = sector_info.get("codes", [])
         if not sector_codes:
             continue
-        # 섹터 내 회전율 1위 = a1
         in_sector = [
             (c, snap_by_code.get(c)) for c in sector_codes if snap_by_code.get(c)
         ]
@@ -407,8 +349,6 @@ def dashboard_tick(
                 "name": a2_row.get("name", a2_code),
                 "turnover": float(a2_row.get("turnover") or 0.0),
             }
-            # TRANSITION 검사 — 가속배율은 a2 분봉 fetch 가 필요한데 비용 크다
-            # 보수적으로 a2 의 회전율비만 보고 후속 검사는 분봉 모니터링 종목만
             a1_turnover = float(a1_row.get("turnover") or 0.0)
             ratio = (
                 a2["turnover"] / a1_turnover if a1_turnover > 0 else 0.0
@@ -420,9 +360,154 @@ def dashboard_tick(
             "name": a1_row.get("name", a1_code),
             "turnover": float(a1_row.get("turnover") or 0.0),
         }
-        alert = session.step_tracker(sector, a1, a2, a2_check, now)
-        if alert is not None:
-            _send_alert(token, chat_id, alert, session=session)
+        # step_tracker 는 상태만 갱신 — 알림 발송 X (카드 헤더에 통합 표시).
+        session.step_tracker(sector, a1, a2, a2_check, now)
+
+    # tracker 인덱스 — code → (state, candidate_info)
+    tracker_info_by_a1: dict[str, dict[str, Any]] = {}
+    for tracker in session.trackers.values():
+        if tracker.state in (LeaderState.TRANSITION, LeaderState.GRACE):
+            tracker_info_by_a1[tracker.incumbent_code] = {
+                "state": tracker.state,
+                "candidate_code": tracker.candidate_code,
+                "candidate_turnover": tracker.candidate_turnover,
+            }
+
+    for code, monitored in list(session.monitored.items()):
+        snap_row = snap_by_code.get(code)
+        cached = tick_cache.get(code, {})
+        # 보조지표 — funnel 에서 이미 fetch 한 결과를 우선 재사용 (round 21).
+        # cache miss (AUTO/MANUAL 종목) 는 종전대로 매 tick fetch.
+        if "bars" in cached:
+            bars = cached["bars"]
+            accel = cached.get("accel_5m", float("nan"))
+            accel_1m = cached.get("accel_1m", float("nan"))
+        else:
+            bars = fetch_minute_bars(client, code) if client else pd.DataFrame()
+            accel = compute_accel_ratio(bars) if not bars.empty else float("nan")
+            accel_1m = (
+                compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
+                if not bars.empty else float("nan")
+            )
+        recent_value = (
+            int(bars.tail(5)["trading_value"].sum()) if not bars.empty else 0
+        )
+        last_bar_value = (
+            int(bars.tail(1)["trading_value"].iloc[0]) if not bars.empty else 0
+        )
+        ccnl = cached.get("ccnl") if "ccnl" in cached else (
+            fetch_ccnl_strength(client, code) if client else None
+        )
+        asking = cached.get("asking") if "asking" in cached else (
+            fetch_asking_price(client, code) if client else None
+        )
+        investor = cached.get("investor") if "investor" in cached else (
+            fetch_investor_flow(client, code) if client else None
+        )
+        sparkline = short_trend_sparkline(bars, n_recent=6)
+
+        # round 22: VP 시계열 push + 5MA / 1MA / 20MA 산출 (체결강도 라인 보강 + R15 C1)
+        vp_now = float("nan")
+        vp_1ma = float("nan")
+        vp_5ma = float("nan")
+        vp_5ma_prev = float("nan")
+        if ccnl is not None:
+            raw_vp = ccnl.get("ccnl_strength")
+            if raw_vp is not None and raw_vp == raw_vp:
+                vp_now = float(raw_vp)
+                series = session.vp_series.get(code)
+                if series is None:
+                    series = VPSeries()
+                    session.vp_series[code] = series
+                # push 전에 직전 5MA 캡처 — C1 cross 판정용
+                vp_5ma_prev = series.ma_5(now)
+                series.push(now, vp_now)
+                vp_1ma = series.ma_1(now)
+                vp_5ma = series.ma_5(now)
+
+        # GRACE 잔여 시간 (a2 카드 측 표시용)
+        grace_remaining = None
+        for tracker in session.trackers.values():
+            if tracker.state == LeaderState.GRACE and tracker.candidate_code == code:
+                if tracker.state_entered_at is not None:
+                    elapsed = (now - tracker.state_entered_at).total_seconds()
+                    grace_remaining = max(0, int(GRACE_PERIOD_SECONDS - elapsed))
+                break
+
+        # 이 종목이 a1 (현재 주도주) 이면 TRANSITION/GRACE 부상 후보 정보 전달
+        transition_info = tracker_info_by_a1.get(code)
+
+        # round 22: 보유 모드 = holdings 에 등록된 종목. evaluate_triggers 매 tick 호출,
+        # 결과 + holding 메타데이터를 render 에 전달. 트리거 발화는 카드에 표시만 (push X).
+        holding = holdings.get(code)
+        trigger_states: dict[str, bool] | None = None
+        divergence_state = None
+        if holding is not None:
+            # 5분 이평 (A3 입력) 분봉의 최근 5봉 종가 평균 — 1분봉 5개 = 5분 이평
+            minute_ma_5 = None
+            if not bars.empty and "close" in bars.columns:
+                tail = bars.tail(5)["close"].dropna()
+                if not tail.empty:
+                    minute_ma_5 = float(tail.mean())
+            # 직전 candle (1분봉) — C4 입력
+            candle_for_trig = cached.get("candle") or latest_completed_candle(bars)
+            # 다이버전스 — VP_5MA 의 5분 전 값과 현재 가격 5분 전 값 비교
+            price_now = float(snap_row.get("price", 0)) if snap_row else 0.0
+            price_5m_ago = price_now
+            if not bars.empty and len(bars) >= 5 and "close" in bars.columns:
+                price_5m_ago = float(bars.iloc[-5]["close"])
+            # VP_5MA 5분 전 값은 시계열 캐시에서 5분 전 ma 계산 (근사: ma 함수에 과거 now 인자)
+            # 간단화 — 직전 tick 5MA 를 사용 (vp_5ma_prev)
+            divergence_state = compute_divergence(
+                price_now=price_now,
+                price_5m_ago=price_5m_ago,
+                vp_5ma_now=vp_5ma,
+                vp_5ma_5m_ago=vp_5ma_prev,
+            )
+            events = evaluate_triggers(
+                holding=holding,
+                now=now,
+                current_price=price_now,
+                minute_ma_5=minute_ma_5,
+                candle=candle_for_trig,
+                vp_5ma_prev=vp_5ma_prev if vp_5ma_prev == vp_5ma_prev else None,
+                vp_5ma_now=vp_5ma if vp_5ma == vp_5ma else None,
+                divergence=divergence_state,
+                vol_accel_1m_value=accel_1m if accel_1m == accel_1m else None,
+            )
+            for ev in events:
+                logger.info(f"[R15 트리거] {code} {ev.kind} — {ev.text}")
+            # 카드 표시는 holding.triggers_fired 전체 + 분기별 현재 상태 사용
+            trigger_states = dict.fromkeys([
+                "A1_stop_price", "A2_stop_bar_low", "A3_stop_ma", "A4_stop_time",
+                "B1_take_profit_1", "B2_take_profit_2", "B3_trailing",
+                "C1_vp_below_100", "C2_bearish_divergence", "C3_vol_drain",
+                "C4_bearish_candle", "C5_vi_failure",
+            ], False)
+            for k in holding.triggers_fired:
+                trigger_states[k] = True
+
+        text = render_monitor_message(
+            monitored=monitored,
+            snapshot_row=snap_row,
+            accel_ratio=accel if accel == accel else None,
+            recent_bar_value=recent_value or None,
+            ccnl=ccnl,
+            asking=asking,
+            investor=investor,
+            sparkline=sparkline,
+            now=now,
+            grace_remaining_seconds=grace_remaining,
+            accel_ratio_1m=accel_1m if accel_1m == accel_1m else None,
+            last_bar_value=last_bar_value or None,
+            transition_info=transition_info,
+            vp_1ma=vp_1ma if vp_1ma == vp_1ma else None,
+            vp_5ma=vp_5ma if vp_5ma == vp_5ma else None,
+            holding=holding,
+            trigger_states=trigger_states,
+            divergence=divergence_state,
+        )
+        _send_or_edit_monitor(token, chat_id, code, text, message_ids)
 
 
 def cleanup_messages(
@@ -451,8 +536,6 @@ def reset_daily(session: MonitoringSession) -> None:
     session.force_on = False  # 어제 /on 한 상태가 다음날까지 살지 않도록 리셋
     session.monitored.clear()
     session.trackers.clear()
-    session.last_alert_accel.clear()
-    session.last_asking_color.clear()
 
 
 # ── 사용자 명령 long polling thread ──────────────────────────────────────────

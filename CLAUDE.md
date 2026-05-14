@@ -104,6 +104,7 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 | 분봉 거래대금 임계 | 분봉(1~5분) 거래대금 20억 이상 (실무 기준봉 임계, i-whale) |
 | TRANSITION | 주도주 교체 가능성 상태 — a2 가속 ≥ 5배 + 분봉거래대금 ≥ 20억 + a2 회전율 ≥ a1 × 0.6 |
 | GRACE | 실제 교체 후 5분 유예기 — a1, a2 함께 표시 (엎치락뒤치락 대비) |
+| 부상 후보 (RISING) | (round 21) "매수 점수 부상 후보". 회전율 단일 기준 surface 가 아니라 4단계 funnel (snapshot → 모멘텀 → VP → R14 풀스코어) 통과 + R14 점수 ≥ 2.0 (WATCH 이상). +29% 도달 종목은 Stage 0 에서 자동 제외 |
 | 일봉 +20%↑ | 종가 기준 전일 대비 수익률 +20% 이상 |
 | 갭상 (gap up) | 다음날 시가가 전일 종가보다 높은 것 |
 | 상한가 | KOSPI/KOSDAQ +30%. 종배의 1순위 진입 시점 |
@@ -223,4 +224,5 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 - 데이터 모듈 작성 시: `docs/data-infra.md`
 - 종배 분석 모듈 작성 시: `docs/jongbae-strategy.md`
 - 레포트 모듈 작성 시: `docs/report-spec.md`
+- 실시간 모니터링 카드/funnel/매수 점수/매도 시그널 설명 (초보자용): `docs/monitoring-guide.md`
 - 전체 진행 상황: `docs/plan.md`

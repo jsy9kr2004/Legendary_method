@@ -76,6 +76,12 @@ class VPSeries:
             return float("nan")
         return sum(in_window) / len(in_window)
 
+    def ma_1(self, now: datetime) -> float:
+        """1분 이동평균. 카드 표시용 — 5MA 대비 더 빠른 약화 인지.
+        트리거(R15 C1)는 여전히 5MA 기준 — 1MA 는 노이즈 가능성으로 정보 표시용.
+        """
+        return self.ma(now, 1)
+
     def ma_5(self, now: datetime) -> float:
         return self.ma(now, VP_MA_SHORT_MINUTES)
 
