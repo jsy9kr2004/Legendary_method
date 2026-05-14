@@ -190,11 +190,12 @@
 
 **[Phase 1: 로컬 MVP]**
 
-- [ ] **FastAPI 서버 셋업** — `src/dashboard/api.py`. WebSocket `/ws/monitor`, REST `/api/holdings` (POST), `/api/session` (POST: `/on`/`/off`), `/api/watchlist` (POST: 종목 추가/제거)
+- [x] **FastAPI 서버 셋업** — `src/dashboard/api.py` `create_app(session, broadcast_interval_sec=1.0)`. WS `/ws/monitor` (snapshot on connect + payload_ts 변경 시 tick broadcast), REST `/api/health` `/api/snapshot` `/api/holdings` (buy/sell) `/api/session` (on/off) `/api/watchlist` (toggle/clear). 정적 `/static/*` + `/` → index.html. `tests/test_dashboard_api.py` 16 케이스. (2026-05-14)
 - [x] **카드 JSON 페이로드 생성** — `src/dashboard/render.py` `build_monitor_payload()`. NaN/Inf → None sanitize, DivergenceState.bearish/bullish → kind 문자열, LeaderState enum → value. `MonitoringSession.last_payloads` 필드에 worker tick 마다 갱신, stale 종목 자동 정리. `tests/test_dashboard_payload.py` 9 케이스 + worker integration 3 케이스 추가. 전체 770 테스트 통과. (2026-05-14)
-- [ ] **WebSocket broadcast** — `MonitoringSession.ws_subscribers: set[WebSocket]`. worker tick 마다 페이로드 broadcast. 첫 연결 시 현재 상태 snapshot 전송
-- [ ] **REST 핸들러 = telegram_bot 핸들러 재사용** — `_handle_buy` / `_handle_sell` / `_handle_clear` / `_handle_on` / `_handle_off` 등 telegram_bot.py 명령 핸들러를 그대로 호출. 이중 구현 금지
-- [ ] **정적 HTML** — `src/dashboard/static/index.html` + `app.js` + `style.css`. Vanilla JS + Tailwind CDN. 종목별 카드 그리드 + 그룹 컬럼 (자동/부상/보유/수동)
+- [x] **WebSocket broadcast** — `session.last_payload_ts` 변경 감지 polling 1초 (worker tick 3초 + 1초 lag). 변경 시 전체 snapshot 송신 (diff 미구현, 페이로드 작아 OK)
+- [x] **REST 핸들러 = telegram_bot 핸들러 재사용** — `Command(kind=...)` 직접 생성 후 `apply_command(cmd, session, now_kst())` 호출. `_apply_buy` / `_apply_sell` / `add_manual` / `set_on/set_off` / `remove_manual_all` 한 군데서만 — 이중 구현 X
+- [x] **정적 HTML** — `src/dashboard/static/{index.html,app.js,manifest.json,icon.svg}`. Vanilla JS + Tailwind CDN. 종목별 카드 그리드 + 그룹 4컬럼 (보유/자동/부상/수동) + 보유 등록 모달 + 6자리 코드 추가 input + /on /off 버튼 + WS 자동 재연결 지수 백오프
+- [ ] **scheduler 통합** — `src/scheduler.py` `run()` 에 uvicorn 별도 thread 또는 `asyncio.run(uvicorn.Server.serve())` 추가. Worker thread (apscheduler) 와 FastAPI loop 공유 가능 여부 검증. host=127.0.0.1
 - [ ] **로컬 검증** — `localhost:8000` 에서 텔레그램 카드와 동일 정보 표시. mock 모드 demo fixture 동작 확인
 
 **[Phase 2: 외부 접근]**
