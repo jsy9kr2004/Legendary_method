@@ -12,6 +12,12 @@ from datetime import datetime
 from typing import Any
 
 from src.dashboard.state import LeaderState, MonitoredStock, Source
+from src.jongbae.momentum import (
+    is_exit_signal,
+    is_one_min_exit,
+    is_one_min_rise,
+    is_strong_rise,
+)
 
 
 def _fmt_pct(v: float | None) -> str:
@@ -71,20 +77,25 @@ def render_monitor_message(
     grace_remaining_seconds: int | None = None,
     accel_ratio_1m: float | None = None,
     last_bar_value: int | None = None,
+    transition_info: dict[str, Any] | None = None,
 ) -> str:
-    """종목별 모니터링 메시지 (편집 갱신용).
+    """종목별 모니터링 카드 (editMessageText 갱신용).
 
     Args:
         monitored: 종목 메타.
         snapshot_row: 가격/회전율 (intraday SNAPSHOT_COLUMNS dict).
-        accel_ratio: 분봉 거래대금 가속배율.
+        accel_ratio: 5분봉 거래대금 가속배율.
         recent_bar_value: 최근 5분 거래대금 합계 (원).
         ccnl: fetch_ccnl_strength 결과.
         asking: fetch_asking_price 결과.
         investor: fetch_investor_flow 결과.
         sparkline: 거래대금 추세 sparkline 문자.
         now: 갱신 시각.
-        grace_remaining_seconds: GRACE 상태일 때 남은 시간. None 이면 표시 안 함.
+        grace_remaining_seconds: GRACE 상태일 때 a2 카드에 남은 시간.
+        accel_ratio_1m: 1분봉 가속배율.
+        last_bar_value: 최근 1분 거래대금 (원).
+        transition_info: 이 종목이 a1 일 때 부상 후보 a2 정보 (state/candidate_code/
+            candidate_turnover). 카드 헤더에 통합 표시 (round 19 정책).
     """
     # 헤더 — source 별 emoji + 라벨
     if monitored.source == Source.AUTO:
@@ -105,19 +116,22 @@ def render_monitor_message(
         s = grace_remaining_seconds % 60
         grace_label = f"  [GRACE {m}:{s:02d} 남음]"
 
-    # RISING 한정: 만료까지 남은 시간 + 수동 승격 안내
-    rising_label = ""
-    if monitored.source == Source.RISING and monitored.expires_at is not None:
-        remaining = int((monitored.expires_at - now).total_seconds())
-        if remaining > 0:
-            mm = remaining // 60
-            ss = remaining % 60
-            rising_label = f"  [만료 {mm}:{ss:02d} 남음]"
-
     lines = [
-        f"[{header_kind}] {name} ({monitored.code}) {src_emoji}{grace_label}{rising_label}",
+        f"[{header_kind}] {name} ({monitored.code}) {src_emoji}{grace_label}",
         f"테마: {themes_str}",
     ]
+
+    # a1 카드일 때 TRANSITION/GRACE 부상 후보 표시 (round 19 — 카드 통합)
+    if transition_info is not None:
+        state = transition_info.get("state")
+        cand_code = transition_info.get("candidate_code")
+        cand_turnover = transition_info.get("candidate_turnover")
+        if state == LeaderState.TRANSITION and cand_code:
+            t_str = _fmt_pct(cand_turnover) if cand_turnover is not None else "—"
+            lines.append(f"🔥 부상 후보 a2: {cand_code} (회전율 {t_str})")
+        elif state == LeaderState.GRACE and cand_code:
+            t_str = _fmt_pct(cand_turnover) if cand_turnover is not None else "—"
+            lines.append(f"🔄 GRACE — a2: {cand_code} (회전율 {t_str})")
 
     # 시각 + 가격 한 줄로 합침 (라인 수 절약)
     if snapshot_row:
@@ -155,14 +169,17 @@ def render_monitor_message(
     else:
         lines.append(f"{now.strftime('%H:%M:%S')}  가격/회전율: —")
 
-    # 5분봉 가속 — 색상으로 매수/매도 강세 표현 (대칭 임계 1.0)
+    # 5분봉 가속 — 색상 + 라벨 (round 19 — 알림 임계 도달 시 ⚡/⚠ 강조 마크)
     if accel_ratio is not None and accel_ratio == accel_ratio:  # not NaN
-        if accel_ratio >= 3.0:
+        recent_val_int = int(recent_bar_value) if recent_bar_value else 0
+        if is_strong_rise(accel_ratio, recent_val_int):
+            color5 = "🟢⚡"; arrow = "↑"; label = "강한 부상"
+        elif accel_ratio >= 3.0:
             color5 = "🟢"; arrow = "↑"; label = "자금 유입 가속"
         elif accel_ratio >= 1.0:
             color5 = "🟢"; arrow = "↑"; label = "유입"
-        elif accel_ratio < 0.6:
-            color5 = "🔴"; arrow = "↓"; label = "자금 이탈"
+        elif is_exit_signal(accel_ratio):
+            color5 = "🔴⚠"; arrow = "↓"; label = "자금 이탈"
         else:
             color5 = "🟡"; arrow = "↓"; label = "감소"
         bar_val = _fmt_billion(recent_bar_value) if recent_bar_value else "—"
@@ -174,12 +191,15 @@ def render_monitor_message(
 
     # 1분봉 가속 — first-mover 시그널 (recent=1, baseline=10)
     if accel_ratio_1m is not None and accel_ratio_1m == accel_ratio_1m:
-        if accel_ratio_1m >= 3.0:
+        last_val_int = int(last_bar_value) if last_bar_value else 0
+        if is_one_min_rise(accel_ratio_1m, last_val_int):
+            color1 = "🟢⚡"; arrow1 = "↑"; label1 = "1분봉 부상"
+        elif accel_ratio_1m >= 3.0:
             color1 = "🟢"; arrow1 = "↑"; label1 = "급증"
         elif accel_ratio_1m >= 1.0:
             color1 = "🟢"; arrow1 = "↑"; label1 = "유입"
-        elif accel_ratio_1m < 0.4:
-            color1 = "🔴"; arrow1 = "↓"; label1 = "급감"
+        elif is_one_min_exit(accel_ratio_1m):
+            color1 = "🔴⚠"; arrow1 = "↓"; label1 = "1분봉 급감"
         else:
             color1 = "🟡"; arrow1 = "↓"; label1 = "감소"
         last_val = _fmt_billion(last_bar_value) if last_bar_value else "—"

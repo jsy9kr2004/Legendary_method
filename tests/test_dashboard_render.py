@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.dashboard.render import render_monitor_message
-from src.dashboard.state import MonitoredStock, Source
+from src.dashboard.state import LeaderState, MonitoredStock, Source
 
 
 def _stock(code: str = "075180", name: str = "제룡전기",
@@ -116,6 +116,74 @@ def test_render_handles_none_snapshot():
     )
     assert "—" in msg
     assert "제룡전기" in msg
+
+
+def test_render_transition_candidate_in_header():
+    """round 19: TRANSITION 시 a1 카드 헤더에 a2 부상 후보 한 줄 통합 표시."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+        transition_info={
+            "state": LeaderState.TRANSITION,
+            "candidate_code": "001440",
+            "candidate_turnover": 11.0,
+        },
+    )
+    assert "🔥 부상 후보 a2" in msg
+    assert "001440" in msg
+    assert "11.0%" in msg
+
+
+def test_render_grace_candidate_in_header():
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+        transition_info={
+            "state": LeaderState.GRACE,
+            "candidate_code": "001440",
+            "candidate_turnover": 22.5,
+        },
+    )
+    assert "🔄 GRACE — a2" in msg
+    assert "001440" in msg
+
+
+def test_render_strong_rise_mark_5min():
+    """round 19: 5분봉 강한 부상 임계(10배+ & 20억+) 도달 시 ⚡ 마크."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 1_000_000_000},
+        accel_ratio=12.0, recent_bar_value=25_000_000_000,
+        ccnl=None, asking=None, investor=None,
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "🟢⚡" in msg
+    assert "강한 부상" in msg
+
+
+def test_render_one_min_exit_mark():
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": -2.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 500_000_000},
+        accel_ratio=1.0, recent_bar_value=2_000_000_000,
+        accel_ratio_1m=0.2, last_bar_value=100_000_000,
+        ccnl=None, asking=None, investor=None,
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "🔴⚠" in msg
+    assert "1분봉 급감" in msg
 
 
 def test_render_themes_slash_join():

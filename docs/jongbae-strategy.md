@@ -283,14 +283,18 @@ weight_i = score_i / sum(score)
 
 M6 모니터링 카드는 1~2초 간격 `editMessageText` in-place 갱신 — **카드 외 별도 푸시 알림은 모두 폐기**. 사용자가 `/on` 한 시점부터 `/off` 칠 때까지 텔레그램 채팅을 띄워놓고 카드 색상/이모지/사유 한 줄 변화로 모든 상태를 직접 인지하는 워크플로우 (round 18 이후 24h 사용자 토글).
 
-다음 이벤트는 모두 카드 안에 표시 (별도 메시지 발송 X):
+다음 이벤트는 모두 카드 안에 표시 (별도 메시지 발송 X — round 19 에서 실코드 반영):
 
 | 이벤트 | 카드 표시 위치 |
 |---|---|
-| TRANSITION (부상 후보) | 카드 헤더 `[부상 후보 a2: 가온전선 회전율 11.0%]` |
-| GRACE (실제 교체) | 카드 헤더 `[GRACE 4:32 남음]` 카운트다운 |
-| 강한 부상 (가속 10배+) | 카드 가속 필드 색상 + ⚡ 마크 |
-| 자금 이탈 경보 | 카드 가속 필드 색상 + ⚠ 마크 |
+| TRANSITION (부상 후보 감지) | a1 카드 헤더 `🔥 부상 후보 a2: NAME (회전율 X.X%)` |
+| GRACE (실제 교체 후 5분 유예) | a1 카드 헤더 `🔄 GRACE — a2: NAME (회전율 X.X%)`, a2 카드 헤더 `[GRACE m:ss 남음]` 카운트다운 |
+| 부상 후보 (거래대금 급증, RISING) | 신규 카드 자체가 발송됨. 풀에서 빠지면 카드 자동 제거 (시간 만료 X) |
+| 강한 부상 (5분봉 가속 10배+ & 20억+) | 5분봉가속 라인 `🟢⚡ ... (강한 부상)` |
+| 자금 이탈 (5분봉 가속 < 0.6) | 5분봉가속 라인 `🔴⚠ ... (자금 이탈)` |
+| 1분봉 부상 (1분봉 가속 5배+ & 10억+) | 1분봉가속 라인 `🟢⚡ ... (1분봉 부상)` |
+| 1분봉 급감 (1분봉 가속 < 0.4) | 1분봉가속 라인 `🔴⚠ ... (1분봉 급감)` |
+| 호가 역전 (🟢→🔴 / 🔴→🟢) | 호가 라인 색상 갱신 (별도 alert X) |
 | R14 STRONG/WATCH/NEUTRAL/AVOID | 카드 헤더 등급 이모지 + 점수 |
 | R14 진입 STRONG (감시 모드) | 카드 헤더 등급 변화로 충분 |
 | R15 A 손절선 도달 (보유 모드) | 카드 헤더 🛑, 손절선 라인 색상 + ✅ 마크 |
@@ -597,6 +601,7 @@ entry_bar_low    = 진입 직전 1분봉 저점
 | 16 | 손절선 도달 시 자동 주문 (단타 시스템 한정 완화) | 본 프로젝트 정책 `자동 매매 절대 금지` 유지. R15 모든 트리거는 텔레그램 알림만, 실주문은 Zeta 직접. 자동 매매는 영구 미지원 (CLAUDE.md, plan.md v0 제외 항목) |
 | 17 | TRANSITION/GRACE/강한 부상/자금 이탈/AVOID/R15 매도 트리거를 모두 별도 푸시 메시지로 발송 | 카드를 1~2초 갱신하면서 같은 정보를 푸시로 또 보내면 중복. 사용자는 09:00~10:30 텔레그램 채팅 띄워놓고 카드 색상/이모지/사유 변화로 직접 인지 → **카드 외 별도 푸시 폐기, `editMessageText` in-place 갱신만**. 푸시는 M6 외부 이벤트(상한가 진입/자동 주도주 첫 추가/정기 레포트)만 유지. 메시지 N분마다 삭제/재발송 패턴도 도입 X (밀려 안 보일 일이 없으니 불필요) |
 | 18 | 봇 명령 polling 을 평일 09:00~10:30 cron 안에서만 띄움 (`_dashboard_start` 09:00 시작, `_dashboard_stop` 10:30 종료) — 운영시간 외엔 `/list`/`/start`/`/on` 등 어떤 명령에도 응답 X. `/pause` 가 ON/OFF 토글 (`/start` 와 동의어). | 사용자 의도: "단타 칠 수 있을 때 임의 시점에 켜고 끄기". 24h 사용자 토글로 정책 변경. 변경 사항: ①polling thread 를 `scheduler.run()` 시점에 1회 띄워 24h 상시 가동. ②`/on`/`/off` 정식 명령 도입 (멱등). ③`/start`=`/on`, `/pause`=`/off` alias. ④10:30 자동 OFF cron 폐지 — `/off` 로만 종료. ⑤평일 09:00 자동 ON cron 은 편의를 위해 유지. ⑥`/buy`/`6자리 토글` 도 24h 허용 (`/on` 24h 정책과 일관성, NXT/임의 시점 매수 알림 용도). ⑦`MonitoringSession.set_on/set_off` 추가, `toggle_pause` 제거. ⑧카드 정리는 `/off` 발화 후 다음 tick 에서 1회 (`off_cleanup_pending` 플래그). |
+| 19 | round 17 정책("카드 외 푸시 폐기")이 docs 에만 있고 코드엔 안 반영. `worker._send_alert` 가 살아있어서 `[부상 후보 감지]` `[1분봉 부상]` `[1분봉 급감]` `[자금 이탈 경보]` `[강한 부상]` `[호가 역전]` `[주도주 교체 완료]` `[부상 후보 — 거래대금 급증]` 등을 별도 메시지로 발송. 발송 후 카드가 위로 밀려나는 걸 보정하려고 `reposition_pending` flag 로 매 tick delete+silent send 재배치. 부상 후보(RISING)는 첫 알림 + 2분 TTL 로 자동 만료. | 사용자 인지: ①카드 재배치가 보고 있던 메시지를 갑자기 사라지게 해서 UX 망침. ②2분 TTL 만료는 사용자가 보던 후보가 시간 만료로 사라지게 만들어 부자연스러움 — 다른 후보 등장 시 자연 교체로 충분. ③alert 별도 푸시는 round 17 정책 반영하면 어차피 폐기 대상. → 변경: ① `_send_alert` 함수 + 호출 5곳 (RISING 신규/강한 부상/자금 이탈/1분봉 부상·급감/호가 역전 + step_tracker TRANSITION·REPLACEMENT) 전부 제거. ②`session.reposition_pending`, `_send_or_edit_monitor` 의 `reposition` 인자, `disable_notification=reposition` 분기 제거 — alert 가 없으니 카드가 밀려날 일도 없음. ③`MonitoredStock.expires_at` 필드 + `prune_expired` 메서드 + `update_rising_candidates` 의 TTL 인자 제거. RISING 동기화 정책 변경: candidates 풀에 없는 RISING 종목은 즉시 카드 제거, 풀 회전율 상위 max_count 까지 신규 등록. `LEADER_EXCLUDE_DAILY_RETURN_PCT=29.0` 필터로 +29% 도달 종목은 풀에서 자동 빠짐 → 카드도 자동 제거. ④`step_tracker` 반환형을 `Alert | None` → `None` 로 변경. TRANSITION/GRACE 상태는 `render_monitor_message(transition_info=...)` 로 a1 카드 헤더에 "🔥 부상 후보 a2: NAME (회전율 X.X%)" / "🔄 GRACE — a2: ..." 한 줄 통합 표시. ⑤render 5분봉/1분봉 가속 라인에 `is_strong_rise` / `is_exit_signal` / `is_one_min_rise` / `is_one_min_exit` 임계 도달 시 🟢⚡ / 🔴⚠ 마크 + 라벨("강한 부상" / "자금 이탈" / "1분봉 부상" / "1분봉 급감") 강조. ⑥`Alert` dataclass, `last_alert_accel`, `last_asking_color` 세션 필드, `is_*` 디바운싱 분기 모두 제거 (predicate 함수 자체는 momentum.py 에 유지 — render 에서 사용). |
 
 ---
 
