@@ -116,10 +116,20 @@ def render_monitor_message(
         s = grace_remaining_seconds % 60
         grace_label = f"  [GRACE {m}:{s:02d} 남음]"
 
+    # 매수 점수/등급 (round 21) — RISING 카드는 항상, AUTO/MANUAL 도 있을 때 표시.
+    grade_label = ""
+    if monitored.buy_grade and monitored.buy_score is not None:
+        grade_emoji = {
+            "STRONG": "🟢", "WATCH": "🟡", "NEUTRAL": "⚫", "AVOID": "🔴",
+        }.get(monitored.buy_grade, "")
+        grade_label = f"  {grade_emoji} {monitored.buy_grade} {monitored.buy_score:+.1f}점"
+
     lines = [
-        f"[{header_kind}] {name} ({monitored.code}) {src_emoji}{grace_label}",
+        f"[{header_kind}] {name} ({monitored.code}) {src_emoji}{grace_label}{grade_label}",
         f"테마: {themes_str}",
     ]
+    if monitored.buy_reasons:
+        lines.append("사유: " + " / ".join(monitored.buy_reasons[:3]))
 
     # a1 카드일 때 TRANSITION/GRACE 부상 후보 표시 (round 19 — 카드 통합)
     if transition_info is not None:

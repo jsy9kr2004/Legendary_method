@@ -55,6 +55,30 @@ LEADER_MIN_DAILY_RETURN_PCT: float = 0.0
 # MONITORING_MAX_CODES=10 안에서 leader 와 합쳐 들어감.
 CANDIDATE_POOL_TOP_N: int = 5
 
+# ── 부상 후보 다단계 funnel (round 21) ────────────────────────────────────────
+#
+# round 19 까지: identify_rising_candidates 가 snapshot 만 보고 회전율 상위 5개를
+#   RISING 카드로 surface. 흥아해운처럼 거래대금만 크고 모멘텀 죽은 종목도 잡힘.
+# round 21 정정: "부상 후보 = 매수 점수 높은 후보" 로 재정의. snapshot → 모멘텀
+#   → 체결강도 → R14 풀스코어 4단계 깔때기로 통과한 종목만 카드.
+#
+# 한국 단타 통설(회전율 1위 / 양봉 우세 / 모멘텀 살아있음 / VP 100 이상) 그대로.
+
+# Stage 1: 회전율 컷오프 — Stage 0 snapshot 필터 (rank 50 + 양봉 + +29% 미만)
+# 통과 종목 중 회전율 상위 N 으로 좁힘. 비용 0 (snapshot fetch 결과만 사용).
+RISING_STAGE1_TURNOVER_TOP_N: int = 15
+
+# Stage 2: 모멘텀 컷오프 — fetch_minute_bars 후
+#   vol_accel_5m > 0.8 (자금 가속 죽지 않음) AND is_weak_candle 아님.
+RISING_STAGE2_VOL_ACCEL_MIN: float = 0.8
+
+# Stage 3: 체결강도 컷오프 — fetch_ccnl_strength 후 VP ≥ 100 (매도 우세 아님).
+RISING_STAGE3_VP_MIN: float = 100.0
+
+# Stage 4: R14 매수 점수 컷오프 — 이 점수 이상이어야 RISING 카드로 surface.
+# 2.0 = WATCH 이상. STRONG 만 surface 하려면 5.0 으로 올리면 됨.
+RISING_MIN_SCORE: float = 2.0
+
 
 # ── R3' 주도주 교체 상태 머신 (M6) ───────────────────────────────────────────
 

@@ -57,6 +57,11 @@ class MonitoredStock:
     added_at: datetime
     message_id: int | None = None    # Telegram message id (편집용)
     themes: list[str] = field(default_factory=list)
+    # round 21: R14 매수 점수 + 등급. worker tick 이 Stage 4 통과 종목에 한해 채움.
+    # 카드 헤더 표시에 사용. RISING 종목은 등록 시점에 score 가 있어야 카드 surface 됨.
+    buy_score: float | None = None
+    buy_grade: str | None = None   # "STRONG" / "WATCH" / "NEUTRAL" / "AVOID"
+    buy_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -275,15 +280,23 @@ class MonitoringSession:
                 self.monitored.pop(code)
                 changes.append(f"💤 {m.name} ({code}) 부상 후보 풀 이탈 — 카드 제거")
 
-        # 2) 풀 회전율 상위에서 신규 RISING 추가. AUTO/MANUAL 우선.
+        # 2) 풀 상위에서 신규 RISING 추가 + 기존 RISING 점수 갱신.
         for cand in candidates:
             code = cand["code"]
+            # round 21: candidates 에 buy_score/buy_grade/buy_reasons 가 있으면 반영.
+            buy_score = cand.get("buy_score")
+            buy_grade = cand.get("buy_grade")
+            buy_reasons = cand.get("buy_reasons") or []
             if code in self.monitored:
                 m = self.monitored[code]
                 if m.source == Source.RISING:
                     new_themes = cand.get("themes", [])
                     if new_themes:
                         m.themes = list(set(m.themes + new_themes))
+                    if buy_score is not None:
+                        m.buy_score = buy_score
+                        m.buy_grade = buy_grade
+                        m.buy_reasons = list(buy_reasons)
                 continue
             rising_count = sum(
                 1 for m in self.monitored.values() if m.source == Source.RISING
@@ -296,8 +309,12 @@ class MonitoringSession:
                 source=Source.RISING,
                 added_at=now,
                 themes=list(cand.get("themes", [])),
+                buy_score=buy_score,
+                buy_grade=buy_grade,
+                buy_reasons=list(buy_reasons),
             )
-            changes.append(f"⚡ {cand.get('name', code)} ({code}) 부상 후보 신규")
+            score_str = f" [{buy_grade} {buy_score:+.1f}]" if buy_score is not None else ""
+            changes.append(f"⚡ {cand.get('name', code)} ({code}) 부상 후보 신규{score_str}")
         return changes
 
     def promote_rising_to_manual(self, code: str, now: datetime) -> bool:

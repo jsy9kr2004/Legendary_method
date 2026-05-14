@@ -38,7 +38,7 @@ import pandas as pd
 from loguru import logger
 
 from src.jongbae.config_thresholds import (
-    CANDIDATE_POOL_TOP_N,
+    RISING_STAGE1_TURNOVER_TOP_N,
     LEADER_CANDIDATE_RANK_MAX,
     LEADER_EXCLUDE_DAILY_RETURN_PCT,
     LEADER_MIN_DAILY_RETURN_PCT,
@@ -331,13 +331,26 @@ def identify_early_morning_leaders(
 
 def identify_rising_candidates(
     snapshot_df: pd.DataFrame,
-    top_n: int = CANDIDATE_POOL_TOP_N,
+    top_n: int = RISING_STAGE1_TURNOVER_TOP_N,
     rank_max: int | None = None,
     exclude_daily_return_pct: float | None = None,
     min_daily_return_pct: float | None = None,
     theme_mapping_df: pd.DataFrame | None = None,
 ) -> list[dict[str, Any]]:
-    """주도주 후보 풀 (주도섹터 무관) — first-mover 단계 모니터링용.
+    """부상 후보 풀 — Stage 0+1 (round 21 다단계 funnel).
+
+    snapshot 만 사용해서 무료로 1차 추림:
+        Stage 0 (snapshot 필터):
+            - rank ≤ rank_max (거래대금 N위 안, 기본 50)
+            - min_daily_return_pct < daily_return < exclude_daily_return_pct
+              (양봉만 + 상한가 임박 +29% 제외)
+            - ETF/리츠/스팩은 fetch_volume_rank 단계에서 이미 master_df 로 제외됨
+        Stage 1 (회전율 컷오프):
+            - 회전율 내림차순 상위 top_n (기본 15)
+
+    Stage 2~4 (모멘텀 / 체결강도 / R14 풀스코어) 는 호출자 (worker.dashboard_tick)
+    가 minute_bars / ccnl / asking / investor 를 단계별 호출하면서 추가로 추림.
+    본 함수는 Stage 4 의 R14 점수 매기기 전까지 후보 목록만 만든다.
 
     `identify_early_morning_leaders` 는 주도섹터 내 회전율 1위만 잡지만,
     그 단계 이전에 시총 대비 거래대금이 갑자기 늘어나는 종목도 보고 싶다는

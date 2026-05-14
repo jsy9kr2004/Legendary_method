@@ -1,6 +1,6 @@
 """실시간 모니터링 워커 (M6).
 
-스케줄러가 5초 간격으로 `dashboard_tick()` 호출 → 한 사이클 처리:
+스케줄러가 3초 간격으로 `dashboard_tick()` 호출 → 한 사이클 처리:
     1) 거래대금 50위 fetch + 주도섹터/주도주 식별 (v1)
     2) 주도주 자동 갱신 → 모니터링 종목 업데이트 (메시지 send/delete)
     3) 각 monitored 종목별 4지표 fetch + 가속배율 계산
@@ -42,12 +42,17 @@ from src.data.intraday_realtime import (
     fetch_investor_flow,
     fetch_minute_bars,
 )
+from src.jongbae.candle import is_weak_candle, latest_completed_candle
 from src.jongbae.config_thresholds import (
     GRACE_PERIOD_SECONDS,
     LEADING_SECTOR_TOP_N,
     LEADING_STOCK_TOP_PER_SECTOR,
+    RISING_MIN_SCORE,
+    RISING_STAGE2_VOL_ACCEL_MIN,
+    RISING_STAGE3_VP_MIN,
     TRANSITION_TURNOVER_RATIO,
 )
+from src.jongbae.grader import GraderSnapshot, calculate_buy_score
 from src.jongbae.leading_theme import (
     identify_early_morning_leaders,
     identify_rising_candidates,
@@ -64,6 +69,128 @@ from src.notify.telegram import (
     send_message_single,
 )
 from src.notify.telegram_bot import apply_command, parse_command
+
+
+def _evaluate_rising_funnel(
+    stage1_candidates: list[dict[str, Any]],
+    client: Any,
+    snap_by_code: dict[str, dict[str, Any]],
+    tick_cache: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """부상 후보 다단계 funnel — Stage 2~4 (round 21).
+
+    Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N) 통과 후보를 받아 차례로:
+        Stage 2: minute_bars fetch → vol_accel_5m > 0.8 AND not is_weak_candle
+        Stage 3: ccnl fetch → VP ≥ 100
+        Stage 4: asking + investor fetch → R14 풀스코어 → score ≥ RISING_MIN_SCORE
+
+    각 단계에서 탈락한 종목은 다음 단계 fetch 비용을 발생시키지 않는다. 통과한
+    종목의 fetch 결과는 `tick_cache` 에 보존돼서 카드 렌더 단계에서 재사용.
+
+    Args:
+        stage1_candidates: identify_rising_candidates 결과.
+        client: KIS client (None 이면 모든 단계 스킵 — 빈 리스트 반환).
+        snap_by_code: snapshot 의 code → row 매핑 (rank/가격/회전율 등).
+        tick_cache: code → {"bars", "accel_5m", "accel_1m", "candle", "vp",
+            "ccnl", "asking", "investor"} — 본 함수가 통과 종목에 한해 채움.
+
+    Returns:
+        Stage 4 통과 종목 dict 리스트 (원 cand dict + "buy_score" / "buy_grade" /
+        "buy_reasons" 키 추가). 점수 내림차순.
+    """
+    if client is None or not stage1_candidates:
+        return []
+
+    # ── Stage 2: 모멘텀 (minute_bars + vol_accel + candle) ────────────────────
+    stage2: list[dict[str, Any]] = []
+    for cand in stage1_candidates:
+        code = cand["code"]
+        bars = fetch_minute_bars(client, code)
+        if bars is None or bars.empty:
+            continue
+        accel_5m = compute_accel_ratio(bars)
+        if not (accel_5m == accel_5m) or accel_5m <= RISING_STAGE2_VOL_ACCEL_MIN:
+            continue
+        candle = latest_completed_candle(bars)
+        if candle is not None and is_weak_candle(candle):
+            continue
+        # 통과 — Stage 4 에서 쓰일 1분 가속도 미리 계산 (분봉 한 번 fetch 재활용)
+        accel_1m = compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
+        tick_cache[code] = {
+            "bars": bars,
+            "accel_5m": accel_5m,
+            "accel_1m": accel_1m,
+            "candle": candle,
+        }
+        stage2.append(cand)
+
+    if not stage2:
+        return []
+
+    # ── Stage 3: 체결강도 ────────────────────────────────────────────────────
+    stage3: list[dict[str, Any]] = []
+    for cand in stage2:
+        code = cand["code"]
+        ccnl = fetch_ccnl_strength(client, code)
+        if ccnl is None:
+            continue
+        vp = ccnl.get("ccnl_strength")
+        if vp is None or not (vp == vp) or vp < RISING_STAGE3_VP_MIN:
+            continue
+        tick_cache[code]["ccnl"] = ccnl
+        tick_cache[code]["vp"] = float(vp)
+        stage3.append(cand)
+
+    if not stage3:
+        return []
+
+    # ── Stage 4: R14 풀스코어 ────────────────────────────────────────────────
+    out: list[dict[str, Any]] = []
+    for cand in stage3:
+        code = cand["code"]
+        asking = fetch_asking_price(client, code)
+        investor = fetch_investor_flow(client, code)
+        tick_cache[code]["asking"] = asking
+        tick_cache[code]["investor"] = investor
+
+        snap = snap_by_code.get(code, {})
+        cache = tick_cache[code]
+        bid_ask = float("nan")
+        if asking is not None:
+            v = asking.get("bid_ask_ratio")
+            if v is not None and v == v:
+                bid_ask = float(v)
+        # 당일 고점 대비 거리 (필수조건 R12.5)
+        price = float(snap.get("price") or 0)
+        high = float(snap.get("intraday_high") or 0)
+        dist_high_pct = (
+            (price - high) / high * 100.0 if high > 0 and price > 0 else float("nan")
+        )
+        gsnap = GraderSnapshot(
+            volume_turnover_rank=int(snap.get("rank") or 0) or None,
+            vol_accel_1m=cache["accel_1m"] if cache["accel_1m"] == cache["accel_1m"] else float("nan"),
+            vol_accel_5m=cache["accel_5m"],
+            candle=cache.get("candle"),
+            vp=cache["vp"],
+            # VP_5MA 시계열은 아직 미보유 (별도 round 에서 추가). 0 = strong/weak
+            # 판정 시 NaN 처리 → 가산점 없이 진행.
+            vp_5ma=float("nan"),
+            divergence=None,
+            bid_ask_ratio=bid_ask,
+            dist_from_intraday_high_pct=dist_high_pct,
+        )
+        score_card = calculate_buy_score(gsnap)
+        if score_card.score < RISING_MIN_SCORE:
+            continue
+        enriched = dict(cand)
+        enriched["buy_score"] = score_card.score
+        enriched["buy_grade"] = score_card.grade
+        enriched["buy_reasons"] = list(score_card.reasons)
+        out.append(enriched)
+
+    # 점수 내림차순
+    out.sort(key=lambda c: c["buy_score"], reverse=True)
+    return out
 
 
 def _send_or_edit_monitor(
@@ -114,7 +241,7 @@ def dashboard_tick(
 ) -> None:
     """한 사이클의 모니터링 처리.
 
-    호출 빈도: 5초 (스케줄러 IntervalTrigger).
+    호출 빈도: 3초 (스케줄러 IntervalTrigger, scheduler.py:741).
 
     Args:
         session: 공유 세션 상태.
@@ -142,13 +269,12 @@ def dashboard_tick(
     leaders = identify_early_morning_leaders(
         snapshot, sectors, top_per_theme=LEADING_STOCK_TOP_PER_SECTOR,
     )
-    # 부상 후보(거래대금 급증): leaders 와 중복 제거. RISING 카드로 등록 — 시간
-    # 만료 없음, 풀에서 빠지면 즉시 카드 제거 (정정 round 19).
-    rising = identify_rising_candidates(
+    # 부상 후보 Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N). leaders 와 중복 제거.
+    rising_stage1 = identify_rising_candidates(
         snapshot, theme_mapping_df=theme_mapping_df,
     )
     leader_codes_set = {l["code"] for l in leaders}
-    rising = [c for c in rising if c["code"] not in leader_codes_set]
+    rising_stage1 = [c for c in rising_stage1 if c["code"] not in leader_codes_set]
 
     # 2) 자동 모니터링 갱신 (주도주만) — 추가/제거 시 메시지 send/delete
     prev_auto_codes = {c for c, m in session.monitored.items() if m.source.value == "auto"}
@@ -159,14 +285,6 @@ def dashboard_tick(
     for dropped in prev_auto_codes - new_auto_codes:
         _delete_monitor_message(token, chat_id, dropped, message_ids)
 
-    # 2b) 부상 후보 (RISING) 갱신 — 풀에서 빠진 RISING 은 카드 삭제, 신규는 추가
-    prev_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
-    session.update_rising_candidates(rising, now)
-    new_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
-    for dropped in prev_rising_codes - new_rising_codes:
-        _delete_monitor_message(token, chat_id, dropped, message_ids)
-
-    # 3) 각 monitored 종목별 4지표 fetch + 렌더 + 편집
     snap_by_code = {str(r["code"]): r.to_dict() for _, r in snapshot.iterrows()}
 
     # /buy CODE (가격 인자 생략) UX 를 위해 최근 시세를 세션에 노출 (round 20).
@@ -175,6 +293,20 @@ def dashboard_tick(
         price = row.get("price")
         if price is not None and price == price and price > 0:
             session.last_prices[code] = float(price)
+
+    # 2b) 부상 후보 Stage 2~4 funnel (round 21) — 모멘텀 → VP → R14 풀스코어.
+    # tick_cache 는 funnel 통과 종목의 fetch 결과를 보관해 카드 렌더에서 재사용.
+    tick_cache: dict[str, dict[str, Any]] = {}
+    rising_scored = _evaluate_rising_funnel(
+        rising_stage1, client, snap_by_code, tick_cache,
+    )
+    prev_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
+    rising_changes = session.update_rising_candidates(rising_scored, now)
+    for ch in rising_changes:
+        logger.info(f"[부상] {ch}")
+    new_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
+    for dropped in prev_rising_codes - new_rising_codes:
+        _delete_monitor_message(token, chat_id, dropped, message_ids)
 
     # 카드 헤더에 TRANSITION 부상 후보 정보를 통합 표시하기 위해 a1 → a2 매핑 구성.
     # step_tracker 가 갱신한 후 카드를 렌더해야 정확한 상태를 표시할 수 있으므로
@@ -231,24 +363,35 @@ def dashboard_tick(
 
     for code, monitored in list(session.monitored.items()):
         snap_row = snap_by_code.get(code)
-        # 보조지표 — 실패해도 None 으로 진행
-        bars = fetch_minute_bars(client, code) if client else pd.DataFrame()
-        # 5분봉 가속 (recent=5, baseline=30) — 기존
-        accel = compute_accel_ratio(bars) if not bars.empty else float("nan")
+        cached = tick_cache.get(code, {})
+        # 보조지표 — funnel 에서 이미 fetch 한 결과를 우선 재사용 (round 21).
+        # cache miss (AUTO/MANUAL 종목) 는 종전대로 매 tick fetch.
+        if "bars" in cached:
+            bars = cached["bars"]
+            accel = cached.get("accel_5m", float("nan"))
+            accel_1m = cached.get("accel_1m", float("nan"))
+        else:
+            bars = fetch_minute_bars(client, code) if client else pd.DataFrame()
+            accel = compute_accel_ratio(bars) if not bars.empty else float("nan")
+            accel_1m = (
+                compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
+                if not bars.empty else float("nan")
+            )
         recent_value = (
             int(bars.tail(5)["trading_value"].sum()) if not bars.empty else 0
-        )
-        # 1분봉 가속 (recent=1, baseline=10) — 갑작스러운 한 봉 급증 감지
-        accel_1m = (
-            compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
-            if not bars.empty else float("nan")
         )
         last_bar_value = (
             int(bars.tail(1)["trading_value"].iloc[0]) if not bars.empty else 0
         )
-        ccnl = fetch_ccnl_strength(client, code) if client else None
-        asking = fetch_asking_price(client, code) if client else None
-        investor = fetch_investor_flow(client, code) if client else None
+        ccnl = cached.get("ccnl") if "ccnl" in cached else (
+            fetch_ccnl_strength(client, code) if client else None
+        )
+        asking = cached.get("asking") if "asking" in cached else (
+            fetch_asking_price(client, code) if client else None
+        )
+        investor = cached.get("investor") if "investor" in cached else (
+            fetch_investor_flow(client, code) if client else None
+        )
         sparkline = short_trend_sparkline(bars, n_recent=6)
 
         # GRACE 잔여 시간 (a2 카드 측 표시용)
