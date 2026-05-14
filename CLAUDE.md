@@ -174,7 +174,7 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 
 | 시점 | 채널 | 내용 |
 |---|---|---|
-| **사용자 `/on` ~ `/off`** | **텔레그램 (메시지 편집)** | **실시간 모니터링 — 주도주/사용자 종목 1~2초 갱신. 평일 09:00 자동 ON, /off 로만 종료 (10:30 자동 OFF 폐지, round 18)** ★ |
+| **사용자 `/on` ~ `/off`** | **텔레그램 (메시지 편집) + PWA 대시보드 (M7)** | **실시간 모니터링 — 주도주/사용자 종목 1~2초 갱신. 평일 09:00 자동 ON, /off 로만 종료 (10:30 자동 OFF 폐지, round 18). PWA 는 아이패드 한 화면 카드 그리드 + 보유 토글 버튼 (holdings.json input only, KIS 주문 X, `docs/dashboard-pwa.md`)** ★ |
 | 09:30 모닝 | 텔레그램 | 시장 국면 + 어제 보유 종목 갭 분석 |
 | 11:00 / 13:00 / 14:00 | 텔레그램 | 주도테마 변화, 신규 상한가 |
 | 14:50 결정 | 텔레그램 | **최종 종배 후보 + 사이징** ★ |
@@ -216,6 +216,8 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 - **R15 매도 트리거 = 카드에만 표시 (별도 푸시 X)**. 자동 주문 코드 작성 절대 X. CLAUDE.md "자동 매매 절대 금지" 정책 유지 — 단타 시스템도 예외 아님
 - **M6 모니터링 카드 외 별도 푸시 X (정정 round 17)** — TRANSITION/GRACE/강한 부상/자금 이탈/AVOID/R15 트리거 모두 카드 색상·이모지·사유 한 줄로 통합. 1~2초 갱신만으로 사람이 직접 인지하는 워크플로우. 푸시는 M6 외부(상한가 진입/14:50 결정/16:00 사후 등)만
 - **봇 명령 polling 은 24h 상시 (round 18)** — 이전엔 09:00~10:30 cron 안에서만 polling 떠서 운영시간 외 명령은 응답조차 없음. 현재는 `scheduler.run()` 시작 시 polling thread 1회 띄움. `/on`/`/off` 24h 허용, `/start`=`/on` alias, `/pause`=`/off` alias. 10:30 자동 OFF 폐지 — 사용자 임의 시점에 켜고 끔
+- **PWA 대시보드 (M7) 도 모니터링 메타 데이터 input 만 허용** — `holdings.json` 토글 / 감시 종목 추가·제거 / `/on`·`/off` 만 POST 가능. **KIS 거래소 주문 영구 X**. PWA 의 buy/sell 버튼은 텔레그램 봇 `/buy`·`/sell` 명령과 **동일 핸들러 재사용** (이중 구현 X). 자세한 정책 매핑은 `docs/dashboard-pwa.md` §3·§6
+- **PWA 도 푸시 X** — Web Notifications 은 opt-in 강제, 기본 OFF. 텔레그램 `editMessageText` 정책과 동일 — 카드 1~3초 갱신만으로 사람이 직접 인지하는 워크플로우. 데이터 외부 클라우드 송신 X (집 데스크탑에서 직접 서빙)
 
 ## 파일 작성 시 참고 문서
 
@@ -225,4 +227,5 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 - 종배 분석 모듈 작성 시: `docs/jongbae-strategy.md`
 - 레포트 모듈 작성 시: `docs/report-spec.md`
 - 실시간 모니터링 카드/funnel/매수 점수/매도 시그널 설명 (초보자용): `docs/monitoring-guide.md`
+- PWA 대시보드 (M7) 작성 시: `docs/dashboard-pwa.md`
 - 전체 진행 상황: `docs/plan.md`
