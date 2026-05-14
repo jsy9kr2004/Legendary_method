@@ -240,6 +240,13 @@
 - [x] **Historical layer3_high_vol (거래량 비율 매칭)** — `_compute_returns` 에 volume_ratio (당일 / 직전 20일 평균). layer3 사례 중 오늘 ±0.5배 범위만 매칭. Kelly 자동 반영. (2026-05-12)
 - [x] **KOSPI/KOSDAQ 일봉 영구 적재** — `src/data/index_storage.py` + `src/data/index.py` (fetch_index_daily_range 페이지네이션, init/update_index_daily). `python -m src.data.update_index --init` 으로 N년치 백필. 스케줄러 16:10 incremental cron. `compute_market_stats` 적재본 우선 사용 → ma200 매칭 사용 가능 날짜 영구 확장. `./go init-index` / `update-index` CLI. health check `check_index_daily` 추가. (2026-05-12)
 - [ ] **회전율 매칭 layer** — 시총 미적재로 보류. 종목 마스터 part2 적재 후 layer3_high_turnover 추가 가능.
+- [x] **fetch_volume_rank turnover: KIS 자체 회전율 우선 사용** — `src/data/intraday.py`. KIS 거래대금 순위 응답에 `tr_pbmn_tnrt`(거래대금회전율, %) 필드가 이미 있음. master_df.market_cap 이 0(미적재) 이어도 회전율이 정상으로 잡혀 fallback("거래대금 절대값 → 항상 대형주") 함정 회피. M6 자동 모니터링이 진짜 회전율 1위(계양전기 등) 잡기 시작. (2026-05-12)
+- [ ] **fetch_quote / fetch_quotes_bulk 도 hts_avls 사용** — 단일 종목 현재가 응답엔 `tr_pbmn_tnrt` 없음 대신 `hts_avls`(시가총액, 억원) 있음. fetch_quote 에서 market_cap 채우면 사용자 수동등록 종목도 회전율 정상 계산.
+- [ ] **종목 마스터 market_cap 적재** — KIS mst part2 char[172:181] 슬라이스가 모두 0 으로 파싱됨. mst 포맷 검증 또는 pykrx/KIS inquire-price 로 별도 backfill 필요. M6 핵심 path 는 위 [x] 로 우회 완료지만, historical 분석/리포트 단가 추산 등에는 여전히 필요.
+- [x] **parquet 손상 graceful degradation** — `src/data/storage.py` `_safe_read_parquet()` helper. 모든 read 함수(일봉/마스터/테마/WICS/스냅샷/지수)가 손상 시 ERROR 로그 + 빈 DF 리턴. scheduler가 _dashboard_start 등에서 throw로 마비되는 것 방지. 트리거: 2026-05-12 새벽 `data/daily/ohlcv.parquet` footer 손상 (in-place 덮어쓰기 사고 추정). (2026-05-12)
+- [ ] **parquet atomic write** — `write_daily_ohlcv` / `write_index_daily` / `write_stock_master` 등 모두 `to_parquet(path)` in-place. 쓰는 도중 프로세스 죽으면 footer 손상. tmp 파일 → fsync → os.replace 패턴으로 변경 필요. 재발 방지.
+- [ ] **일봉 ohlcv.parquet 재백필** — 2026-05-12 footer 손상으로 corrupted 파일(`data/daily/ohlcv.parquet`, 12MB, 05-12 02:01) 그대로 남아있음. 현재는 graceful degradation으로 빈 DF 취급되어 모니터링은 동작하지만 historical 매칭/모닝 갭 분석은 무력화. `mv data/daily/ohlcv.parquet data/daily/ohlcv.parquet.corrupted-20260512 && ./go init --years 5` 필요.
+- [ ] **fail-loud 텔레그램 알림 (parquet 손상)** — 현재는 logger.error로만 남김. corruption 발견 시 텔레그램 에러 채널 1회 발송(중복 억제 포함) 추가 가능.
 
 ---
 

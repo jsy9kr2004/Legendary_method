@@ -38,6 +38,26 @@ def _fmt_int_signed(v: int | None) -> str:
     return f"{sign}{v:,}"
 
 
+def _krx_tick_size(price: int) -> int:
+    """KRX 가격대별 호가 단위 (KOSPI/KOSDAQ 동일, 2023-01 이후 단순화 표).
+
+    매도/매수 주문은 호가 단위 정렬된 가격으로만 들어간다 (정정매매 동일).
+    """
+    if price < 2_000:
+        return 1
+    if price < 5_000:
+        return 5
+    if price < 20_000:
+        return 10
+    if price < 50_000:
+        return 50
+    if price < 200_000:
+        return 100
+    if price < 500_000:
+        return 500
+    return 1_000
+
+
 def render_monitor_message(
     monitored: MonitoredStock,
     snapshot_row: dict[str, Any] | None,
@@ -49,6 +69,8 @@ def render_monitor_message(
     sparkline: str,
     now: datetime,
     grace_remaining_seconds: int | None = None,
+    accel_ratio_1m: float | None = None,
+    last_bar_value: int | None = None,
 ) -> str:
     """종목별 모니터링 메시지 (편집 갱신용).
 
@@ -64,8 +86,16 @@ def render_monitor_message(
         now: 갱신 시각.
         grace_remaining_seconds: GRACE 상태일 때 남은 시간. None 이면 표시 안 함.
     """
-    # 헤더
-    src_emoji = "⭐자동/주도주" if monitored.source == Source.AUTO else "🔵수동"
+    # 헤더 — source 별 emoji + 라벨
+    if monitored.source == Source.AUTO:
+        src_emoji = "⭐자동/주도주"
+        header_kind = "모니터링"
+    elif monitored.source == Source.RISING:
+        src_emoji = "⚡부상 후보"
+        header_kind = "부상"
+    else:
+        src_emoji = "🔵수동"
+        header_kind = "모니터링"
     themes_str = " / ".join(monitored.themes) if monitored.themes else "—"
     name = monitored.name or monitored.code
 
@@ -75,16 +105,24 @@ def render_monitor_message(
         s = grace_remaining_seconds % 60
         grace_label = f"  [GRACE {m}:{s:02d} 남음]"
 
+    # RISING 한정: 만료까지 남은 시간 + 수동 승격 안내
+    rising_label = ""
+    if monitored.source == Source.RISING and monitored.expires_at is not None:
+        remaining = int((monitored.expires_at - now).total_seconds())
+        if remaining > 0:
+            mm = remaining // 60
+            ss = remaining % 60
+            rising_label = f"  [만료 {mm}:{ss:02d} 남음]"
+
     lines = [
-        f"[모니터링] {name} ({monitored.code}) {src_emoji}{grace_label}",
+        f"[{header_kind}] {name} ({monitored.code}) {src_emoji}{grace_label}{rising_label}",
         f"테마: {themes_str}",
-        "─" * 30,
-        f"시각: {now.strftime('%H:%M:%S')}",
     ]
 
-    # 가격 / 등락률 / 상한가 / 회전율
+    # 시각 + 가격 한 줄로 합침 (라인 수 절약)
     if snapshot_row:
         price = snapshot_row.get("price", 0)
+        prev_close = snapshot_row.get("prev_close", 0) or 0
         ret = snapshot_row.get("daily_return")
         is_lup = snapshot_row.get("is_limit_up", False)
         turnover = snapshot_row.get("turnover")
@@ -92,50 +130,112 @@ def render_monitor_message(
 
         lup_mark = " 🔴상한가" if is_lup else ""
         lines.append(
-            f"가격: {price:,}원 ({_fmt_pct(ret)}){lup_mark}"
+            f"{now.strftime('%H:%M:%S')}  {price:,}원 ({_fmt_pct(ret)}){lup_mark}"
         )
+        # +29% 매도가 (상한가 +30% 직전 — 매매 정지 + 매도 호가 압박 회피)
+        # 호가 단위로 내림 → 그대로 매도 주문 가능. 사용자는 정정매매로 미세 조정.
+        if prev_close > 0:
+            target_29_raw = prev_close * 1.29
+            tick = _krx_tick_size(int(target_29_raw))
+            target_29 = (int(target_29_raw) // tick) * tick
+            if price > 0:
+                remaining_pct = (target_29 - price) / price * 100
+                lines.append(
+                    f"+29% 매도가: {target_29:,}원 (현재가 대비 {remaining_pct:+.1f}%)"
+                )
+            else:
+                lines.append(f"+29% 매도가: {target_29:,}원")
+        # 거래대금 + 순위 (snapshot 의 rank) + 회전율
+        rank = snapshot_row.get("rank")
+        rank_str = f" ({int(rank)}위)" if rank else ""
         lines.append(
-            f"거래대금: {_fmt_billion(trading_value)}  회전율: "
+            f"거래대금: {_fmt_billion(trading_value)}{rank_str}  회전율: "
             f"{_fmt_pct(turnover) if turnover is not None else '—'}"
         )
     else:
-        lines.append("가격/회전율: —")
+        lines.append(f"{now.strftime('%H:%M:%S')}  가격/회전율: —")
 
-    # 가속배율
+    # 5분봉 가속 — 색상으로 매수/매도 강세 표현 (대칭 임계 1.0)
     if accel_ratio is not None and accel_ratio == accel_ratio:  # not NaN
-        if accel_ratio >= 1.0:
-            arrow = "↑"
-            label = "자금 유입 가속" if accel_ratio >= 3.0 else "유입"
+        if accel_ratio >= 3.0:
+            color5 = "🟢"; arrow = "↑"; label = "자금 유입 가속"
+        elif accel_ratio >= 1.0:
+            color5 = "🟢"; arrow = "↑"; label = "유입"
+        elif accel_ratio < 0.6:
+            color5 = "🔴"; arrow = "↓"; label = "자금 이탈"
         else:
-            arrow = "↓"
-            label = "자금 이탈" if accel_ratio < 0.6 else "감소"
+            color5 = "🟡"; arrow = "↓"; label = "감소"
         bar_val = _fmt_billion(recent_bar_value) if recent_bar_value else "—"
         lines.append(
-            f"5분봉가속: {arrow} {accel_ratio:.1f}배 ({label})  분봉거래대금 {bar_val}"
+            f"{color5} 5분봉가속: {arrow} {accel_ratio:.1f}배 ({label})  5분합 {bar_val}"
         )
     else:
-        lines.append("5분봉가속: —")
+        lines.append("⚪ 5분봉가속: —")
 
-    # 체결강도
+    # 1분봉 가속 — first-mover 시그널 (recent=1, baseline=10)
+    if accel_ratio_1m is not None and accel_ratio_1m == accel_ratio_1m:
+        if accel_ratio_1m >= 3.0:
+            color1 = "🟢"; arrow1 = "↑"; label1 = "급증"
+        elif accel_ratio_1m >= 1.0:
+            color1 = "🟢"; arrow1 = "↑"; label1 = "유입"
+        elif accel_ratio_1m < 0.4:
+            color1 = "🔴"; arrow1 = "↓"; label1 = "급감"
+        else:
+            color1 = "🟡"; arrow1 = "↓"; label1 = "감소"
+        last_val = _fmt_billion(last_bar_value) if last_bar_value else "—"
+        lines.append(
+            f"{color1} 1분봉가속: {arrow1} {accel_ratio_1m:.1f}배 ({label1})  최근1분 {last_val}"
+        )
+    else:
+        lines.append("⚪ 1분봉가속: —")
+
+    # 체결강도 — 색상 (≥120 매수강세 / 80~120 균형 / <80 매도강세)
     if ccnl:
         strength = ccnl.get("ccnl_strength")
         buy_ratio = ccnl.get("buy_ratio")
         if strength is not None and strength == strength:
-            balance = "매수 우세" if strength > 100 else "매도 우세" if strength < 100 else "균형"
+            if strength >= 120:
+                color_c = "🟢"; balance = "매수 우세"
+            elif strength < 80:
+                color_c = "🔴"; balance = "매도 우세"
+            else:
+                color_c = "🟡"; balance = "균형"
             lines.append(
-                f"체결강도: {strength:.0f} ({balance})  매수비율 "
+                f"{color_c} 체결강도: {strength:.0f} ({balance})  매수비율 "
                 f"{_fmt_pct(buy_ratio) if buy_ratio is not None else '—'}"
             )
 
-    # 호가 잔량
+    # 호가 잔량 — 매수/매도 잔량 합 + 비율 색상 (🟢🟡🔴) + 1호가 상세
+    # 색상 임계는 대칭 (1.5배 / 0.67배). 1.5 = 매수 1.5배, 1/1.5 ≈ 0.67 = 매도 1.5배.
     if asking:
         bid = asking.get("bid_total_volume", 0)
         ask = asking.get("ask_total_volume", 0)
         ratio = asking.get("bid_ask_ratio")
-        ratio_str = f"{ratio:.1f}배" if ratio and ratio == ratio else "—"
+        if ratio is None or ratio != ratio:  # NaN
+            color = "⚪"
+            ratio_str = "—"
+        elif ratio >= 1.5:
+            color = "🟢"
+            ratio_str = f"{ratio:.1f}배"
+        elif ratio <= 0.67:
+            color = "🔴"
+            ratio_str = f"{ratio:.2f}배"
+        else:
+            color = "🟡"
+            ratio_str = f"{ratio:.1f}배"
         lines.append(
-            f"호가잔량: 매수 {bid:,} / 매도 {ask:,} ({ratio_str})"
+            f"{color} 호가: 매수 {bid:,} / 매도 {ask:,} ({ratio_str})"
         )
+        # 1호가 가격 + 잔량 (체결 직전 가장 임박한 매수/매도 단가).
+        bid1_p = asking.get("bid1_price", 0)
+        ask1_p = asking.get("ask1_price", 0)
+        bid1_v = asking.get("bid1_volume", 0)
+        ask1_v = asking.get("ask1_volume", 0)
+        if bid1_p or ask1_p:
+            lines.append(
+                f"1호가: 매수 {bid1_p:,}원 ({bid1_v:,}) / "
+                f"매도 {ask1_p:,}원 ({ask1_v:,})"
+            )
 
     # 외국인 / 기관 / 프로그램
     if investor:
@@ -147,8 +247,10 @@ def render_monitor_message(
             f"프로그램 {_fmt_int_signed(p)} 주"
         )
 
-    # Sparkline
-    if sparkline:
-        lines.append(f"직전 추세: {sparkline}")
+    # sparkline 라인 제거 — 5분봉/1분봉 가속으로 충분 (사용자 요청)
+
+    # RISING 한정: 사용자 명령 안내 — 바로 복사해서 수동 모니터링 승격 가능
+    if monitored.source == Source.RISING:
+        lines.append(f"매매 결정 시 → /add {monitored.code}")
 
     return "\n".join(lines)

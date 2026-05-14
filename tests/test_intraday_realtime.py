@@ -46,7 +46,10 @@ def test_fetch_minute_bars_parses_output2():
     assert len(df) == 2
     assert list(df["time"]) == ["090100", "090200"]  # 오름차순
     assert df.iloc[1]["close"] == 10180
-    assert df.iloc[1]["trading_value"] == 20_300_000
+    # fetch_minute_bars 는 KIS 누적 acml_tr_pbmn 을 분봉당 거래대금으로 diff 변환.
+    # 첫 봉은 diff NaN → 0, 두번째 봉은 20.3M - 10M = 10.3M.
+    assert df.iloc[0]["trading_value"] == 0
+    assert df.iloc[1]["trading_value"] == 10_300_000
 
 
 def test_fetch_minute_bars_empty_response():

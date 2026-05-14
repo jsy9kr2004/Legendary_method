@@ -55,6 +55,9 @@ logs/
 data/daily/*
 data/intraday/*
 data/meta/*
+data/decisions/
+data/errors/
+data/reports/
 !data/daily/.gitkeep
 !data/intraday/.gitkeep
 !data/meta/.gitkeep

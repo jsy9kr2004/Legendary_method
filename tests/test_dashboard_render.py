@@ -43,7 +43,11 @@ def test_render_basic_fields():
     assert "체결강도" in msg
     assert "142" in msg
     assert "외국인" in msg
-    assert "▁▂▃▅▇█" in msg
+    # sparkline 라인은 사용자 요청으로 render 에서 제거 (2026-05-13).
+    assert "▁▂▃▅▇█" not in msg
+    # 시각 + 가격은 한 줄로 합쳐졌고 구분선(─) 제거됨.
+    assert "─" not in msg
+    assert "09:32:18  91,300원" in msg
 
 
 def test_render_manual_source():

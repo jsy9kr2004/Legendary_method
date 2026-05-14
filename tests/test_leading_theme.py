@@ -225,7 +225,7 @@ def test_em_leaders_excludes_megacap_by_turnover():
     snap = _snap_em([
         (1, "HYNIX",    2.0,  False, 0.4),
         (2, "SAMSUNG",  1.5,  False, 0.3),
-        (3, "JEPRYUNG", 30.0, True,  18.0),
+        (3, "JEPRYUNG", 25.0, False, 18.0),  # 28% 미만 — 매수 가능 구간
     ])
     leading = [{"theme": "T", "count": 3, "codes": ["HYNIX", "SAMSUNG", "JEPRYUNG"]}]
     leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
@@ -248,16 +248,62 @@ def test_em_leaders_multi_theme_stock_dedup():
     assert sorted(a_entries[0]["themes"]) == ["T1", "T2"]
 
 
-def test_em_leaders_includes_limit_up_flag():
+def test_em_leaders_excludes_limit_up_near_stocks():
+    """상승률 ≥29% (상한가 도달/임박) 종목은 leader 후보에서 제외 — 매수 불가."""
     snap = _snap_em([
-        (1, "A", 30.0, True,  18.0),
+        (1, "A", 30.0, True,  18.0),  # 상한가 도달 → 매수 불가 → 제외
         (2, "B", 25.0, False, 8.0),
     ])
     leading = [{"theme": "T", "count": 3, "codes": ["A", "B"]}]
     leaders = identify_early_morning_leaders(snap, leading, top_per_theme=1)
-    a = next(l for l in leaders if l["code"] == "A")
-    assert a["is_limit_up"] is True
-    assert a["turnover"] == 18.0
+    codes = [l["code"] for l in leaders]
+    assert "A" not in codes
+    assert "B" in codes
+
+
+def test_em_leaders_excludes_outside_rank_max():
+    """절대 거래대금 rank_max 초과 종목은 leader 후보 X — 노이즈 종목 차단."""
+    snap = _snap_em([
+        (5,   "INSIDE",  20.0, False, 12.0),
+        (50,  "OUTSIDE", 22.0, False, 25.0),  # 회전율은 높지만 거래대금 50위
+    ])
+    leading = [{"theme": "T", "count": 3, "codes": ["INSIDE", "OUTSIDE"]}]
+    leaders = identify_early_morning_leaders(
+        snap, leading, top_per_theme=2, rank_max=30,
+    )
+    assert [l["code"] for l in leaders] == ["INSIDE"]
+
+
+def test_em_leaders_excludes_non_positive_return():
+    """일일 상승률 ≤ 0 (하락/보합) 종목은 leader 후보 X — 인버스 매매 안 함."""
+    snap = _snap_em([
+        (1, "RISE",  5.0,   False, 18.0),
+        (2, "FLAT",  0.0,   False, 22.0),  # 회전율 최고지만 보합
+        (3, "DROP",  -15.0, False, 25.0),  # 하한가 임박 — 거래대금 터져도 제외
+    ])
+    leading = [{"theme": "T", "count": 3, "codes": ["RISE", "FLAT", "DROP"]}]
+    leaders = identify_early_morning_leaders(snap, leading, top_per_theme=3)
+    codes = [l["code"] for l in leaders]
+    assert codes == ["RISE"]
+    assert "FLAT" not in codes
+    assert "DROP" not in codes
+
+
+def test_rising_candidates_top_n_by_turnover_only():
+    """후보 풀: 주도섹터 무관, 거래대금 50위 + 상승 중 + 회전율 상위 N."""
+    from src.jongbae.leading_theme import identify_rising_candidates
+    snap = _snap_em([
+        (1, "A", 10.0, False, 5.0),
+        (2, "B", 8.0,  False, 22.0),  # 회전율 1위
+        (3, "C", 5.0,  False, 18.0),  # 회전율 2위
+        (4, "D", 12.0, False, 12.0),  # 회전율 3위
+        (5, "E", -3.0, False, 30.0),  # 하락 → 제외
+    ])
+    result = identify_rising_candidates(snap, top_n=3)
+    codes = [r["code"] for r in result]
+    # 회전율 상위 3개 (B, C, D 순), 하락 종목 E 는 제외
+    assert codes == ["B", "C", "D"]
+    assert "E" not in codes
 
 
 def test_em_leaders_fallback_to_trading_value_when_no_turnover():

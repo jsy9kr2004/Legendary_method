@@ -17,6 +17,7 @@ import pandas as pd
 import pytz
 
 from src.data.intraday import SNAPSHOT_COLUMNS
+from src.data.storage import _safe_read_parquet
 
 KST = pytz.timezone("Asia/Seoul")
 
@@ -68,9 +69,9 @@ def load_snapshot(data_dir: Path, d: date, hhmm: str) -> pd.DataFrame:
     """
     filename = hhmm.replace(":", "_") + ".parquet"
     path = _snapshot_dir(data_dir, d) / filename
-    if not path.exists():
-        return pd.DataFrame(columns=SNAPSHOT_WITH_TIME_COLUMNS)
-    return pd.read_parquet(path)
+    return _safe_read_parquet(
+        path, SNAPSHOT_WITH_TIME_COLUMNS, f"snapshot {d} {hhmm}"
+    )
 
 
 def list_snapshots(data_dir: Path, d: date) -> list[str]:

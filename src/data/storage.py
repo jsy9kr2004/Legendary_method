@@ -19,6 +19,31 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+from loguru import logger
+
+
+def _safe_read_parquet(path: Path, columns: list[str], label: str) -> pd.DataFrame:
+    """parquet 읽기. 파일 없으면 스키마만 있는 빈 DF.
+
+    손상(ArrowInvalid, OSError 등)으로 read 실패 시 ERROR 로그 + 빈 DF.
+
+    이유:
+        write_daily_ohlcv 같은 in-place 덮어쓰기 도중 프로세스가 죽으면 footer가
+        깨진 parquet이 남는다 (실제 2026-05-12 새벽 발생). 그 상태로 read 시
+        scheduler가 _dashboard_start 등에서 전부 throw → 모니터링이 마비된다.
+        '없으면 없는대로' 보여주는 graceful degradation 우선. 동시에 ERROR 로그를
+        남겨 fail-loud 원칙을 지킨다.
+    """
+    if not path.exists():
+        return pd.DataFrame(columns=columns)
+    try:
+        return pd.read_parquet(path)
+    except Exception as e:  # noqa: BLE001 — pyarrow / OS / 파일 손상 전부 잡는 게 의도
+        logger.error(
+            f"[storage] {label} parquet 손상 ({path}): "
+            f"{type(e).__name__}: {e}. 빈 DF로 graceful degradation."
+        )
+        return pd.DataFrame(columns=columns)
 
 DAILY_OHLCV_FILENAME = "ohlcv.parquet"
 STOCK_MASTER_FILENAME = "stocks.parquet"
@@ -47,11 +72,10 @@ def stock_master_path(data_dir: Path) -> Path:
 
 
 def read_daily_ohlcv(data_dir: Path) -> pd.DataFrame:
-    """일봉 parquet 읽기. 없으면 빈 DF (스키마 유지)."""
-    path = daily_ohlcv_path(data_dir)
-    if not path.exists():
-        return pd.DataFrame(columns=DAILY_OHLCV_COLUMNS)
-    return pd.read_parquet(path)
+    """일봉 parquet 읽기. 없거나 손상 시 빈 DF (스키마 유지)."""
+    return _safe_read_parquet(
+        daily_ohlcv_path(data_dir), DAILY_OHLCV_COLUMNS, "daily ohlcv"
+    )
 
 
 def write_daily_ohlcv(df: pd.DataFrame, data_dir: Path) -> None:
@@ -107,10 +131,9 @@ def loaded_dates(data_dir: Path) -> set[date]:
 
 
 def read_stock_master(data_dir: Path) -> pd.DataFrame:
-    path = stock_master_path(data_dir)
-    if not path.exists():
-        return pd.DataFrame(columns=STOCK_MASTER_COLUMNS)
-    return pd.read_parquet(path)
+    return _safe_read_parquet(
+        stock_master_path(data_dir), STOCK_MASTER_COLUMNS, "stock master"
+    )
 
 
 def write_stock_master(df: pd.DataFrame, data_dir: Path) -> None:
@@ -130,11 +153,10 @@ def naver_themes_path(data_dir: Path) -> Path:
 
 
 def read_naver_themes(data_dir: Path) -> pd.DataFrame:
-    """테마 매핑 parquet 읽기. 없으면 빈 DF."""
-    path = naver_themes_path(data_dir)
-    if not path.exists():
-        return pd.DataFrame(columns=NAVER_THEMES_COLUMNS)
-    return pd.read_parquet(path)
+    """테마 매핑 parquet 읽기. 없거나 손상 시 빈 DF."""
+    return _safe_read_parquet(
+        naver_themes_path(data_dir), NAVER_THEMES_COLUMNS, "naver themes"
+    )
 
 
 def write_naver_themes(df: pd.DataFrame, data_dir: Path) -> None:
@@ -240,11 +262,10 @@ def wics_sectors_path(data_dir: Path) -> Path:
 
 
 def read_wics_sectors(data_dir: Path) -> pd.DataFrame:
-    """WICS 섹터 매핑 parquet 읽기. 없으면 빈 DF."""
-    path = wics_sectors_path(data_dir)
-    if not path.exists():
-        return pd.DataFrame(columns=WICS_SECTORS_COLUMNS)
-    return pd.read_parquet(path)
+    """WICS 섹터 매핑 parquet 읽기. 없거나 손상 시 빈 DF."""
+    return _safe_read_parquet(
+        wics_sectors_path(data_dir), WICS_SECTORS_COLUMNS, "WICS sectors"
+    )
 
 
 def write_wics_sectors(df: pd.DataFrame, data_dir: Path) -> None:
