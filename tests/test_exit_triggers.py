@@ -16,6 +16,7 @@ from src.jongbae.divergence import compute_divergence
 from src.jongbae.exit_triggers import (
     Holding,
     Mode,
+    compute_c_signal_states,
     evaluate_triggers,
     load_holdings,
     save_holdings,
@@ -365,6 +366,111 @@ def test_C5_no_failure_if_recovered():
         vi_triggered_at=vi_time, vi_recovered=True,
     )
     assert not any(e.kind == "C5_vi_failure" for e in events)
+
+
+# ── compute_c_signal_states — 감시/보유 모드 분기 ────────────────────────────
+
+
+def test_c_states_watch_all_off_when_quiet():
+    """감시 모드 — 모든 입력 정상/긍정이면 C1~C5 모두 ❌."""
+    states = compute_c_signal_states(
+        vp_5ma_prev=140.0, vp_5ma_now=135.0,  # 100 위 → C1=False
+        divergence=compute_divergence(  # bearish=False
+            price_now=100.0, price_5m_ago=98.0,
+            vp_5ma_now=135.0, vp_5ma_5m_ago=130.0,
+        ),
+        vol_accel_1m=2.0,                # 0.5 위 → C3=False
+        candle=classify_candle(o=100, h=105, l=99, c=104),  # 양봉
+        holding=None,
+    )
+    assert states == {
+        "C1_vp_below_100": False,
+        "C2_bearish_divergence": False,
+        "C3_vol_drain": False,
+        "C4_bearish_candle": False,
+        "C5_vi_failure": False,
+    }
+
+
+def test_c_states_watch_each_signal_lit():
+    """감시 모드 — 각 시그널이 instantaneous 켜지면 ✅ (C5 제외)."""
+    # C1: VP 5MA 현재값이 100 미만
+    s1 = compute_c_signal_states(
+        vp_5ma_prev=120.0, vp_5ma_now=95.0,
+        divergence=None, vol_accel_1m=None, candle=None, holding=None,
+    )
+    assert s1["C1_vp_below_100"] is True
+
+    # C2: Bearish Divergence (가격↑ / VP_5MA↓)
+    div = compute_divergence(
+        price_now=102.0, price_5m_ago=100.0,
+        vp_5ma_now=120.0, vp_5ma_5m_ago=140.0,
+    )
+    assert div.bearish is True
+    s2 = compute_c_signal_states(
+        vp_5ma_prev=140.0, vp_5ma_now=120.0,
+        divergence=div, vol_accel_1m=None, candle=None, holding=None,
+    )
+    assert s2["C2_bearish_divergence"] is True
+
+    # C3: 1분 가속 < 0.5 (instantaneous, 지속 시간 무시)
+    s3 = compute_c_signal_states(
+        vp_5ma_prev=None, vp_5ma_now=None,
+        divergence=None, vol_accel_1m=0.3, candle=None, holding=None,
+    )
+    assert s3["C3_vol_drain"] is True
+
+    # C4: 윗꼬리 50%↑ 음봉
+    bearish_candle = classify_candle(o=110, h=130, l=100, c=105)
+    s4 = compute_c_signal_states(
+        vp_5ma_prev=None, vp_5ma_now=None,
+        divergence=None, vol_accel_1m=None, candle=bearish_candle, holding=None,
+    )
+    assert s4["C4_bearish_candle"] is True
+
+
+def test_c_states_watch_c5_always_off():
+    """감시 모드에서 C5 는 VI 인프라 부재로 항상 False (render 가 행 숨김)."""
+    states = compute_c_signal_states(
+        vp_5ma_prev=50.0, vp_5ma_now=30.0,   # 다른 시그널 다 켜도
+        divergence=None, vol_accel_1m=0.1,
+        candle=classify_candle(o=110, h=130, l=100, c=105),
+        holding=None,
+    )
+    assert states["C5_vi_failure"] is False
+
+
+def test_c_states_hold_uses_triggers_fired():
+    """보유 모드 — holding.triggers_fired set 그대로 반영 (sticky).
+
+    감시 모드와 달리 시장 메트릭 인자는 무시 — 이미 evaluate_triggers 가
+    holding 갱신했고 본 함수는 표시용 dict 만 만들어 줌.
+    """
+    h, _ = _entry(100_000)
+    h.triggers_fired.add("C1_vp_below_100")
+    h.triggers_fired.add("C4_bearish_candle")
+    states = compute_c_signal_states(
+        # instantaneous 입력은 다 False 상태로 줘도, holding 분기는 무시.
+        vp_5ma_prev=200.0, vp_5ma_now=150.0,
+        divergence=None, vol_accel_1m=5.0,
+        candle=classify_candle(o=100, h=105, l=99, c=104),
+        holding=h,
+    )
+    assert states["C1_vp_below_100"] is True
+    assert states["C4_bearish_candle"] is True
+    assert states["C2_bearish_divergence"] is False
+    assert states["C3_vol_drain"] is False
+    assert states["C5_vi_failure"] is False
+
+
+def test_c_states_watch_nan_inputs_safe():
+    """NaN/None 입력은 보수적으로 False — fail-loud 보다 카드가 망가지지 않게."""
+    states = compute_c_signal_states(
+        vp_5ma_prev=float("nan"), vp_5ma_now=float("nan"),
+        divergence=None, vol_accel_1m=float("nan"),
+        candle=None, holding=None,
+    )
+    assert all(v is False for v in states.values())
 
 
 # ── 정책 검증 ────────────────────────────────────────────────────────────────

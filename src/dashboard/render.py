@@ -298,9 +298,13 @@ def render_monitor_message(
     # 외국인 / 기관 / 프로그램 — round 22: 데이터 신뢰도 낮아 카드에서 제거.
     # 단 investor 인자는 호환 위해 유지.
 
-    # round 22: 보유 모드 청산 시그널 섹션 (R15 C 그룹만 — A/B 가격선은 위에서 인지).
-    if is_holding and trigger_states is not None:
-        lines.append("─ 청산 시그널 ─")
+    # 청산 시그널 (R15 C 그룹). 보유 모드 = triggers_fired sticky.
+    # 감시/부상/수동 모드 = 현재 시점 instantaneous (compute_c_signal_states).
+    # 진입 의사결정 시 "매도 시그널 켜진 종목 회피" 용도. C5 (VI) 는 인프라 부재
+    # 라 보유 모드만 노출 — 감시 모드에서는 행 숨김.
+    if trigger_states is not None:
+        section_label = "청산 시그널" if is_holding else "청산 시그널 (현재 시점)"
+        lines.append(f"─ {section_label} ─")
         # C1: 체결강도 5MA 100 하향
         c1_mark = "✅" if trigger_states.get("C1_vp_below_100") else "❌"
         c1_detail_parts = []
@@ -334,9 +338,10 @@ def render_monitor_message(
         # C4: 윗꼬리 50%↑ 음봉 (1분봉)
         c4_mark = "✅" if trigger_states.get("C4_bearish_candle") else "❌"
         lines.append(f"{c4_mark} 윗꼬리 50%↑ 음봉 (1분봉 기준)")
-        # C5: VI 발동 후 재상승 실패
-        c5_mark = "✅" if trigger_states.get("C5_vi_failure") else "❌"
-        lines.append(f"{c5_mark} VI 발동 후 5분 내 재상승 실패")
+        # C5: VI 발동 후 재상승 실패 — 보유 모드만 (감시 모드는 VI 감지 인프라 부재)
+        if is_holding:
+            c5_mark = "✅" if trigger_states.get("C5_vi_failure") else "❌"
+            lines.append(f"{c5_mark} VI 발동 후 5분 내 재상승 실패")
 
     # RISING 한정: 사용자 명령 안내 — 바로 복사해서 수동 모니터링 승격 가능
     if monitored.source == Source.RISING:

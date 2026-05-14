@@ -150,6 +150,65 @@ class TriggerEvent:
 # ── 평가 함수 (pure, 1 tick 마다 호출) ────────────────────────────────────────
 
 
+def compute_c_signal_states(
+    *,
+    vp_5ma_prev: float | None,
+    vp_5ma_now: float | None,
+    divergence: DivergenceState | None,
+    vol_accel_1m: float | None,
+    candle: CandleShape | None,
+    holding: Holding | None = None,
+) -> dict[str, bool]:
+    """C1~C5 시그널 발화 상태 (카드 표시용).
+
+    감시 모드 (holding=None):
+        지금 이 시점 시그널이 켜져 있는지 즉시 판정. 진입 의사결정 보조용 —
+        매도 시그널이 켜진 종목은 매수 진입 회피. C5 는 VI 감지 인프라 없어
+        항상 False (호출자가 감시 모드에서는 C5 행을 숨길 것).
+
+    보유 모드 (holding 주어짐):
+        holding.triggers_fired 에 이번 보유 중 한번이라도 들어간 적이 있는지.
+        sticky — 한번 발화한 시그널은 청산 전까지 ✅ 유지.
+
+    인자는 evaluate_triggers 와 동일한 시장 메트릭. 감시 모드에서는
+    instantaneous 라 NaN/None 은 모두 False 로 보수적 판정.
+    """
+    if holding is not None:
+        return {
+            "C1_vp_below_100":       "C1_vp_below_100"       in holding.triggers_fired,
+            "C2_bearish_divergence": "C2_bearish_divergence" in holding.triggers_fired,
+            "C3_vol_drain":          "C3_vol_drain"          in holding.triggers_fired,
+            "C4_bearish_candle":     "C4_bearish_candle"     in holding.triggers_fired,
+            "C5_vi_failure":         "C5_vi_failure"         in holding.triggers_fired,
+        }
+
+    # 감시 모드 — 현재 시점 instantaneous.
+    # C1: VP_5MA 현재값이 균형선 100 아래인지. 보유 모드의 "교차" 와 달리
+    # 진입 회피용은 "지금 약한가" 가 더 직관적.
+    c1 = vp_5ma_now is not None and vp_5ma_now == vp_5ma_now and vp_5ma_now < 100.0
+
+    c2 = bool(divergence is not None and divergence.bearish)
+
+    c3 = bool(
+        vol_accel_1m is not None
+        and vol_accel_1m == vol_accel_1m  # NaN guard
+        and vol_accel_1m < VOL_ACCEL_1M_DRAIN
+    )
+
+    c4 = bool(candle is not None and is_bearish_exit_signal(candle))
+
+    # C5: VI 감지 인프라 부재 — 감시 모드에서는 항상 False (render 에서 행 숨김).
+    c5 = False
+
+    return {
+        "C1_vp_below_100":       c1,
+        "C2_bearish_divergence": c2,
+        "C3_vol_drain":          c3,
+        "C4_bearish_candle":     c4,
+        "C5_vi_failure":         c5,
+    }
+
+
 def evaluate_triggers(
     holding: Holding,
     *,
