@@ -316,8 +316,9 @@ M6 모니터링 카드는 1~2초 간격 `editMessageText` in-place 갱신 — **
 - `/list` — 현재 모니터링 중인 종목 출력
 - `/clear` — 수동 추가분만 해제 (자동 주도주는 유지)
 - `091340` (6자리 숫자) — 토글 추가/해제 (감시 모드). 24h 허용
-- `/buy 091340 91300` — 보유 모드 진입 (매수가 등록). 손절/익절선 즉시 계산. 24h 허용
-- `/buy 091340 91300 5` — 5분 시간 손절(기본 10분) 오버라이드
+- `/buy 091340` — 보유 모드 진입 (round 20). 매수가는 모니터링 중인 최근 시세에서 자동 보충 → 손절/익절선 즉시 계산. 24h 허용
+- `/buy 091340 91300` — 매수가 명시 (자동 보충값을 신뢰하지 못할 때, 예: 다른 HTS 에서 슬리피지 있게 체결)
+- `/buy 091340 91300 5` — 매수가 + 5분 시간 손절(기본 10분) 오버라이드
 - `/sell 091340` — 감시 모드 복귀 (보유 청산)
 - `/status 091340` — 해당 종목 풀 카드 강제 재발송
 - 미정의 명령은 무시 (스팸 방지)
@@ -602,6 +603,7 @@ entry_bar_low    = 진입 직전 1분봉 저점
 | 17 | TRANSITION/GRACE/강한 부상/자금 이탈/AVOID/R15 매도 트리거를 모두 별도 푸시 메시지로 발송 | 카드를 1~2초 갱신하면서 같은 정보를 푸시로 또 보내면 중복. 사용자는 09:00~10:30 텔레그램 채팅 띄워놓고 카드 색상/이모지/사유 변화로 직접 인지 → **카드 외 별도 푸시 폐기, `editMessageText` in-place 갱신만**. 푸시는 M6 외부 이벤트(상한가 진입/자동 주도주 첫 추가/정기 레포트)만 유지. 메시지 N분마다 삭제/재발송 패턴도 도입 X (밀려 안 보일 일이 없으니 불필요) |
 | 18 | 봇 명령 polling 을 평일 09:00~10:30 cron 안에서만 띄움 (`_dashboard_start` 09:00 시작, `_dashboard_stop` 10:30 종료) — 운영시간 외엔 `/list`/`/start`/`/on` 등 어떤 명령에도 응답 X. `/pause` 가 ON/OFF 토글 (`/start` 와 동의어). | 사용자 의도: "단타 칠 수 있을 때 임의 시점에 켜고 끄기". 24h 사용자 토글로 정책 변경. 변경 사항: ①polling thread 를 `scheduler.run()` 시점에 1회 띄워 24h 상시 가동. ②`/on`/`/off` 정식 명령 도입 (멱등). ③`/start`=`/on`, `/pause`=`/off` alias. ④10:30 자동 OFF cron 폐지 — `/off` 로만 종료. ⑤평일 09:00 자동 ON cron 은 편의를 위해 유지. ⑥`/buy`/`6자리 토글` 도 24h 허용 (`/on` 24h 정책과 일관성, NXT/임의 시점 매수 알림 용도). ⑦`MonitoringSession.set_on/set_off` 추가, `toggle_pause` 제거. ⑧카드 정리는 `/off` 발화 후 다음 tick 에서 1회 (`off_cleanup_pending` 플래그). |
 | 19 | round 17 정책("카드 외 푸시 폐기")이 docs 에만 있고 코드엔 안 반영. `worker._send_alert` 가 살아있어서 `[부상 후보 감지]` `[1분봉 부상]` `[1분봉 급감]` `[자금 이탈 경보]` `[강한 부상]` `[호가 역전]` `[주도주 교체 완료]` `[부상 후보 — 거래대금 급증]` 등을 별도 메시지로 발송. 발송 후 카드가 위로 밀려나는 걸 보정하려고 `reposition_pending` flag 로 매 tick delete+silent send 재배치. 부상 후보(RISING)는 첫 알림 + 2분 TTL 로 자동 만료. | 사용자 인지: ①카드 재배치가 보고 있던 메시지를 갑자기 사라지게 해서 UX 망침. ②2분 TTL 만료는 사용자가 보던 후보가 시간 만료로 사라지게 만들어 부자연스러움 — 다른 후보 등장 시 자연 교체로 충분. ③alert 별도 푸시는 round 17 정책 반영하면 어차피 폐기 대상. → 변경: ① `_send_alert` 함수 + 호출 5곳 (RISING 신규/강한 부상/자금 이탈/1분봉 부상·급감/호가 역전 + step_tracker TRANSITION·REPLACEMENT) 전부 제거. ②`session.reposition_pending`, `_send_or_edit_monitor` 의 `reposition` 인자, `disable_notification=reposition` 분기 제거 — alert 가 없으니 카드가 밀려날 일도 없음. ③`MonitoredStock.expires_at` 필드 + `prune_expired` 메서드 + `update_rising_candidates` 의 TTL 인자 제거. RISING 동기화 정책 변경: candidates 풀에 없는 RISING 종목은 즉시 카드 제거, 풀 회전율 상위 max_count 까지 신규 등록. `LEADER_EXCLUDE_DAILY_RETURN_PCT=29.0` 필터로 +29% 도달 종목은 풀에서 자동 빠짐 → 카드도 자동 제거. ④`step_tracker` 반환형을 `Alert | None` → `None` 로 변경. TRANSITION/GRACE 상태는 `render_monitor_message(transition_info=...)` 로 a1 카드 헤더에 "🔥 부상 후보 a2: NAME (회전율 X.X%)" / "🔄 GRACE — a2: ..." 한 줄 통합 표시. ⑤render 5분봉/1분봉 가속 라인에 `is_strong_rise` / `is_exit_signal` / `is_one_min_rise` / `is_one_min_exit` 임계 도달 시 🟢⚡ / 🔴⚠ 마크 + 라벨("강한 부상" / "자금 이탈" / "1분봉 부상" / "1분봉 급감") 강조. ⑥`Alert` dataclass, `last_alert_accel`, `last_asking_color` 세션 필드, `is_*` 디바운싱 분기 모두 제거 (predicate 함수 자체는 momentum.py 에 유지 — render 에서 사용). |
+| 20 | `/buy CODE PRICE [MIN]` 명령에서 PRICE 가 필수 — 사용자가 매 매수 시 가격을 직접 입력해야 보유 모드 진입 가능. 봇이 KIS 시세를 1~2초 단위로 이미 받고 있는데도 가격을 또 받음. | 사용자 의도: "이미 모니터링 중인 종목이면 봇이 현재가를 아는데 왜 가격을 또 치냐". 손절/익절선이 -1.5%/+2%/+3.5% 단위라 KIS 시세와 실제 체결가 1~2 틱(수십 원) 차이는 무시 가능. → 변경: ①`parse_command` 에서 PRICE 를 선택 인자로 강등 — `/buy 091340` 만 입력해도 valid. ②`MonitoringSession.last_prices: dict[str, float]` 신설. worker tick 이 매 사이클 `snapshot[code].price` 로 채움. ③`_apply_buy(price=None)` 일 때 `session.last_prices.get(code)` 에서 자동 보충. last_prices 에도 없으면 (모니터링 안 하던 종목 + 아직 첫 tick 전) "시세 미확보 — `/buy CODE PRICE` 로 명시" 안내 메시지 반환. ④사용자가 슬리피지 큰 다른 HTS 에서 체결한 경우 등 명시 입력을 원하면 PRICE 인자 그대로 사용 (역호환). ⑤사용자 manual 영속화 없는 readonly 시세 공유라 lock 없이 GIL 만 의존. |
 
 ---
 

@@ -161,6 +161,40 @@ def test_dashboard_tick_edits_existing_message():
     assert not send.called
 
 
+def test_dashboard_tick_updates_last_prices():
+    """round 20: 매 tick 마다 session.last_prices 에 snapshot 현재가 채워짐.
+    `/buy CODE` (가격 생략) UX 를 위한 inter-thread 시세 공유.
+    """
+    s = MonitoringSession()
+    msg_ids: dict = {}
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "091340", "name": "대한광통신",
+        "price": 91400, "prev_close": 90000, "daily_return": 1.56,
+        "intraday_high": 91500, "intraday_low": 89500,
+        "volume": 500_000, "trading_value": 30_000_000_000,
+        "is_limit_up": False, "market_cap": 1_000_000, "turnover": 5.0,
+    }])
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
+         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         patch("src.dashboard.worker.send_message_single"), \
+         patch("src.dashboard.worker.edit_message"):
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=datetime(2026, 5, 11, 9, 30),
+        )
+    assert s.last_prices.get("091340") == 91400.0
+
+
 def test_cleanup_messages_deletes_all():
     s = MonitoringSession()
     s.add_manual("005930", datetime(2026, 5, 11, 9, 30))

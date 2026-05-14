@@ -169,6 +169,13 @@ def dashboard_tick(
     # 3) 각 monitored 종목별 4지표 fetch + 렌더 + 편집
     snap_by_code = {str(r["code"]): r.to_dict() for _, r in snapshot.iterrows()}
 
+    # /buy CODE (가격 인자 생략) UX 를 위해 최근 시세를 세션에 노출 (round 20).
+    # telegram_bot._apply_buy 가 다른 thread 에서 읽음.
+    for code, row in snap_by_code.items():
+        price = row.get("price")
+        if price is not None and price == price and price > 0:
+            session.last_prices[code] = float(price)
+
     # 카드 헤더에 TRANSITION 부상 후보 정보를 통합 표시하기 위해 a1 → a2 매핑 구성.
     # step_tracker 가 갱신한 후 카드를 렌더해야 정확한 상태를 표시할 수 있으므로
     # 종목 루프 *전* 에 상태 머신을 먼저 step 한다.

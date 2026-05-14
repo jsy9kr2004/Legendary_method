@@ -97,6 +97,10 @@ class MonitoringSession:
     trackers: dict[str, LeaderTracker] = field(default_factory=dict)  # sector -> tracker
     # /off 시 카드 메시지 정리를 tick job 이 1회 수행하기 위한 플래그.
     off_cleanup_pending: bool = False
+    # worker tick 이 매 사이클 채우는 code → 최근 현재가. `/buy CODE` 가 PRICE
+    # 인자 없이 들어와도 여기서 자동 보충 (round 20). 다른 thread (telegram_bot.
+    # _apply_buy) 가 읽으므로 단순 dict 로 두고 GIL 에 의존 (atomic dict 읽기/쓰기).
+    last_prices: dict[str, float] = field(default_factory=dict)
 
     # ── 종목 추가/제거 ────────────────────────────────────────────────────────
 

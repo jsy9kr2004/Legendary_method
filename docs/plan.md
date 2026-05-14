@@ -137,7 +137,7 @@
 
 **[Telegram 봇 / 메시지 인프라]**
 
-- [x] **Telegram 양방향 봇** — long polling으로 incoming 메시지 수신 (24h 상시, round 18). 명령어: `/on`(=`/start`), `/off`(=`/pause`), `/list`, `/clear`, 6자리 숫자(토글), **`/buy CODE PRICE [TIME_STOP_MIN]`**, **`/sell CODE`**, **`/status CODE`**. `src/notify/telegram_bot.py`
+- [x] **Telegram 양방향 봇** — long polling으로 incoming 메시지 수신 (24h 상시, round 18). 명령어: `/on`(=`/start`), `/off`(=`/pause`), `/list`, `/clear`, 6자리 숫자(토글), **`/buy CODE [PRICE] [TIME_STOP_MIN]`** (round 20 — 가격 생략 시 최근 시세 자동 보충), **`/sell CODE`**, **`/status CODE`**. `src/notify/telegram_bot.py`
 - [ ] **메시지 편집 인프라** — `editMessageText`로 종목당 메시지 1개 유지 갱신. 종목 1~2개=2초, 3~5개=3초, 6~10개=5초 동적 간격. `src/notify/telegram.py` 확장
 - [x] **알림 통합 — 카드 외 푸시 폐기 + 부상 후보 TTL 폐지 (round 19)** — round 17 정책 실코드 반영. `worker._send_alert` 함수 + 호출 5곳 제거 (RISING 신규 / 강한 부상 / 자금 이탈 / 1분봉 부상·급감 / 호가 역전 / step_tracker TRANSITION·REPLACEMENT). 카드 재배치(reposition) 로직 제거 — alert 가 없으니 카드가 위로 밀려나지 않음. `MonitoredStock.expires_at` + `prune_expired` 제거, RISING 동기화는 풀-이탈 즉시 제거로 전환 (시간 만료 없이 자연 교체). `step_tracker` 반환형 `None` 로 변경, TRANSITION/GRACE 는 `render_monitor_message(transition_info=...)` 로 a1 카드 헤더에 통합 표시. 5분봉/1분봉 가속 라인에 strong_rise/exit_signal/one_min_rise/one_min_exit 임계 도달 시 ⚡/⚠ 마크 강조. (2026-05-14)
 - [ ] **감시/보유 카드 렌더러** — `src/dashboard/render.py` 확장. 두 모드 분리 템플릿 (report-spec.md 4.5 참조). R14/R15 (감시·보유 모드) 추가 표시는 보유 모드 도입 시 합류.
