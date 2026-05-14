@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from src.jongbae.candle import classify_candle
 from src.jongbae.divergence import compute_divergence
 from src.jongbae.grader import (
@@ -208,3 +210,333 @@ def test_bid_ask_ratio_only_gives_half_point():
     card = calculate_buy_score(snap)
     assert card.score == 0.5
     assert card.grade == "NEUTRAL"
+
+
+# ── R14a VWAP 위치 (round 23, P0-1) ─────────────────────────────────────────
+
+
+def test_vwap_above_threshold_adds_one():
+    """가격이 VWAP 대비 +0.3% 이상 위 → +1 점."""
+    snap = GraderSnapshot(price_vs_vwap_pct=0.5)
+    card = calculate_buy_score(snap)
+    assert card.score == 1.0
+    assert any("VWAP" in r and "위" in r for r in card.reasons)
+
+
+def test_vwap_below_threshold_subtracts_one():
+    """가격이 VWAP 대비 -0.3% 이하 아래 → -1 점."""
+    snap = GraderSnapshot(price_vs_vwap_pct=-0.5)
+    card = calculate_buy_score(snap)
+    assert card.score == -1.0
+    assert any("VWAP" in r and "아래" in r for r in card.reasons)
+
+
+def test_vwap_boundary_above_exact():
+    """+0.3% 정확히 → 가산 (≥ 조건)."""
+    snap = GraderSnapshot(price_vs_vwap_pct=0.3)
+    card = calculate_buy_score(snap)
+    assert card.score == 1.0
+
+
+def test_vwap_boundary_below_exact():
+    """-0.3% 정확히 → 감산 (≤ 조건)."""
+    snap = GraderSnapshot(price_vs_vwap_pct=-0.3)
+    card = calculate_buy_score(snap)
+    assert card.score == -1.0
+
+
+def test_vwap_neutral_zone_no_change():
+    """-0.3% < x < +0.3% → 가/감산 없음 (호가 노이즈 컷오프)."""
+    snap = GraderSnapshot(price_vs_vwap_pct=0.1)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+    assert not any("VWAP" in r for r in card.reasons)
+
+
+def test_vwap_nan_no_change():
+    """NaN → 가/감산 없음 (호출자 데이터 부족 시 안전)."""
+    snap = GraderSnapshot()  # price_vs_vwap_pct defaults to NaN
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_vwap_compounds_with_jeryung_strong():
+    """제룡전기 + VWAP 위 → 점수 더 강해짐. 회귀 보강."""
+    candle = classify_candle(o=70000, h=91500, l=69800, c=91300)
+    snap = GraderSnapshot(
+        volume_turnover_rank=2,
+        vol_accel_1m=2.4,
+        vol_accel_5m=1.6,
+        candle=candle,
+        vp=142.0,
+        vp_5ma=128.0,
+        bid_ask_ratio=7.1,
+        dist_from_intraday_high_pct=-0.2,
+        price_vs_vwap_pct=2.5,  # 상한가 부근에서 VWAP 위 강하게
+    )
+    card = calculate_buy_score(snap)
+    assert card.grade == "STRONG"
+    assert any("VWAP" in r and "위" in r for r in card.reasons)
+
+
+def test_vwap_compounds_with_heungahaeun_avoid():
+    """흥아해운 + VWAP 아래 → AVOID 더 강해짐. 회귀 보강."""
+    candle = classify_candle(o=2860, h=2900, l=2820, c=2825)
+    snap = GraderSnapshot(
+        volume_turnover_rank=1,
+        vol_accel_1m=0.4,
+        vol_accel_5m=0.8,
+        candle=candle,
+        vp=95.0,
+        vp_5ma=98.0,
+        bid_ask_ratio=5.3,
+        dist_from_intraday_high_pct=-2.3,
+        price_vs_vwap_pct=-1.2,  # 모멘텀 죽고 VWAP 아래
+    )
+    card = calculate_buy_score(snap)
+    assert card.grade == "AVOID"
+    assert any("VWAP" in r and "아래" in r for r in card.reasons)
+
+
+# ── R14b 5/20분 이평 위치 (round 24, P0-2) ──────────────────────────────────
+
+
+def test_ma_alignment_bullish_adds_one():
+    """가격이 MA5/MA20 둘 다 위 (정배열) → +1."""
+    snap = GraderSnapshot(price_vs_ma5_pct=0.5, price_vs_ma20_pct=0.8)
+    card = calculate_buy_score(snap)
+    assert card.score == 1.0
+    assert any("정배열" in r for r in card.reasons)
+
+
+def test_ma_alignment_bearish_subtracts_one():
+    """가격이 MA5/MA20 둘 다 아래 (역배열) → -1."""
+    snap = GraderSnapshot(price_vs_ma5_pct=-0.5, price_vs_ma20_pct=-1.0)
+    card = calculate_buy_score(snap)
+    assert card.score == -1.0
+    assert any("역배열" in r for r in card.reasons)
+
+
+def test_ma_alignment_mixed_no_change():
+    """가격 > MA5 이지만 < MA20 → 가/감산 없음 (혼합/추세 불명)."""
+    snap = GraderSnapshot(price_vs_ma5_pct=0.5, price_vs_ma20_pct=-0.5)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+    assert not any("배열" in r for r in card.reasons)
+
+
+def test_ma_alignment_boundary_exact():
+    """+0.3% / +0.3% 정확히 → 가산 (≥ 조건)."""
+    snap = GraderSnapshot(price_vs_ma5_pct=0.3, price_vs_ma20_pct=0.3)
+    card = calculate_buy_score(snap)
+    assert card.score == 1.0
+
+
+def test_ma_alignment_neutral_zone():
+    """±0.3% 사이 → 가/감산 없음 (호가 노이즈 컷)."""
+    snap = GraderSnapshot(price_vs_ma5_pct=0.1, price_vs_ma20_pct=0.1)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_ma_alignment_nan_one_field_no_change():
+    """MA20 NaN → 정/역배열 판정 불가, 가/감산 없음."""
+    snap = GraderSnapshot(price_vs_ma5_pct=1.0)  # ma20 NaN
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_ma_alignment_compounds_with_jeryung():
+    """제룡전기 + VWAP 위 + 정배열 → 점수 더 강."""
+    candle = classify_candle(o=70000, h=91500, l=69800, c=91300)
+    snap = GraderSnapshot(
+        volume_turnover_rank=2,
+        vol_accel_1m=2.4,
+        vol_accel_5m=1.6,
+        candle=candle,
+        vp=142.0,
+        vp_5ma=128.0,
+        bid_ask_ratio=7.1,
+        dist_from_intraday_high_pct=-0.2,
+        price_vs_vwap_pct=2.5,
+        price_vs_ma5_pct=1.8,
+        price_vs_ma20_pct=3.2,
+    )
+    card = calculate_buy_score(snap)
+    assert card.grade == "STRONG"
+    assert any("정배열" in r for r in card.reasons)
+
+
+def test_ma_alignment_compounds_with_heungahaeun():
+    """흥아해운 + VWAP 아래 + 역배열 → 더 강한 AVOID."""
+    candle = classify_candle(o=2860, h=2900, l=2820, c=2825)
+    snap = GraderSnapshot(
+        volume_turnover_rank=1,
+        vol_accel_1m=0.4,
+        vol_accel_5m=0.8,
+        candle=candle,
+        vp=95.0,
+        vp_5ma=98.0,
+        bid_ask_ratio=5.3,
+        dist_from_intraday_high_pct=-2.3,
+        price_vs_vwap_pct=-1.2,
+        price_vs_ma5_pct=-0.8,
+        price_vs_ma20_pct=-1.5,
+    )
+    card = calculate_buy_score(snap)
+    assert card.grade == "AVOID"
+    assert any("역배열" in r for r in card.reasons)
+
+
+# ── R14c 상한가 진입 시간 가산 (round 25, P1-1) ─────────────────────────────
+
+
+def test_limit_up_early_before_0930_adds_one():
+    """09:25 진입 → +1."""
+    snap = GraderSnapshot(limit_up_hit_time=dt.time(9, 25))
+    card = calculate_buy_score(snap)
+    assert card.score == 1.0
+    assert any("조기진입" in r for r in card.reasons)
+
+
+def test_limit_up_mid_between_0930_and_1030_adds_half():
+    """10:00 진입 → +0.5."""
+    snap = GraderSnapshot(limit_up_hit_time=dt.time(10, 0))
+    card = calculate_buy_score(snap)
+    assert card.score == 0.5
+    assert any("상한가 진입" in r and "조기" not in r for r in card.reasons)
+
+
+def test_limit_up_boundary_0930_falls_to_mid():
+    """09:30 정확히 → +0.5 (early 는 strict <)."""
+    snap = GraderSnapshot(limit_up_hit_time=dt.time(9, 30))
+    card = calculate_buy_score(snap)
+    assert card.score == 0.5
+
+
+def test_limit_up_boundary_1030_no_gain():
+    """10:30 정확히 → 0 (mid 도 strict <)."""
+    snap = GraderSnapshot(limit_up_hit_time=dt.time(10, 30))
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_limit_up_late_no_gain():
+    """11:00 진입 → 0 (자금 식음 시간대)."""
+    snap = GraderSnapshot(limit_up_hit_time=dt.time(11, 0))
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_limit_up_none_no_gain():
+    """상한가 미도달 → None → 무가산."""
+    snap = GraderSnapshot()
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+    assert not any("상한가" in r for r in card.reasons)
+
+
+# ── R13 다이버전스 강등 (round 27, P2-1) ─────────────────────────────────────
+
+
+def test_bearish_divergence_subtracts_one_not_two():
+    """round 27: 통설 외 약신호라 ±2 → ±1 강등."""
+    div = compute_divergence(price_now=110, price_5m_ago=100, vp_5ma_now=90, vp_5ma_5m_ago=100)
+    assert div.bearish is True
+    snap = GraderSnapshot(divergence=div)
+    card = calculate_buy_score(snap)
+    assert card.score == -1.0
+    assert any("Bearish Divergence" in r for r in card.reasons)
+    assert any("-1" in r and "Bearish" in r for r in card.reasons)
+
+
+def test_bullish_divergence_adds_one_not_two():
+    div = compute_divergence(price_now=90, price_5m_ago=100, vp_5ma_now=110, vp_5ma_5m_ago=100)
+    assert div.bullish is True
+    snap = GraderSnapshot(divergence=div)
+    card = calculate_buy_score(snap)
+    assert card.score == 1.0
+    assert any("Bullish Divergence" in r for r in card.reasons)
+    assert any("+1" in r and "Bullish" in r for r in card.reasons)
+
+
+# ── R14d 거래량 비율 검증 (round 28, P2-2) ──────────────────────────────────
+
+
+def test_volume_ratio_normal_adds_half():
+    """전일 대비 200% → +0.5 (정상 매집)."""
+    snap = GraderSnapshot(volume_ratio_vs_prev_day=2.0)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.5
+    assert any("거래량" in r and "정상" in r for r in card.reasons)
+
+
+def test_volume_ratio_excessive_subtracts_one():
+    """전일 대비 15배 → -1 (과열, 강한 상한가 X)."""
+    snap = GraderSnapshot(volume_ratio_vs_prev_day=15.0)
+    card = calculate_buy_score(snap)
+    assert card.score == -1.0
+    assert any("거래량" in r and "과열" in r for r in card.reasons)
+
+
+def test_volume_ratio_boundary_low_exact():
+    """전일 대비 정확히 100% → +0.5 (≥ 조건)."""
+    snap = GraderSnapshot(volume_ratio_vs_prev_day=1.0)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.5
+
+
+def test_volume_ratio_boundary_high_exact():
+    """전일 대비 정확히 300% → +0.5 (≤ 조건)."""
+    snap = GraderSnapshot(volume_ratio_vs_prev_day=3.0)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.5
+
+
+def test_volume_ratio_boundary_excessive_exact():
+    """정확히 10배 → -1 (≥ 조건)."""
+    snap = GraderSnapshot(volume_ratio_vs_prev_day=10.0)
+    card = calculate_buy_score(snap)
+    assert card.score == -1.0
+
+
+def test_volume_ratio_between_3_and_10_no_change():
+    """3~10배 사이 → 가/감산 없음 (강한 상승이지만 통설 안전구간 외)."""
+    snap = GraderSnapshot(volume_ratio_vs_prev_day=5.0)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_volume_ratio_below_1_no_change():
+    """전일보다 적음 → 가/감산 없음 (통설에서 명시 X)."""
+    snap = GraderSnapshot(volume_ratio_vs_prev_day=0.5)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_volume_ratio_nan_no_change():
+    snap = GraderSnapshot()  # NaN default
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_limit_up_compounds_with_jeryung_strong():
+    """제룡전기 + 09:15 조기 상한가 → 점수 폭증."""
+    candle = classify_candle(o=70000, h=91500, l=69800, c=91300)
+    snap = GraderSnapshot(
+        volume_turnover_rank=2,
+        vol_accel_1m=2.4,
+        vol_accel_5m=1.6,
+        candle=candle,
+        vp=142.0,
+        vp_5ma=128.0,
+        bid_ask_ratio=7.1,
+        dist_from_intraday_high_pct=-0.2,
+        price_vs_vwap_pct=2.5,
+        price_vs_ma5_pct=1.8,
+        price_vs_ma20_pct=3.2,
+        limit_up_hit_time=dt.time(9, 15),
+    )
+    card = calculate_buy_score(snap)
+    assert card.grade == "STRONG"
+    assert any("조기진입" in r for r in card.reasons)

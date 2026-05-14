@@ -45,6 +45,8 @@ from src.config import load_settings
 from src.jongbae.candle import CandleShape, is_bearish_exit_signal
 from src.jongbae.config_thresholds import (
     ENTRY_BAR_MA_MINUTES,
+    EOD_CUTOFF_HH,
+    EOD_CUTOFF_MM,
     STOP_LOSS_PCT,
     TAKE_PROFIT_1_PCT,
     TAKE_PROFIT_2_PCT,
@@ -66,6 +68,7 @@ class Mode(str, Enum):
 
 TriggerKind = Literal[
     "A1_stop_price", "A2_stop_bar_low", "A3_stop_ma", "A4_stop_time",
+    "A5_eod_ma_break",
     "B1_take_profit_1", "B2_take_profit_2", "B3_trailing",
     "C1_vp_below_100", "C2_bearish_divergence",
     "C3_vol_drain", "C4_bearish_candle", "C5_vi_failure",
@@ -76,6 +79,7 @@ TRIGGER_LABELS: dict[TriggerKind, str] = {
     "A2_stop_bar_low":       "A2 진입봉 저점 이탈",
     "A3_stop_ma":            "A3 5분 이평 이탈",
     "A4_stop_time":          "A4 시간 손절",
+    "A5_eod_ma_break":       "A5 EOD 이평+음봉 강제",
     "B1_take_profit_1":      "B1 익절 1차 +2.0%",
     "B2_take_profit_2":      "B2 익절 2차 +3.5%",
     "B3_trailing":           "B3 트레일링 스탑",
@@ -214,6 +218,20 @@ def evaluate_triggers(
         fire(
             "A3_stop_ma", True,
             f"5분 이평 {int(minute_ma_5):,} 이탈",
+        )
+
+    # A5 EOD 컷오프 (round 26, P1-2) — 통설: "14:45 이평선 밑 음봉이면 목숨
+    # 걸고 팔아라". A3 (이평 이탈) 와 C4 (음봉) 가 시간 게이트로 합쳐진 강제
+    # 청산. AND 조건이라 A3/C4 가 따로 발화될 때보다 더 강한 신호.
+    if (
+        (now.hour, now.minute) >= (EOD_CUTOFF_HH, EOD_CUTOFF_MM)
+        and minute_ma_5 is not None and minute_ma_5 > 0
+        and current_price < minute_ma_5
+        and candle is not None and candle.type == "bearish"
+    ):
+        fire(
+            "A5_eod_ma_break", True,
+            f"EOD {now.hour:02d}:{now.minute:02d} 이평 {int(minute_ma_5):,} 밑 음봉",
         )
 
     elapsed_min = (now - holding.entry_time).total_seconds() / 60.0

@@ -6,10 +6,14 @@ import pytest
 
 from src.jongbae.momentum import (
     compute_accel_ratio,
+    compute_minute_ma,
+    compute_vwap,
     is_exit_signal,
     is_recent_high,
     is_strong_rise,
     is_transition_candidate,
+    price_vs_ma_pct,
+    price_vs_vwap_pct,
     short_trend_sparkline,
     vol_accel_1m,
     vol_accel_5m,
@@ -276,3 +280,147 @@ def test_vol_accel_1m_insufficient_bars():
     bars = _bars([100_000_000])  # 1개만 — recent(1) + recent(1) = 2 미만
     ratio = vol_accel_1m(bars)
     assert ratio != ratio  # NaN
+
+
+# ── compute_vwap / price_vs_vwap_pct (round 23, P0-1) ────────────────────────
+
+
+def _ohlcv_bars(rows: list[tuple[float, float, float, float, int]]) -> pd.DataFrame:
+    """(open, high, low, close, volume) 시퀀스 → 분봉 DataFrame."""
+    return pd.DataFrame([
+        {"code": "A", "date": "20260514", "time": f"09{i:02d}00",
+         "open": o, "high": h, "low": l, "close": c,
+         "volume": v, "trading_value": int(((h + l + c) / 3) * v)}
+        for i, (o, h, l, c, v) in enumerate(rows)
+    ])
+
+
+def test_vwap_single_bar_equals_typical_price():
+    """단일 봉 → VWAP = (H+L+C)/3."""
+    bars = _ohlcv_bars([(100.0, 110.0, 90.0, 100.0, 1000)])
+    vwap = compute_vwap(bars)
+    assert vwap == pytest.approx(100.0, rel=1e-6)
+
+
+def test_vwap_volume_weighted():
+    """볼륨 큰 봉에 가중치. (H+L+C)/3 = 100 (vol=10), 200 (vol=90).
+    → VWAP = (100*10 + 200*90) / 100 = 190.
+    """
+    bars = _ohlcv_bars([
+        (100.0, 100.0, 100.0, 100.0, 10),
+        (200.0, 200.0, 200.0, 200.0, 90),
+    ])
+    vwap = compute_vwap(bars)
+    assert vwap == pytest.approx(190.0, rel=1e-6)
+
+
+def test_vwap_empty_returns_nan():
+    bars = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    vwap = compute_vwap(bars)
+    assert vwap != vwap  # NaN
+
+
+def test_vwap_zero_volume_returns_nan():
+    bars = _ohlcv_bars([(100.0, 100.0, 100.0, 100.0, 0)])
+    vwap = compute_vwap(bars)
+    assert vwap != vwap
+
+
+def test_vwap_missing_columns_returns_nan():
+    bars = pd.DataFrame([{"close": 100, "volume": 10}])  # high/low 없음
+    vwap = compute_vwap(bars)
+    assert vwap != vwap
+
+
+def test_price_vs_vwap_pct_above():
+    """가격 102, VWAP 100 → +2%."""
+    assert price_vs_vwap_pct(102.0, 100.0) == pytest.approx(2.0, rel=1e-6)
+
+
+def test_price_vs_vwap_pct_below():
+    """가격 99, VWAP 100 → -1%."""
+    assert price_vs_vwap_pct(99.0, 100.0) == pytest.approx(-1.0, rel=1e-6)
+
+
+def test_price_vs_vwap_pct_nan_vwap():
+    assert price_vs_vwap_pct(100.0, float("nan")) != price_vs_vwap_pct(100.0, float("nan"))
+
+
+def test_price_vs_vwap_pct_zero_or_negative_guards():
+    assert price_vs_vwap_pct(100.0, 0.0) != price_vs_vwap_pct(100.0, 0.0)
+    assert price_vs_vwap_pct(0.0, 100.0) != price_vs_vwap_pct(0.0, 100.0)
+    assert price_vs_vwap_pct(-1.0, 100.0) != price_vs_vwap_pct(-1.0, 100.0)
+
+
+# ── compute_minute_ma / price_vs_ma_pct (round 24, P0-2) ─────────────────────
+
+
+def test_minute_ma_5_simple_average():
+    """1분봉 close [100, 102, 104, 106, 108] → MA5 = 104."""
+    bars = _ohlcv_bars([
+        (100, 100, 100, 100, 1),
+        (100, 100, 100, 102, 1),
+        (100, 100, 100, 104, 1),
+        (100, 100, 100, 106, 1),
+        (100, 100, 100, 108, 1),
+    ])
+    ma = compute_minute_ma(bars, window_minutes=5)
+    assert ma == pytest.approx(104.0, rel=1e-6)
+
+
+def test_minute_ma_uses_only_last_window():
+    """6개 봉 중 마지막 5개만 사용."""
+    bars = _ohlcv_bars([
+        (100, 100, 100, 1000, 1),  # 폐기되어야 함
+        (100, 100, 100, 100, 1),
+        (100, 100, 100, 102, 1),
+        (100, 100, 100, 104, 1),
+        (100, 100, 100, 106, 1),
+        (100, 100, 100, 108, 1),
+    ])
+    ma = compute_minute_ma(bars, window_minutes=5)
+    assert ma == pytest.approx(104.0, rel=1e-6)
+
+
+def test_minute_ma_insufficient_bars_returns_nan():
+    """5개 미만이면 NaN."""
+    bars = _ohlcv_bars([
+        (100, 100, 100, 100, 1),
+        (100, 100, 100, 102, 1),
+    ])
+    ma = compute_minute_ma(bars, window_minutes=5)
+    assert ma != ma
+
+
+def test_minute_ma_empty_returns_nan():
+    bars = pd.DataFrame(columns=["close"])
+    ma = compute_minute_ma(bars, window_minutes=5)
+    assert ma != ma
+
+
+def test_minute_ma_missing_close_column_returns_nan():
+    bars = pd.DataFrame([{"open": 100, "high": 100, "low": 100, "volume": 1}])
+    ma = compute_minute_ma(bars, window_minutes=5)
+    assert ma != ma
+
+
+def test_minute_ma_20_window():
+    """MA20 = 20분 close 평균. 일정 가격이면 그 값."""
+    bars = _ohlcv_bars([(100, 100, 100, 105, 1)] * 20)
+    ma = compute_minute_ma(bars, window_minutes=20)
+    assert ma == pytest.approx(105.0, rel=1e-6)
+
+
+def test_price_vs_ma_pct_above():
+    assert price_vs_ma_pct(105.0, 100.0) == pytest.approx(5.0, rel=1e-6)
+
+
+def test_price_vs_ma_pct_below():
+    assert price_vs_ma_pct(98.0, 100.0) == pytest.approx(-2.0, rel=1e-6)
+
+
+def test_price_vs_ma_pct_guards():
+    """NaN / 0 / 음수 가드."""
+    assert price_vs_ma_pct(100.0, float("nan")) != price_vs_ma_pct(100.0, float("nan"))
+    assert price_vs_ma_pct(100.0, 0.0) != price_vs_ma_pct(100.0, 0.0)
+    assert price_vs_ma_pct(-1.0, 100.0) != price_vs_ma_pct(-1.0, 100.0)

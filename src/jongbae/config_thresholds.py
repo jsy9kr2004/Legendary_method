@@ -188,6 +188,55 @@ DIST_FROM_HIGH_MAX_PCT: float = -2.0        # 진입 필수조건: 당일고점 
 DIVERGENCE_PRICE_WINDOW_MINUTES: int = 5    # 가격 변화 측정 윈도우
 
 
+# ── R14a VWAP 위치 (round 23, P0-1) ──────────────────────────────────────────
+# 통설: VWAP = 거래량 가중 평균가 = 장중 세력 평단가의 근사. 단타에서 가격이
+# VWAP 위면 매수 우위, 아래면 매도 우위. 한국 단타 통설(거래량 가중 평균값 -
+# TradingView/KRX) 그대로. 임계 ±0.3% 는 호가 노이즈 컷오프.
+VWAP_ABOVE_THRESHOLD_PCT: float = 0.3       # +0.3% 이상 위 → +1 (R14)
+VWAP_BELOW_THRESHOLD_PCT: float = -0.3      # -0.3% 이하 아래 → -1 (R14)
+
+
+# ── R14b 5/20분 이평 위치 (round 24, P0-2) ───────────────────────────────────
+# 통설: 단타에선 5일/20일 이평이 가장 많이 쓰임 (namu.wiki 단타매매기법,
+# 알파스퀘어). 5분봉 기준 → 1분봉 5개/20개 close 평균. R15 A3 (5분 이평 이탈
+# = 청산)와 대칭 — 진입에서 가격>MA5 가산. 정배열(가격이 MA5/MA20 둘 다 위)
+# 매수 우위, 역배열 매도 우위. ±0.3% VWAP 과 동일 노이즈 컷.
+MA5_THRESHOLD_PCT: float = 0.3              # 정배열 컷
+MA20_THRESHOLD_PCT: float = 0.3
+MA_SHORT_MINUTES: int = 5                   # 1분봉 5개 = 5분 SMA
+MA_LONG_MINUTES: int = 20                   # 1분봉 20개 = 20분 SMA
+
+
+# ── R14c 상한가 진입 시간 가산 (round 25, P1-1) ──────────────────────────────
+# 통설(namu.wiki 상따): "강한 상한가 진입 시간은 대략 오전 9~10시, 보통 9:30
+# 이내 진입이 강함". 일중 first-mover 가산점. 상한가 도달 시각 기준 — 도달
+# 안 한 종목은 None → 무가산. 시간이 늦을수록 가산 감쇠.
+LIMIT_UP_EARLY_HH: int = 9                  # 09:30 이전 → +1
+LIMIT_UP_EARLY_MM: int = 30
+LIMIT_UP_MID_HH: int = 10                   # 10:30 이전 → +0.5
+LIMIT_UP_MID_MM: int = 30
+
+
+# ── R14d 거래량 비율 검증 (round 28, P2-2) ───────────────────────────────────
+# 통설(namu.wiki 상따): "거래량은 전날 대비 300% 이내가 정상. 10배 이상 동반
+# 시 강한 상한가 아니므로 주의" — 폭증은 매도 출회/단발 신호일 가능성.
+# 오늘 누적 거래량 / 전일 일봉 거래량.
+VOLUME_RATIO_NORMAL_MIN: float = 1.0        # 전일 100% 이상
+VOLUME_RATIO_NORMAL_MAX: float = 3.0        # 300% 이내 (정상 매집) → +0.5
+VOLUME_RATIO_EXCESSIVE: float = 10.0        # 10배 이상 (과열 약신호) → -1
+
+
+# ── 종배 청산 시초가 룰 (round 30, P3-2) ─────────────────────────────────────
+# 통설(WikiDocs 종가베팅, brokdam 광전자 사례): 다음날 시초가가
+#   ≤ +1% (또는 마이너스) → 갭 미발생/실패, 전량 매도 (보유 의미 없음)
+#   +1% ~ +6%               → 정상 갭, 전량 익절 (단타 종료)
+#   ≥ +6%                   → 강한 갭, 30~50% 분할 익절 후 관망 (추가 슈팅 노림)
+# 이건 R15 (장중 보유 모니터링) 와 다른 시각/컨텍스트.
+JONGBAE_OPEN_FULL_SELL_MAX_PCT: float = 1.0      # ≤ +1% → 갭 실패, 전량
+JONGBAE_OPEN_PARTIAL_SELL_MIN_PCT: float = 6.0   # ≥ +6% → 분할 익절
+JONGBAE_OPEN_PARTIAL_RATIO: float = 0.4          # 30~50% 중간값 (40% 익절, 60% 관망)
+
+
 # ── R14 매수 점수 등급 ─────────────────────────────────────────────────────────
 
 GRADE_STRONG: float = 5.0
@@ -203,6 +252,11 @@ BID_ASK_RATIO_THRESHOLD: float = 3.0        # +0.5 (강등된 가중치)
 
 
 # ── R15 매도 트리거 ────────────────────────────────────────────────────────────
+
+# A5 EOD 컷오프 (round 26, P1-2) — 통설: "14:45 이평선 밑 음봉이면 목숨 걸고
+# 팔아라". 장 마감 임박 + 약세 시그널 AND 조건. 단순 시간 손절(A4)과 별개.
+EOD_CUTOFF_HH: int = 14
+EOD_CUTOFF_MM: int = 45
 
 STOP_LOSS_PCT: float = -1.5                 # A1 진입가 대비 -1.5%
 TAKE_PROFIT_1_PCT: float = 2.0              # B1 +2.0% (1/3)

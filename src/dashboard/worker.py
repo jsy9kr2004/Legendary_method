@@ -66,6 +66,10 @@ from src.jongbae.leading_theme import (
 )
 from src.jongbae.momentum import (
     compute_accel_ratio,
+    compute_minute_ma,
+    compute_vwap,
+    price_vs_ma_pct,
+    price_vs_vwap_pct,
     short_trend_sparkline,
 )
 from src.jongbae.volume_power import VPSeries
@@ -173,6 +177,16 @@ def _evaluate_rising_funnel(
         dist_high_pct = (
             (price - high) / high * 100.0 if high > 0 and price > 0 else float("nan")
         )
+        # round 23~24 wiring (P0-1, P0-2): bars 로 VWAP/MA5/MA20 계산.
+        # 호출 비용 0 — Stage 2 에서 이미 fetch 한 bars 재사용.
+        bars = cache["bars"]
+        vwap = compute_vwap(bars)
+        ma5 = compute_minute_ma(bars, window_minutes=5)
+        ma20 = compute_minute_ma(bars, window_minutes=20)
+        vwap_pct = price_vs_vwap_pct(price, vwap) if price > 0 else float("nan")
+        ma5_pct = price_vs_ma_pct(price, ma5) if price > 0 else float("nan")
+        ma20_pct = price_vs_ma_pct(price, ma20) if price > 0 else float("nan")
+
         gsnap = GraderSnapshot(
             volume_turnover_rank=int(snap.get("rank") or 0) or None,
             vol_accel_1m=cache["accel_1m"] if cache["accel_1m"] == cache["accel_1m"] else float("nan"),
@@ -185,6 +199,11 @@ def _evaluate_rising_funnel(
             divergence=None,
             bid_ask_ratio=bid_ask,
             dist_from_intraday_high_pct=dist_high_pct,
+            price_vs_vwap_pct=vwap_pct,
+            price_vs_ma5_pct=ma5_pct,
+            price_vs_ma20_pct=ma20_pct,
+            # limit_up_hit_time: 상한가 도달 시각 추적 인프라 필요 (별도 round). None.
+            # volume_ratio_vs_prev_day: 일봉 fetcher 의존, snap 에 없으면 NaN.
         )
         score_card = calculate_buy_score(gsnap)
         if score_card.score < RISING_MIN_SCORE:
