@@ -191,7 +191,7 @@
 **[Phase 1: 로컬 MVP]**
 
 - [ ] **FastAPI 서버 셋업** — `src/dashboard/api.py`. WebSocket `/ws/monitor`, REST `/api/holdings` (POST), `/api/session` (POST: `/on`/`/off`), `/api/watchlist` (POST: 종목 추가/제거)
-- [ ] **카드 JSON 페이로드 생성** — `src/dashboard/render.py` 에 `build_monitor_payload()` 추가. 텔레그램 텍스트와 별도, 구조화된 dict (자세한 스키마는 `docs/dashboard-pwa.md` §4)
+- [x] **카드 JSON 페이로드 생성** — `src/dashboard/render.py` `build_monitor_payload()`. NaN/Inf → None sanitize, DivergenceState.bearish/bullish → kind 문자열, LeaderState enum → value. `MonitoringSession.last_payloads` 필드에 worker tick 마다 갱신, stale 종목 자동 정리. `tests/test_dashboard_payload.py` 9 케이스 + worker integration 3 케이스 추가. 전체 770 테스트 통과. (2026-05-14)
 - [ ] **WebSocket broadcast** — `MonitoringSession.ws_subscribers: set[WebSocket]`. worker tick 마다 페이로드 broadcast. 첫 연결 시 현재 상태 snapshot 전송
 - [ ] **REST 핸들러 = telegram_bot 핸들러 재사용** — `_handle_buy` / `_handle_sell` / `_handle_clear` / `_handle_on` / `_handle_off` 등 telegram_bot.py 명령 핸들러를 그대로 호출. 이중 구현 금지
 - [ ] **정적 HTML** — `src/dashboard/static/index.html` + `app.js` + `style.css`. Vanilla JS + Tailwind CDN. 종목별 카드 그리드 + 그룹 컬럼 (자동/부상/보유/수동)

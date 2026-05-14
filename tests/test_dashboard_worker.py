@@ -279,6 +279,110 @@ def test_rising_funnel_passes_strong_candidate():
     assert "bars" in tick_cache["091340"]
 
 
+def test_dashboard_tick_populates_last_payloads():
+    """M7: tick 마다 monitored 종목별 PWA payload 가 session.last_payloads 에 채워짐."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("005930", now)
+    msg_ids = {"005930": 100}
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
+         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         patch("src.dashboard.worker.send_message_single"), \
+         patch("src.dashboard.worker.edit_message"):
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=now,
+        )
+    assert "005930" in s.last_payloads
+    payload = s.last_payloads["005930"]
+    assert payload["code"] == "005930"
+    assert payload["price"]["current"] == 79000
+    assert s.last_payload_ts == now
+
+
+def test_dashboard_tick_cleans_stale_payloads():
+    """monitored 에서 빠진 종목은 last_payloads 에서도 즉시 정리."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    # 이전 tick 에서 남은 stale 페이로드 시뮬레이션
+    s.last_payloads["999999"] = {"code": "999999", "name": "stale"}
+    msg_ids: dict = {}
+
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=_empty_snapshot()):
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=now,
+        )
+    # snapshot empty 라 early return — 정리 로직은 못 돈다. 이건 의도적
+    # (paused/empty 시엔 last_payloads 보존). 다음 케이스가 실제 cleanup 검증.
+
+    # 실제 cleanup: 모니터링 종목 있을 때 빠진 stale 만 제거
+    s.last_payloads = {"999999": {"code": "999999"}, "005930": {"code": "005930"}}
+    s.add_manual("005930", now)
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
+         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         patch("src.dashboard.worker.send_message_single"), \
+         patch("src.dashboard.worker.edit_message"):
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=now,
+        )
+    assert "999999" not in s.last_payloads
+    assert "005930" in s.last_payloads
+
+
+def test_cleanup_messages_clears_last_payloads():
+    """모니터링 종료(cleanup_messages) 시 last_payloads 도 함께 비움."""
+    s = MonitoringSession()
+    s.last_payloads = {"005930": {"code": "005930"}}
+    msg_ids = {"005930": 1}
+    with patch("src.dashboard.worker.delete_message", return_value=True):
+        cleanup_messages(
+            token="t", chat_id="c", session=s, message_ids=msg_ids,
+        )
+    assert s.last_payloads == {}
+
+
 def test_cleanup_messages_deletes_all():
     s = MonitoringSession()
     s.add_manual("005930", datetime(2026, 5, 11, 9, 30))

@@ -30,7 +30,7 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-from src.dashboard.render import render_monitor_message
+from src.dashboard.render import build_monitor_payload, render_monitor_message
 from src.dashboard.state import (
     LeaderState,
     MonitoringSession,
@@ -567,6 +567,33 @@ def dashboard_tick(
         )
         _send_or_edit_monitor(token, chat_id, code, text, message_ids)
 
+        # M7 PWA 페이로드 — 텔레그램 텍스트와 동일 데이터 소스. WebSocket broadcast 용.
+        session.last_payloads[code] = build_monitor_payload(
+            monitored=monitored,
+            snapshot_row=snap_row,
+            accel_ratio=accel if accel == accel else None,
+            recent_bar_value=recent_value or None,
+            ccnl=ccnl,
+            asking=asking,
+            investor=investor,
+            now=now,
+            grace_remaining_seconds=grace_remaining,
+            accel_ratio_1m=accel_1m if accel_1m == accel_1m else None,
+            last_bar_value=last_bar_value or None,
+            transition_info=transition_info,
+            vp_1ma=vp_1ma if vp_1ma == vp_1ma else None,
+            vp_5ma=vp_5ma if vp_5ma == vp_5ma else None,
+            holding=holding,
+            trigger_states=trigger_states,
+            divergence=divergence_state,
+        )
+
+    # M7 PWA: monitored 에서 빠진 종목 페이로드 정리 (tick 끝)
+    stale_codes = set(session.last_payloads.keys()) - set(session.monitored.keys())
+    for stale in stale_codes:
+        session.last_payloads.pop(stale, None)
+    session.last_payload_ts = now
+
 
 def cleanup_messages(
     *,
@@ -583,6 +610,7 @@ def cleanup_messages(
         _delete_monitor_message(token, chat_id, code, message_ids)
     session.monitored.clear()
     session.trackers.clear()
+    session.last_payloads.clear()
 
 
 def reset_daily(session: MonitoringSession) -> None:
@@ -594,6 +622,7 @@ def reset_daily(session: MonitoringSession) -> None:
     session.force_on = False  # 어제 /on 한 상태가 다음날까지 살지 않도록 리셋
     session.monitored.clear()
     session.trackers.clear()
+    session.last_payloads.clear()
 
 
 # ── 사용자 명령 long polling thread ──────────────────────────────────────────

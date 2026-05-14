@@ -348,3 +348,171 @@ def render_monitor_message(
         lines.append(f"매매 결정 시 → /add {monitored.code}")
 
     return "\n".join(lines)
+
+
+# ── PWA 대시보드 (M7) — 구조화 페이로드 빌더 ──────────────────────────────────
+
+
+def _clean(v: Any) -> Any:
+    """JSON 직렬화 안전 변환: NaN/+-Inf → None. 그 외는 그대로."""
+    if isinstance(v, float):
+        if v != v or v == float("inf") or v == float("-inf"):
+            return None
+    return v
+
+
+def build_monitor_payload(
+    monitored: MonitoredStock,
+    snapshot_row: dict[str, Any] | None,
+    accel_ratio: float | None,
+    recent_bar_value: int | None,
+    ccnl: dict[str, Any] | None,
+    asking: dict[str, Any] | None,
+    investor: dict[str, Any] | None,
+    now: datetime,
+    grace_remaining_seconds: int | None = None,
+    accel_ratio_1m: float | None = None,
+    last_bar_value: int | None = None,
+    transition_info: dict[str, Any] | None = None,
+    vp_1ma: float | None = None,
+    vp_5ma: float | None = None,
+    holding: Any = None,
+    trigger_states: dict[str, bool] | None = None,
+    divergence: Any = None,
+) -> dict[str, Any]:
+    """PWA 대시보드용 구조화 페이로드 (`render_monitor_message` 와 동일 인자).
+
+    텔레그램 텍스트 렌더와 별도 — 동일 데이터 소스를 JSON 직렬화 안전한 dict 로
+    반환한다. WebSocket 으로 PWA 에 broadcast. NaN/Inf 는 None 으로 sanitize.
+
+    스키마는 `docs/dashboard-pwa.md` §4 와 동기화. 변경 시 둘 다 갱신.
+    """
+    is_holding = holding is not None
+    source_val = "hold" if is_holding else monitored.source.value
+
+    score = _clean(monitored.buy_score) if monitored.buy_score is not None else None
+    header = {
+        "grade": monitored.buy_grade,
+        "score": score,
+        "reasons": list(monitored.buy_reasons) if monitored.buy_reasons else [],
+    }
+
+    price_block: dict[str, Any] = {}
+    volume_block: dict[str, Any] = {}
+    if snapshot_row:
+        price = snapshot_row.get("price")
+        prev_close = snapshot_row.get("prev_close") or 0
+        ret = snapshot_row.get("daily_return")
+        is_lup = bool(snapshot_row.get("is_limit_up", False))
+        turnover = snapshot_row.get("turnover")
+        trading_value = snapshot_row.get("trading_value")
+        rank = snapshot_row.get("rank")
+        sell_29_pct: int | None = None
+        if prev_close > 0:
+            target_29_raw = prev_close * 1.29
+            tick = _krx_tick_size(int(target_29_raw))
+            sell_29_pct = (int(target_29_raw) // tick) * tick
+        price_block = {
+            "current": int(price) if price else None,
+            "change_pct": _clean(ret),
+            "is_limit_up": is_lup,
+            "sell_29_pct": sell_29_pct,
+        }
+        volume_block = {
+            "rank": int(rank) if rank else None,
+            "amount": _clean(trading_value),
+            "turnover_pct": _clean(turnover),
+        }
+
+    def _accel_block(ratio: float | None, bar_value: int | None) -> dict[str, Any]:
+        return {
+            "ratio": _clean(ratio),
+            "bar_value": int(bar_value) if bar_value else None,
+        }
+
+    vp_block: dict[str, Any] = {}
+    if ccnl:
+        vp_block = {
+            "current": _clean(ccnl.get("ccnl_strength")),
+            "ma_5": _clean(vp_5ma),
+            "ma_1": _clean(vp_1ma),
+            "buy_ratio": _clean(ccnl.get("buy_ratio")),
+        }
+
+    asking_block: dict[str, Any] = {}
+    if asking:
+        bid1_p = int(asking.get("bid1_price") or 0) or None
+        ask1_p = int(asking.get("ask1_price") or 0) or None
+        asking_block = {
+            "bid_total": int(asking.get("bid_total_volume") or 0),
+            "ask_total": int(asking.get("ask_total_volume") or 0),
+            "ratio": _clean(asking.get("bid_ask_ratio")),
+            "bid1_price": bid1_p,
+            "bid1_volume": int(asking.get("bid1_volume") or 0),
+            "ask1_price": ask1_p,
+            "ask1_volume": int(asking.get("ask1_volume") or 0),
+        }
+
+    divergence_block: dict[str, Any] | None = None
+    if divergence is not None:
+        if getattr(divergence, "bearish", False):
+            kind = "bearish"
+        elif getattr(divergence, "bullish", False):
+            kind = "bullish"
+        else:
+            kind = "neutral"
+        divergence_block = {
+            "kind": kind,
+            "price_change_pct": _clean(getattr(divergence, "price_change_pct", None)),
+            "vp_5ma_delta": _clean(getattr(divergence, "vp_5ma_delta", None)),
+        }
+
+    holding_block: dict[str, Any] | None = None
+    if is_holding and holding is not None:
+        current_price = (price_block.get("current") or 0)
+        elapsed_sec = int((now - holding.entry_time).total_seconds())
+        pnl_pct = holding.pnl_pct(current_price) if current_price else None
+        holding_block = {
+            "entry_price": int(holding.entry_price),
+            "entry_time": holding.entry_time.isoformat(),
+            "elapsed_sec": elapsed_sec,
+            "pnl_pct": _clean(pnl_pct),
+            "stop_loss_price": int(holding.stop_loss_price),
+            "take_profit_1_price": int(holding.take_profit_1_price),
+            "take_profit_2_price": int(holding.take_profit_2_price),
+            "time_stop_minutes": holding.time_stop_minutes,
+            "triggers_fired": list(getattr(holding, "triggers_fired", [])),
+        }
+
+    transition_block: dict[str, Any] | None = None
+    if transition_info is not None:
+        state = transition_info.get("state")
+        if isinstance(state, LeaderState):
+            state_val = state.value
+        else:
+            state_val = state
+        transition_block = {
+            "state": state_val,
+            "candidate_code": transition_info.get("candidate_code"),
+            "candidate_turnover": _clean(transition_info.get("candidate_turnover")),
+        }
+
+    return {
+        "code": monitored.code,
+        "name": monitored.name or monitored.code,
+        "source": source_val,
+        "themes": list(monitored.themes),
+        "header": header,
+        "price": price_block,
+        "volume": volume_block,
+        "accel_5m": _accel_block(accel_ratio, recent_bar_value),
+        "accel_1m": _accel_block(accel_ratio_1m, last_bar_value),
+        "vp": vp_block,
+        "asking": asking_block,
+        "divergence": divergence_block,
+        "holding": holding_block,
+        "transition": transition_block,
+        "grace_remaining_sec": grace_remaining_seconds,
+        "trigger_states": dict(trigger_states) if trigger_states else None,
+        "updated_at": now.isoformat(),
+    }
