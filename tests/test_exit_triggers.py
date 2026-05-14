@@ -108,6 +108,92 @@ def test_A3_no_ma_skips():
     assert not any(e.kind == "A3_stop_ma" for e in events)
 
 
+# ── EOD 컷오프 (A5, round 26, P1-2) ──────────────────────────────────────────
+#
+# 통설: "14:45 이평선 밑 음봉이면 목숨 걸고 팔아라"
+# AND 조건: 시각 ≥ 14:45 + 가격 < MA5 + 직전 분봉 음봉
+
+
+def _entry_at(price: float, hh: int, mm: int) -> tuple[Holding, datetime]:
+    now = datetime(2026, 5, 13, hh, mm, 0)
+    h = Holding(
+        code="091340",
+        entry_price=price,
+        entry_time=now - timedelta(minutes=1),
+        entry_bar_low=price * 0.99,
+        time_stop_minutes=10,
+    )
+    return h, now
+
+
+def test_A5_eod_fires_at_1445_below_ma_with_bearish_candle():
+    """14:45 + 가격<MA + 음봉 → A5 발화."""
+    h, now = _entry_at(100_000, 14, 45)
+    candle = classify_candle(o=100_100, h=100_150, l=99_400, c=99_500)  # bearish
+    events = evaluate_triggers(
+        h, now=now, current_price=99_500, minute_ma_5=99_800, candle=candle,
+    )
+    assert any(e.kind == "A5_eod_ma_break" for e in events)
+    a5 = next(e for e in events if e.kind == "A5_eod_ma_break")
+    assert a5.is_stop_loss is True
+    assert "EOD" in a5.text or "14:45" in a5.text
+
+
+def test_A5_no_fire_before_1445():
+    """14:44 시점에는 동일 조건이라도 A5 발화 X."""
+    h, now = _entry_at(100_000, 14, 44)
+    candle = classify_candle(o=100_100, h=100_150, l=99_400, c=99_500)
+    events = evaluate_triggers(
+        h, now=now, current_price=99_500, minute_ma_5=99_800, candle=candle,
+    )
+    assert not any(e.kind == "A5_eod_ma_break" for e in events)
+
+
+def test_A5_no_fire_if_bullish_candle():
+    """14:45 + 가격<MA 인데 직전 봉 양봉이면 A5 발화 X (A3 만 발화)."""
+    h, now = _entry_at(100_000, 14, 50)
+    candle = classify_candle(o=99_400, h=99_700, l=99_300, c=99_600)  # bullish
+    events = evaluate_triggers(
+        h, now=now, current_price=99_500, minute_ma_5=99_800, candle=candle,
+    )
+    kinds = [e.kind for e in events]
+    assert "A5_eod_ma_break" not in kinds
+    # A3 은 발화 (가격 < MA5)
+    assert "A3_stop_ma" in kinds
+
+
+def test_A5_no_fire_if_above_ma():
+    """14:45 + 음봉 인데 가격이 MA5 위면 A5 발화 X."""
+    h, now = _entry_at(100_000, 14, 50)
+    candle = classify_candle(o=100_400, h=100_500, l=99_800, c=99_900)  # bearish
+    events = evaluate_triggers(
+        h, now=now, current_price=99_900, minute_ma_5=99_500, candle=candle,
+    )
+    assert not any(e.kind == "A5_eod_ma_break" for e in events)
+
+
+def test_A5_no_fire_without_ma_input():
+    """minute_ma_5 None 이면 A3 스킵과 동일하게 A5 도 스킵."""
+    h, now = _entry_at(100_000, 14, 50)
+    candle = classify_candle(o=100_100, h=100_150, l=99_400, c=99_500)
+    events = evaluate_triggers(
+        h, now=now, current_price=99_500, minute_ma_5=None, candle=candle,
+    )
+    assert not any(e.kind == "A5_eod_ma_break" for e in events)
+
+
+def test_A5_text_is_card_format():
+    """A5 도 카드용 한 줄 — 푸시 prefix X (round 17 정책)."""
+    h, now = _entry_at(100_000, 14, 50)
+    candle = classify_candle(o=100_100, h=100_150, l=99_400, c=99_500)
+    events = evaluate_triggers(
+        h, now=now, current_price=99_500, minute_ma_5=99_800, candle=candle,
+    )
+    a5 = next(e for e in events if e.kind == "A5_eod_ma_break")
+    assert "[" not in a5.text or "[매도" not in a5.text
+    assert "\n" not in a5.text
+
+
 # ── 시간 손절 (A4) ───────────────────────────────────────────────────────────
 
 

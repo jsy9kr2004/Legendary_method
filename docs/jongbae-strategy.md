@@ -230,6 +230,13 @@ weight_i = score_i / sum(score)
 - "갭상승하면 시초에 바로 익절" 원칙
 - 욕심 부려 일중 추가 상승 노리지 X
 
+**R7' 시초가 분할 룰 (round 30, P3-2)** — 통설(WikiDocs 종가베팅, brokdam):
+- **시초 ≤ +1% (또는 마이너스)** → 전량 매도. 갭 미발생 / 종배 실패. 보유 의미 X.
+- **시초 +1% ~ +6%** → 전량 익절. 정상 갭, 단타 종료.
+- **시초 ≥ +6%** → 30~50% 분할 익절 (40% 적용), 60% 관망. 강한 갭에선 추가 슈팅 노림.
+
+구현: `src/jongbae/jongbae_exit.py:evaluate_jongbae_open_exit()` — 시초가 + 전일종가 입력으로 `JongbaeExitDecision(action, partial_ratio, reason)` 반환. **자동 주문 X** (CLAUDE.md 정책) — 09:00 텔레그램 알림 메시지에 권고 표시만.
+
 **v1 (TODO):**
 - NXT 프리장 (08:00~08:50) 활용
 - 종목별 NXT 거래 가능 여부 체크 후 우선 청산
@@ -471,12 +478,34 @@ if vp < 100:                                                  score -= 2
 if vol_accel_1m > 2.0:                                        score += 1
 if vol_accel_1m < 0.5:                                        score -= 1
 
-# 다이버전스 (R13)
-if bearish_divergence:                                        score -= 2
-if bullish_divergence:                                        score += 2
+# 다이버전스 (R13) — round 27 (P2-1): 통설 외 약신호라 ±2 → ±1 강등
+if bearish_divergence:                                        score -= 1
+if bullish_divergence:                                        score += 1
+
+# R14d 거래량 비율 검증 (round 28, P2-2) — 통설(상따): 전일 대비 1~3배 정상, 10배↑ 과열
+if 1.0 ≤ volume_ratio_vs_prev_day ≤ 3.0:                      score += 0.5
+if volume_ratio_vs_prev_day ≥ 10.0:                           score -= 1
 
 # 호가 잔량 (약화 — R10 도입으로 강등)
 if bid_ask_ratio > 3.0:                                       score += 0.5
+
+# R14a VWAP 위치 (round 23, P0-1) — 통설 단타 핵심 지표
+# VWAP = 거래량 가중 평균 = 장중 세력 평단가의 근사.
+# 가격이 VWAP 위면 매수 우위, 아래면 매도 우위.
+if price_vs_vwap_pct ≥ +0.3:                                  score += 1
+if price_vs_vwap_pct ≤ -0.3:                                  score -= 1
+
+# R14b 5/20분 이평 위치 (round 24, P0-2) — 통설 단타 기본
+# 5분/20분 SMA = 1분봉 5개/20개 close 평균. 정배열/역배열.
+# R15 A3 (5분 이평 이탈 청산) 와 대칭 — 진입에선 가격>MA5 가산.
+if price_vs_ma5 ≥ +0.3 and price_vs_ma20 ≥ +0.3:              score += 1  # 정배열
+if price_vs_ma5 ≤ -0.3 and price_vs_ma20 ≤ -0.3:              score -= 1  # 역배열
+
+# R14c 상한가 진입 시간 가산 (round 25, P1-1) — 일중 first-mover 강도
+# 통설(상따): "9~10시 진입, 9:30 이내가 가장 강한 상한가". 상한가 도달 시각
+# 기준. 도달 안 했으면 None (무가산).
+if limit_up_hit_time < 09:30:                                 score += 1
+elif limit_up_hit_time < 10:30:                               score += 0.5
 ```
 
 **등급:**
@@ -526,6 +555,7 @@ entry_bar_low    = 진입 직전 1분봉 저점
 | A2. 손절 — 봉 저점 | 현재가 < entry_bar_low | 최우선 |
 | A3. 손절 — 이평 이탈 | 5분봉 종가 < 5분 이평 | 최우선 |
 | A4. 시간 손절 | 진입 후 N분 경과 + 현재 +0.5% 미달 | 최우선 |
+| A5. EOD 컷오프 | now ≥ 14:45 AND 가격 < 5분이평 AND 직전 분봉 음봉 | 최우선 |
 | B1. 익절 1차 | 현재가 ≥ take_profit_1 (1회만 발화) | 정상 |
 | B2. 익절 2차 | 현재가 ≥ take_profit_2 (1회만 발화) | 정상 |
 | B3. 트레일링 | 현재가 ≤ trailing_stop AND B1 발화 후 | 정상 |
@@ -606,6 +636,15 @@ entry_bar_low    = 진입 직전 1분봉 저점
 | 20 | `/buy CODE PRICE [MIN]` 명령에서 PRICE 가 필수 — 사용자가 매 매수 시 가격을 직접 입력해야 보유 모드 진입 가능. 봇이 KIS 시세를 1~2초 단위로 이미 받고 있는데도 가격을 또 받음. | 사용자 의도: "이미 모니터링 중인 종목이면 봇이 현재가를 아는데 왜 가격을 또 치냐". 손절/익절선이 -1.5%/+2%/+3.5% 단위라 KIS 시세와 실제 체결가 1~2 틱(수십 원) 차이는 무시 가능. → 변경: ①`parse_command` 에서 PRICE 를 선택 인자로 강등 — `/buy 091340` 만 입력해도 valid. ②`MonitoringSession.last_prices: dict[str, float]` 신설. worker tick 이 매 사이클 `snapshot[code].price` 로 채움. ③`_apply_buy(price=None)` 일 때 `session.last_prices.get(code)` 에서 자동 보충. last_prices 에도 없으면 (모니터링 안 하던 종목 + 아직 첫 tick 전) "시세 미확보 — `/buy CODE PRICE` 로 명시" 안내 메시지 반환. ④사용자가 슬리피지 큰 다른 HTS 에서 체결한 경우 등 명시 입력을 원하면 PRICE 인자 그대로 사용 (역호환). ⑤사용자 manual 영속화 없는 readonly 시세 공유라 lock 없이 GIL 만 의존. |
 | 21 | `identify_rising_candidates` 가 snapshot 기반 회전율 상위 5개만 surface — 흥아해운처럼 거래대금/회전율은 크지만 모멘텀 죽은 종목도 카드로 잡힘. R14 매수 점수 시스템(grader.py)이 이미 존재하지만 부상 후보 입구에 연결 안 됨. worker docstring 은 "5초 tick" 이라고 stale (실제는 3초). | 사용자 정정: ①"부상 후보 = 매수 점수 높은 후보" 로 재정의. ②비용 분산을 위해 다단계 funnel — 한 번에 전체 R14 풀스코어 돌리지 말고, 값싼 필터부터 점차 좁힘. ③한국 단타 통설(회전율 1위 / 양봉 / 모멘텀 살아있음 / VP 100 이상) 그대로 임계 채택. → 변경: ①`config_thresholds.py` 에 4단계 임계 추가 (`RISING_STAGE1_TURNOVER_TOP_N=15` / `RISING_STAGE2_VOL_ACCEL_MIN=0.8` / `RISING_STAGE3_VP_MIN=100.0` / `RISING_MIN_SCORE=2.0` = WATCH 이상). ②`identify_rising_candidates` 시그니처 유지하되 default `top_n` 을 5 → 15 로 확장 (Stage 1 책임만). ③`worker._evaluate_rising_funnel(stage1, client, snap_by_code, tick_cache)` 신설 — Stage 2 (minute_bars + vol_accel + is_weak_candle) → Stage 3 (ccnl + VP) → Stage 4 (asking + investor + `calculate_buy_score`) 순차 호출, 각 단계에서 미달 종목 drop 후 다음 단계 fetch 비용 X. tick_cache 로 통과 종목의 fetch 결과 보관 → 카드 렌더에서 재사용 (중복 fetch 회피). ④`MonitoredStock` 에 `buy_score / buy_grade / buy_reasons` 필드 추가. ⑤`update_rising_candidates` 가 candidates dict 의 `buy_score/buy_grade/buy_reasons` 를 monitored 에 저장. ⑥`render_monitor_message` 헤더에 `🟢 STRONG +5.5점` 형식 등급 + 점수 표시 + 사유 한 줄 (상위 3개 reasons). ⑦worker.py docstring 5초 → 3초 정정. 흥아해운 회귀: Stage 2 (vol_accel 0.8 임계 미달 + 음봉 윗꼬리 50%) 에서 drop, 카드 발송 안 됨 (`test_rising_funnel_filters_heunga_haewoon`). 비용: 3초 tick 에서 평균 ~33 KIS req (한도 60 의 55%). R13 divergence (VP_5MA 시계열 필요) 는 차후 라운드에서 추가 — 현 R14 점수 계산은 divergence 가산 없이도 흥아해운류 거름 충분. |
 | 22 | (a) 보유 카드(`/buy` 후)에 R15 매도 시그널이 표시 안 됨 — `exit_triggers.py` 구현돼 있지만 worker → render wiring 미완 (`plan.md:142`). (b) 카드 시각/가격/매수가/손익이 분리된 라인 → redundant. (c) R15 C1 트리거의 "VP_5MA 100 하향" 이 무슨 뜻인지 초보자에게 불친절. (d) 외국인/기관/프로그램 수치는 KIS 응답 신뢰도 낮음 (데이터 검증 안 됨). (e) docs 가 깊이 위주라 단타 처음 보는 사람에겐 진입 장벽. | 사용자 정정: ①R15 wiring 완성. ②카드 한 줄 합치기 (`시각 (+경과초) 현재가(오늘%)/매수가(손익%)`). ③체결강도 라인에 5MA + 1MA 둘 다 표시 (1MA 는 정보용, 트리거는 5MA 유지). ④봉 패턴 청산(C4)은 1분봉 기준 명시. ⑤외국인/기관/프로그램 라인 제거. ⑥`docs/monitoring-guide.md` 신규 작성 — 봉/회전율/VP/다이버전스/VI 용어 풀어 설명, 4단계 funnel 그림, 매수 점수 가중치, 청산 시그널 C1~C5, 봇 명령 사용법 포함. → 변경: ①`volume_power.VPSeries.ma_1(now)` 헬퍼 추가. ②`MonitoringSession.vp_series: dict[code, VPSeries]` 신설 — worker tick 매 사이클 VP push, 카드/트리거에서 5MA/1MA 조회. ③`worker.dashboard_tick` 에 `load_holdings()` + `evaluate_triggers()` 호출 추가. holding 객체 + trigger_states + divergence 를 render 에 전달. ④`render_monitor_message` 에 `holding / trigger_states / vp_5ma / vp_1ma / divergence` 인자 추가. 보유 모드 헤더 `[보유]` prefix (source emoji 중복 제거), 시각/가격/매수가/손익 합친 라인, 청산 시그널 섹션(C1~C5 각각 ❌/✅ + 현재 수치 노출). +29% 매도가 라인은 감시 모드만 표시. ⑤외국인/기관/프로그램 라인 제거. ⑥`docs/monitoring-guide.md` 신규 ~300줄. CLAUDE.md "파일 작성 시 참고 문서" 에 monitoring-guide.md 추가. |
+| 23 | R14 매수 점수가 한국 단타 통설(회전율/체결강도/봉패턴/가속/호가)을 다 다루는 것으로 가정. 검색 기반 통설 재검토 결과 **VWAP 위/아래** 시그널이 누락됨 — VWAP 은 장중 세력 평단가의 근사값으로 단타 핵심 지표인데 grader 입력에 없음. R15 청산 트리거 A3 가 5분 이평을 보지만, R14 매수 진입에는 대칭되는 가격-기준선 시그널이 없어 비대칭. | round 23 (P0-1): ①`momentum.compute_vwap(minute_bars)` 추가 — Σ(typical × volume) / Σ(volume), typical = (H+L+C)/3. ②`momentum.price_vs_vwap_pct(price, vwap)` 헬퍼. ③`config_thresholds.VWAP_ABOVE_THRESHOLD_PCT=+0.3` / `VWAP_BELOW_THRESHOLD_PCT=-0.3` (호가 노이즈 컷오프). ④`GraderSnapshot.price_vs_vwap_pct: float = NaN` 필드 추가, 호출자가 미리 계산. ⑤`calculate_buy_score` 에 R14a 분기: ≥+0.3% → +1 / ≤-0.3% → -1 / 사이는 무가산. ⑥`test_grader.py` 7 케이스 (위/아래/경계/뉴트럴/NaN/제룡전기 보강/흥아해운 보강). ⑦`test_momentum.py` 9 케이스 (VWAP 계산 단위/볼륨가중/empty/zero/missing column + price_vs_vwap_pct 경계). 가중치 ±1 은 회전율(+1) 과 동격 — 통설 검증 누적 전엔 추정치. **호출자 wiring (worker → grader) 은 P0-1 범위 외 — 메타 작업에서 일괄 처리**. |
+| 24 | R14 에 5분/20분 이평 위치 시그널도 누락. 한국 단타 통설(namu.wiki, 알파스퀘어 등)에서 5일/20일 이평은 가장 기본 지표이고, R15 A3 가 이미 5분 이평 이탈을 청산 트리거로 쓰는데 R14 진입에는 대칭이 없음. 정배열(가격>MA5>MA20) = 매수 우위, 역배열 = 매도 우위라는 통설 미적용. | round 24 (P0-2): ①`momentum.compute_minute_ma(bars, window)` 추가 — 1분봉 N개 close SMA. R15 A3 minute_ma_5 와 동일 정의. ②`momentum.price_vs_ma_pct(price, ma)` 헬퍼 (VWAP 헬퍼와 시그니처/가드 동일). ③`config_thresholds.MA5_THRESHOLD_PCT=+0.3` / `MA20_THRESHOLD_PCT=+0.3` / `MA_SHORT_MINUTES=5` / `MA_LONG_MINUTES=20`. ④`GraderSnapshot.price_vs_ma5_pct` / `.price_vs_ma20_pct` 필드. ⑤`calculate_buy_score` 에 R14b 분기: 둘 다 ≥+0.3% → +1 (정배열) / 둘 다 ≤-0.3% → -1 (역배열) / 혼합/NaN → 무가산. ⑥`test_grader.py` 8 케이스 (정/역/혼합/경계/뉴트럴/NaN/제룡전기·흥아해운 보강). ⑦`test_momentum.py` 9 케이스 (SMA 단순/마지막 윈도우만/부족/empty/missing col/MA20 + price_vs_ma_pct 가드). **wiring (worker.tick 에서 minute_bars 받아 MA 계산 → snap 채우기) 은 메타 작업으로 일괄**. |
+| 25 | R14 가 종목별 시그널만 보고 "도달 시각" 컨텍스트를 안 봄. 통설(namu.wiki 상따): 강한 상한가는 9~10시 진입, 9:30 이내가 가장 강함. 같은 +30% 상한가 종목이라도 09:15 도달과 14:30 도달은 first-mover 강도가 다른데 R14 점수는 동일하게 나옴. | round 25 (P1-1): ①`config_thresholds.LIMIT_UP_EARLY_HH/MM=09:30` / `LIMIT_UP_MID_HH/MM=10:30` 추가. ②`GraderSnapshot.limit_up_hit_time: dt.time | None = None` 필드. 호출자가 상한가 감지 이벤트에서 도달 시각 저장. ③`calculate_buy_score` 에 R14c 분기: 09:30 미만 +1 / 09:30~10:30 미만 +0.5 / 10:30 이상 무가산 / None 무가산. 경계 strict < (09:30 정확히는 mid). ④`test_grader.py` 7 케이스 (조기/중간/late/None/경계/제룡전기 보강). 가중치 +1/+0.5 — 회전율(+1)과 동격 max — 통설 검증 누적 전 추정치. **호출자 wiring (상한가 감지 → snap 채우기) 은 메타 작업에서 일괄**. |
+| 26 | R15 가 시간 컨텍스트를 안 봄. 통설("2시 45분경 이평선 밑 음봉이면 목숨 걸고 팔아라" - namu.wiki 단타매매기법): 장 마감 임박 + 약세 시그널은 단일 트리거가 아니라 시간 게이트된 AND 조건이라 더 강한 청산 신호. A3(이평 이탈) / C4(음봉) 가 각각 발화될 때보다 EOD 컷오프 후 동시 발생이 결정적. | round 26 (P1-2): ①`config_thresholds.EOD_CUTOFF_HH=14 / EOD_CUTOFF_MM=45` 추가. ②`TriggerKind` 에 `"A5_eod_ma_break"` 추가, `TRIGGER_LABELS` 에 "A5 EOD 이평+음봉 강제" 라벨. ③`evaluate_triggers` 에 A3 다음 위치로 A5 분기 — `now ≥ 14:45 AND price < ma5 AND candle.type == "bearish"` AND. `is_stop_loss=True` (A 카테고리). ④`test_exit_triggers.py` 6 케이스 (14:45 발화/14:44 미발화/양봉 미발화/MA 위 미발화/MA None 스킵/카드 포맷). ⑤R15 표에 A5 행 추가. **종배는 보유 만료가 다음날 09:00 KRX 시초라 본질적으로 EOD 컷오프 발화 빈도는 낮음 — 단, "장중 매수 → 당일 청산" 케이스(스윙 분리 안 됨, M6 보유 모드) 에선 유효**. |
+| 27 | R13 다이버전스 가중치 ±2 가 통설 검증과 어긋남. 한국 단타 통설 검색(namu.wiki 단타매매기법, i-whale, steemit VP) 어디에도 다이버전스가 단타 핵심 지표로 안 나옴 — 차트분석/스윙 영역. 회전율(+1)/봉패턴(+2)/VP(+2)/가속(+2) 같은 통설 지표보다 가중치가 동등하거나 더 큰 건 비통설 위험. CLAUDE.md "검증 안 된 자작 가중합 X" 원칙과 충돌. | round 27 (P2-1): ①`grader.calculate_buy_score` 의 R13 분기 `score -= 2` / `score += 2` → `-1` / `+1`. ②`test_grader.py` 에 다이버전스 단일 ±1 검증 2 케이스 추가 (`test_bearish_divergence_subtracts_one_not_two` / `test_bullish_divergence_adds_one_not_two`). ③기존 회귀 케이스(`test_regression_heungahaeun_with_bearish_divergence` score ≤ -5.0) 는 다이버전스 외 합산으로 -5 미만 유지 가능해 영향 없음 — 119 pass 확인. ④R15 C2 (Bearish Divergence 청산 트리거) 는 OR 조건이라 가중치 개념 없음, 그대로 유지. ⑤docs/jongbae-strategy.md R14 본문 점수 식 갱신. **회귀 안전성**: 다이버전스 단일로 STRONG 들어가던 케이스는 없었음(통상 다른 시그널 동반) → 등급 분포 영향 거의 0. |
+| 28 | R14 가 "거래량 폭증 = 좋은 매수 신호" 라는 단순한 가정을 따르고 있었음. 통설(namu.wiki 상따): "전일 거래량 대비 300% 이내 정상 매집, 10배 이상 동반 시 강한 상한가 아니므로 주의" — 폭증은 매도 출회나 단발 신호 가능성이라 오히려 약신호. 거래량 자체는 R3(회전율 top10)/R11(가속) 만으로 봤지 "전일 대비 비율"이라는 통설 컷이 없었음. | round 28 (P2-2): ①`config_thresholds.VOLUME_RATIO_NORMAL_MIN=1.0 / VOLUME_RATIO_NORMAL_MAX=3.0 / VOLUME_RATIO_EXCESSIVE=10.0`. ②`GraderSnapshot.volume_ratio_vs_prev_day: float = NaN` 필드 추가. 호출자가 일봉 데이터에서 (오늘누적 / 전일) 계산. ③`calculate_buy_score` 에 R14d 분기: 1.0~3.0 → +0.5 (정상) / ≥10.0 → -1 (과열) / 그 외 0 / NaN 무가산. ④`test_grader.py` 8 케이스 (정상/과열/경계 3개/중간/낮음/NaN). 127 pass. ⑤docs 본문 점수식 갱신. **wiring**: 호출자(worker) 가 KIS 일봉 API 의 전일 거래량 + 현재 누적 거래량으로 계산 → snap 채우기. 메타 작업에서 일괄. |
+| 29 | "외국인+기관 동반 순매수 = 강한 매수" 통설을 R14 에 도입할지 조사 필요. `fetch_investor_flow` (KIS `inquire-investor`) 는 이미 구현됐고 추가 호출 비용 0 인데, round 22 정정 이력에서 "KIS 응답 신뢰도 낮음 — 데이터 검증 안 됨" 으로 모니터링 카드 라인이 제거됨. R14 가산으로 부활시킬지 결정 필요. | round 29 (P3-1 조사): ①가용성 확인 — fetch_investor_flow 응답 필드(외인/기관/프로그램 순매수 수량+금액) 모두 완비. 호출 비용 0. ②검증 부재 확인 — round 22 정정대로 KIS 추정치와 익일 KRX 공시 간 괴리 가능성. ③**현 단계 R14 가산 도입 X** — CLAUDE.md "검증 안 된 자작 가중합 X" 원칙. ④사전 검증 ritual 명시: 3~5종목 × 5거래일 1분 단위 fetch 로그 vs KRX 공시 비교 → ±10% 이내면 R14e 채택 (외인+기관 동시 양수 +0.5), 초과면 v1 연기. ⑤docs/data-infra.md 에 조사 결과 + 검증 ritual 정리 (`KIS API 호출수 영향` 섹션 다음). ⑥카드 표시는 round 22 정정 유지 — 가벼운 "참고 라인" 옵션은 추후 사용자 동의 시 별도 라운드. **결론: 코드 변경 0, 문서만 갱신**. |
+| 30 | R7 청산이 "09:00 시초 매도" 단일 룰. 통설(WikiDocs 종가베팅, brokdam): 시초가 갭 크기에 따라 분기 — ≤+1% (또는 마이너스) 는 갭 미발생이라 무조건 전량 / ≥+6% 강한 갭은 30~50% 분할 후 관망. 종배의 가장 중요한 청산 의사결정인데 단일 룰로 묶여있어 갭 폭증 시 추가 슈팅 기회 누락, 갭 실패 시 보유 지연 위험. R15 (장중 모니터링) 와 다른 시각/컨텍스트라 분리 필요. | round 30 (P3-2): ①신규 모듈 `src/jongbae/jongbae_exit.py` — `JongbaeExitDecision(action, partial_ratio, open_gap_pct, reason)` dataclass + `evaluate_jongbae_open_exit(open_price, prev_close)` pure 함수. ②`config_thresholds`: `JONGBAE_OPEN_FULL_SELL_MAX_PCT=1.0` / `JONGBAE_OPEN_PARTIAL_SELL_MIN_PCT=6.0` / `JONGBAE_OPEN_PARTIAL_RATIO=0.4`. ③로직: gap ≤ +1% → sell_all(갭 미발생) / +1% < gap < +6% → sell_all(정상 갭, 익절) / gap ≥ +6% → sell_partial(0.4). ④신규 테스트 `tests/test_jongbae_exit.py` 13 케이스 (갭 마이너스/0/경계 +1%/정상 갭/+6% 경계/큰 갭/0 가드/음수 가드/frozen). 140 pass. ⑤R7' 섹션 신규 추가 (R7 다음 위치). **자동 주문 X** — CLAUDE.md 정책 유지, 09:00 텔레그램 알림에 권고 표시만. R15 와 모듈 분리 (다른 시각/컨텍스트). **wiring**: scheduler 가 09:01~09:05 에 일봉 fetch + jongbae_exit 호출 → 텔레그램 발송. 메타 작업. |
+| 31 | round 23~30 신규 시그널 + R7' 모듈은 만들었으나 호출자 wiring 미완: ①worker funnel 에서 VWAP/MA 만 채우고 거래량비율/상한가시각은 placeholder. ②jongbae_exit 09:00 텔레그램 권고 미연결. ③ritual 2/3 자동화(paper_trade 기록기 + 통설 가드레일) 모듈 없음. | round 31~32: ①`worker._prev_day_volume` 헬퍼 + funnel 인자 `daily_ohlcv` → `volume_ratio_vs_prev_day` 채움. ②`MonitoringSession.limit_up_hit_times: dict[str, dt.time]` 신설, scheduler 의 상한가 감지 2 지점(`_collect_snapshot` / `_poll_limit_up`)에서 시각 저장, funnel 에서 `session.limit_up_hit_times` 전달 → R14c 가산. ③scheduler 에 `_send_jongbae_open_exit_recommendation` 09:01 cron + `Dispatcher.send_jongbae_open_exit`. boot 인자 client/settings/dispatcher. holdings.json 비면 no-op. **자동 주문 X, 권고만**. ④신규 모듈 `src/jongbae/paper_trade.py` — `PaperTradeRecord` dataclass + `record_decision` (14:50 호출) + `record_open_result` (다음날 09:30/16:00 호출) + `load_records` (필터 가능) + `compute_summary` (Spearman ρ scipy 의존 X, 자체 구현). `data/paper_trade/YYYY-MM-DD.json` atomic write. test 15 케이스. ⑤`test_grader.py` invariant 3 케이스 — 통설 양수 합 ≥ 비통설×2, 통설 음수 합 ≤ 비통설×2 (절댓값), 다이버전스 단일 ±1 cap. 219 pass. **남은 wiring**: 14:50 결정 레포트 → `record_decision` / 09:30 모닝 → `record_open_result` (다음 라운드). |
 
 ---
 

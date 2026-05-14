@@ -149,11 +149,28 @@
 **[테스트]**
 
 - [ ] **상태 전이 / 명령 파싱 / 임계 트리거 / rate limit 핸들링** (기존)
-- [ ] **R14 회귀 — 흥아해운 시나리오** — `tests/test_grader.py`. 입력(거래대금 1316억 1위, 회전율 +19.4%, vol_accel_5m=0.8, vol_accel_1m=0.4, 호가 5.3배, 윗꼬리 음봉, VP=95, VP_5MA=98) → 점수 ≤ -3, 등급 🔴 AVOID
-- [ ] **R14 회귀 — STRONG 케이스** — 제룡전기 상한가 모멘텀(VP=142, vol_accel_5m=1.6, 장대양봉) → 점수 ≥ 5
-- [ ] **R15 트리거 멱등성** — B1 익절 1차는 1회만 발화, A1 손절선은 매 tick 발화 가능
-- [ ] **R12 봉 패턴 경계** — 윗꼬리 30%/40%/50% 경계, doji
-- [ ] **추가 회귀 케이스 5~10건** (사용자 과거 사례 입력 필요 — TODO)
+- [x] **R14 회귀 — 흥아해운 시나리오** — `tests/test_grader.py`. 입력(거래대금 1316억 1위, 회전율 +19.4%, vol_accel_5m=0.8, vol_accel_1m=0.4, 호가 5.3배, 윗꼬리 음봉, VP=95, VP_5MA=98) → 점수 ≤ -3, 등급 🔴 AVOID
+- [x] **R14 회귀 — STRONG 케이스** — 제룡전기 상한가 모멘텀(VP=142, vol_accel_5m=1.6, 장대양봉) → 점수 ≥ 5
+- [x] **R15 트리거 멱등성** — B1 익절 1차는 1회만 발화, A1 손절선은 매 tick 발화 가능
+- [x] **R12 봉 패턴 경계** — 윗꼬리 30%/40%/50% 경계, doji
+- [ ] **추가 회귀 케이스 5~10건** (사용자 과거 사례 입력 필요 — TODO, ritual 1 참조)
+
+**[round 23~30 — 통설 검색 기반 R14/R15 보강 (2026-05-14)]**
+
+- [x] **R14a VWAP 시그널** (round 23, P0-1) — `momentum.compute_vwap` + `price_vs_vwap_pct`. `GraderSnapshot.price_vs_vwap_pct`. ±0.3% 임계. test_grader 7 + test_momentum 9 케이스
+- [x] **R14b 5/20 이평 시그널** (round 24, P0-2) — `momentum.compute_minute_ma` + `price_vs_ma_pct`. `GraderSnapshot.price_vs_ma5_pct/ma20_pct`. 정/역배열 ±1. test 8 + 9
+- [x] **R14c 상한가 진입 시간 가산** (round 25, P1-1) — `GraderSnapshot.limit_up_hit_time: dt.time | None`. 09:30 이전 +1 / 10:30 이전 +0.5. test 7
+- [x] **R15 A5 EOD 컷오프** (round 26, P1-2) — 14:45 이후 가격<MA AND 음봉 → 강제 청산. test 6
+- [x] **R13 다이버전스 ±2 → ±1 강등** (round 27, P2-1) — 통설 외 약신호. test 2
+- [x] **R14d 거래량 비율 검증** (round 28, P2-2) — 전일 대비 1~3배 +0.5 / 10배↑ -1. test 8
+- [x] **R29 거래원 분석 KIS API 가용성 조사** (round 29, P3-1) — fetch_investor_flow 가용성 확인, R14 가산은 검증 후 결정 (`data-infra.md` "투자자별 순매수 R14 추가 가능성" 섹션)
+- [x] **R7' 종배 청산 시초가 룰** (round 30, P3-2) — 신규 모듈 `src/jongbae/jongbae_exit.py`. ≤+1% 전량 / +1%~+6% 익절 / ≥+6% 40% 분할. test 13
+- [x] **wiring: worker → grader** (round 32) — funnel 에서 VWAP/MA5/MA20 자동 계산 + `volume_ratio_vs_prev_day` (`_prev_day_volume` 헬퍼 + daily_ohlcv 인자) + `limit_up_hit_time` (`session.limit_up_hit_times` dict 경유). scheduler 의 상한가 감지 2 지점에서 시각 저장
+- [x] **wiring: scheduler → jongbae_exit** (round 32) — `_send_jongbae_open_exit_recommendation` 09:01 cron + `Dispatcher.send_jongbae_open_exit`. holdings.json 비면 no-op
+- [x] **ritual 2 자동화: paper_trade 기록기** (round 32) — `src/jongbae/paper_trade.py` 신규. `PaperTradeRecord` dataclass + `record_decision/record_open_result/load_records/compute_summary` (Spearman ρ 자체 구현). atomic write. test 15
+- [x] **ritual 3 자동화: 통설 가중치 invariant** (round 32) — `test_grader.py::test_invariant_consensus_weights_dominate_positive/negative` + `_divergence_weight_capped_at_one` 3 케이스
+- [ ] **wiring: 14:50 결정 → paper_trade.record_decision** — 결정 레포트에서 STRONG/WATCH 자동 저장 (호출 한 줄)
+- [ ] **wiring: 09:30 모닝 → paper_trade.record_open_result** — 보유 종목 + 14:50 후보들 시초가/오전고가 추가 (호출 한 줄)
 
 **완료 기준 (round 18):** 24h 봇 명령 polling 상시 가동. 사용자 `/on` 시점부터 `/off` 까지 주도주 1~2개 + 사용자 임의 종목 모니터링 + 보유 종목 손절/익절 카드 표시. 평일 09:00 자동 ON, 10:30 자동 OFF 폐지. 카드 외 별도 푸시 알림 X (round 17). 푸시는 M6 외부 이벤트(상한가 진입, 자동 주도주 첫 추가, 정기 레포트)만.
 
@@ -249,6 +266,57 @@
 - [ ] **parquet atomic write** — `write_daily_ohlcv` / `write_index_daily` / `write_stock_master` 등 모두 `to_parquet(path)` in-place. 쓰는 도중 프로세스 죽으면 footer 손상. tmp 파일 → fsync → os.replace 패턴으로 변경 필요. 재발 방지.
 - [ ] **일봉 ohlcv.parquet 재백필** — 2026-05-12 footer 손상으로 corrupted 파일(`data/daily/ohlcv.parquet`, 12MB, 05-12 02:01) 그대로 남아있음. 현재는 graceful degradation으로 빈 DF 취급되어 모니터링은 동작하지만 historical 매칭/모닝 갭 분석은 무력화. `mv data/daily/ohlcv.parquet data/daily/ohlcv.parquet.corrupted-20260512 && ./go init --years 5` 필요.
 - [ ] **fail-loud 텔레그램 알림 (parquet 손상)** — 현재는 logger.error로만 남김. corruption 발견 시 텔레그램 에러 채널 1회 발송(중복 억제 포함) 추가 가능.
+
+---
+
+## R14/R15 가중치 검증 ritual (round 23~30 후 도입)
+
+배경: R14 매수 점수 가중치는 "한국 단타 통설 조합"이긴 하나 **검증 데이터 없는 추정치**.
+백테스트가 분봉 히스토리 부재로 v0에서 불가하므로, **검증 가능한 대안 3단**을 ritual로
+박아 둔다. 가중치 변경 시 매번 통과시켜야 함.
+
+### ritual 1: 회귀 케이스 누적 (지속)
+
+- 매주 1~2개씩 known-good / known-bad 케이스를 `tests/test_grader.py` 회귀에 추가
+- 입력 출처: ①사용자 경험 (제룡전기 STRONG / 흥아해운 AVOID 같은) ②14:50 결정 레포트에서 STRONG 받았다가 다음날 갭하락한 케이스 ③돌이켜 보니 진입했어야 했는데 점수 낮았던 케이스
+- 6개월 누적 목표 30~50개. 가중치 변경 시 **회귀 통과율 90% 이상** 가드레일
+- 신규 케이스 발견 시 즉시 docs/jongbae-strategy.md "검증 가능한 사용자 발화" 섹션에도 기록
+
+### ritual 2: paper-trade 일일 검증 (round 32 자동화 완료)
+
+- 14:50 결정 레포트의 STRONG/WATCH 종목을 `data/paper_trade/YYYY-MM-DD.json` 에 자동 기록
+  - 필드: 종목코드/등급/점수/사유 reasons[]/14:50 가격
+- 다음날 09:30 자동 추가 기록: 시초가/오전 고가/오전 종가/`JongbaeExitDecision`
+- 1개월 (≈20거래일 × 평균 3종목 = 60샘플) 누적 후 mini-stat 자동 산출:
+  - **점수 ↔ 갭상 확률 상관계수** (Spearman ρ ≥ 0.3 가드레일)
+  - **STRONG 등급의 평균 시초가 수익률** > 0%
+  - **AVOID 권고된 종목 표본 추출 검증** (false positive 비율)
+- 구현 완료: `src/jongbae/paper_trade.py` (`PaperTradeRecord`, `record_decision`, `record_open_result`, `load_records`, `compute_summary`).
+  남은 wiring: 14:50 결정 레포트 + 09:30 모닝 레포트에서 호출 한 줄 (다음 라운드).
+
+### ritual 3: 통설 제약 가드레일 (round 32 자동화 완료)
+
+가중치 변경 PR 마다 다음 invariant 가 깨지지 않는지 자동 검증:
+
+```
+sum(통설 가중치) ≥ sum(비통설 가중치) × 2
+
+통설(R3/R10/R11/R12/R14a/R14b/R14c/R14d): 회전율/VP/가속/봉/VWAP/이평/상한가시간/거래량비율
+비통설(R13 다이버전스): ±1 강등됨
+```
+
+- 구현: `tests/test_grader.py::test_invariant_consensus_weights_dominate_positive/negative` + `_divergence_weight_capped_at_one`. 3 케이스.
+- 통설 양/음수 합산이 비통설의 2배 이상. R13 가중치를 통설 합산의 50% 이상으로 키우면 테스트 깨짐 → 의식적 결정 강제.
+
+### gate criteria — "가중치 추정치 → 운영 가중치" 전환 기준
+
+다음 모두 통과 시에만 가중치를 "검증됨" 으로 docs 에 표기 (현재 모두 "추정치"):
+
+- [ ] 회귀 케이스 ≥ 30 (ritual 1)
+- [ ] paper-trade 누적 ≥ 60 샘플, Spearman ρ ≥ 0.3 (ritual 2)
+- [ ] 통설 가드레일 invariant 통과 (ritual 3) — round 31 자동화 TODO
+
+미통과 시 폴백: 단순 룰 `VP < 100 AND vol_accel_1m < 0.5 → AVOID` 로 회귀 (`docs/jongbae-strategy.md` R14 본문 명시).
 
 ---
 

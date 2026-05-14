@@ -252,6 +252,98 @@ def vol_accel_5m(minute_bars: pd.DataFrame) -> float:
     )
 
 
+def compute_vwap(minute_bars: pd.DataFrame) -> float:
+    """장중 누적 VWAP (Volume Weighted Average Price).
+
+    VWAP = Σ(typical_price × volume) / Σ(volume)
+    typical_price = (high + low + close) / 3
+
+    단타 통설 (round 23, P0-1): VWAP 은 장중 세력 평단가의 근사. 가격이 VWAP
+    위면 매수 우위, 아래면 매도 우위 — R14 가산/감산용 입력값. 그날 데이터
+    누적이라 시각이 늦을수록 안정.
+
+    Args:
+        minute_bars: MINUTE_BAR_COLUMNS 스키마. 그날 1분봉 누적이어야 함
+                     (전일 데이터 섞이면 부정확). 비어있거나 volume 합계 0
+                     이면 NaN.
+
+    Returns:
+        VWAP (원). 데이터 부족/유효성 실패 시 NaN.
+    """
+    if minute_bars is None or minute_bars.empty:
+        return float("nan")
+    required = ("high", "low", "close", "volume")
+    if not all(c in minute_bars.columns for c in required):
+        return float("nan")
+
+    volume = minute_bars["volume"].astype(float)
+    total_volume = float(volume.sum())
+    if total_volume <= 0:
+        return float("nan")
+
+    typical = (
+        minute_bars["high"].astype(float)
+        + minute_bars["low"].astype(float)
+        + minute_bars["close"].astype(float)
+    ) / 3.0
+    vwap = float((typical * volume).sum() / total_volume)
+    if vwap != vwap or vwap <= 0:
+        return float("nan")
+    return vwap
+
+
+def price_vs_vwap_pct(price: float, vwap: float) -> float:
+    """현재가가 VWAP 대비 몇 % 위/아래 (round 23, P0-1).
+
+    > 0 = 가격이 VWAP 위 (매수 우위), < 0 = 아래 (매도 우위).
+    임계 ±0.3% 는 config_thresholds.VWAP_*_THRESHOLD_PCT 참조.
+
+    Returns:
+        편차(%). vwap 또는 price 가 비정상이면 NaN.
+    """
+    if vwap != vwap or vwap <= 0 or price <= 0 or price != price:
+        return float("nan")
+    return (price - vwap) / vwap * 100.0
+
+
+def compute_minute_ma(minute_bars: pd.DataFrame, window_minutes: int) -> float:
+    """최근 N분 종가 단순이동평균 (round 24, P0-2).
+
+    1분봉 가정. 5분 이평 = 최근 5개 봉 close 평균. R15 A3 의 minute_ma_5 와
+    동일 정의 (exit_triggers.py:213).
+
+    Args:
+        minute_bars: MINUTE_BAR_COLUMNS 스키마. time 오름차순.
+        window_minutes: 윈도우 (5=MA5, 20=MA20).
+
+    Returns:
+        SMA (원). 데이터 부족 (< window_minutes) 시 NaN.
+    """
+    if minute_bars is None or minute_bars.empty:
+        return float("nan")
+    if window_minutes <= 0 or "close" not in minute_bars.columns:
+        return float("nan")
+    tail = minute_bars.tail(window_minutes)
+    if len(tail) < window_minutes:
+        return float("nan")
+    closes = tail["close"].astype(float)
+    mean = float(closes.mean())
+    if mean != mean or mean <= 0:
+        return float("nan")
+    return mean
+
+
+def price_vs_ma_pct(price: float, ma: float) -> float:
+    """현재가가 이평 대비 몇 % 위/아래 (round 24, P0-2).
+
+    VWAP 헬퍼와 동일 시그니처/가드. price_vs_vwap_pct 와 동일한 임계 (±0.3%)
+    적용 가능하도록 단위 통일.
+    """
+    if ma != ma or ma <= 0 or price <= 0 or price != price:
+        return float("nan")
+    return (price - ma) / ma * 100.0
+
+
 def short_trend_sparkline(
     minute_bars: pd.DataFrame,
     n_recent: int = 6,

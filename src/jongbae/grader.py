@@ -13,6 +13,7 @@ pure 함수 — Snapshot dataclass 입력, ScoreCard 출력.
 """
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -27,14 +28,25 @@ from src.jongbae.config_thresholds import (
     GRADE_NEUTRAL,
     GRADE_STRONG,
     GRADE_WATCH,
+    LIMIT_UP_EARLY_HH,
+    LIMIT_UP_EARLY_MM,
+    LIMIT_UP_MID_HH,
+    LIMIT_UP_MID_MM,
     VOL_ACCEL_1M_DRAIN,
     VOL_ACCEL_1M_STRONG,
     VOL_ACCEL_1M_VERY_STRONG,
     VOL_ACCEL_1M_WEAK,
     VOL_ACCEL_5M_STRONG,
     VOL_ACCEL_5M_WEAK,
+    MA5_THRESHOLD_PCT,
+    MA20_THRESHOLD_PCT,
+    VOLUME_RATIO_EXCESSIVE,
+    VOLUME_RATIO_NORMAL_MAX,
+    VOLUME_RATIO_NORMAL_MIN,
     VOLUME_TURNOVER_TOP_N,
     VP_BALANCED,
+    VWAP_ABOVE_THRESHOLD_PCT,
+    VWAP_BELOW_THRESHOLD_PCT,
 )
 from src.jongbae.divergence import DivergenceState
 from src.jongbae.volume_power import is_vp_strong, is_vp_weak
@@ -77,6 +89,23 @@ class GraderSnapshot:
 
     # R12.5 위치/맥락 (진입 필수조건용)
     dist_from_intraday_high_pct: float = float("nan")
+
+    # R14a VWAP 위치 (round 23, P0-1)
+    # 호출자가 momentum.compute_vwap() + price_vs_vwap_pct() 로 미리 계산.
+    price_vs_vwap_pct: float = float("nan")
+
+    # R14b 5/20분 이평 위치 (round 24, P0-2)
+    # 호출자가 momentum.compute_minute_ma() + price_vs_ma_pct() 로 미리 계산.
+    price_vs_ma5_pct: float = float("nan")
+    price_vs_ma20_pct: float = float("nan")
+
+    # R14c 상한가 진입 시각 (round 25, P1-1) — None 이면 도달 안 함.
+    # 호출자가 상한가 감지 시점에 dt.time(hour, minute) 으로 채움.
+    limit_up_hit_time: dt.time | None = None
+
+    # R14d 거래량 비율 (round 28, P2-2) — 오늘누적 / 전일.
+    # 호출자가 일봉 데이터 조회해서 채움. NaN 이면 무가산.
+    volume_ratio_vs_prev_day: float = float("nan")
 
 
 @dataclass
@@ -158,19 +187,67 @@ def calculate_buy_score(snap: GraderSnapshot) -> ScoreCard:
         score -= 1
         reasons.append(f"-1 자금 고갈 (1m {a1:.1f})")
 
-    # R13 다이버전스
+    # R13 다이버전스 (round 27, P2-1: ±2 → ±1 강등)
+    # 통설 검색(namu.wiki 단타매매기법, i-whale 등)에서 다이버전스는 잘 안 나옴.
+    # 차트분석/스윙 영역 지표라 단타 신뢰도 낮음 — 회전율(+1) 동급으로 강등.
     if snap.divergence is not None:
         if snap.divergence.bearish:
-            score -= 2
-            reasons.append("-2 Bearish Divergence")
+            score -= 1
+            reasons.append("-1 Bearish Divergence")
         if snap.divergence.bullish:
-            score += 2
-            reasons.append("+2 Bullish Divergence")
+            score += 1
+            reasons.append("+1 Bullish Divergence")
 
     # 호가잔량 (강등된 보조 가중)
     if snap.bid_ask_ratio == snap.bid_ask_ratio and snap.bid_ask_ratio > BID_ASK_RATIO_THRESHOLD:
         score += 0.5
         reasons.append(f"+0.5 호가 {snap.bid_ask_ratio:.1f}배 (보조)")
+
+    # R14a VWAP 위치 (round 23, P0-1) — 통설: VWAP 위 = 세력 평단 위 = 매수 우위
+    v = snap.price_vs_vwap_pct
+    if v == v:  # not NaN
+        if v >= VWAP_ABOVE_THRESHOLD_PCT:
+            score += 1
+            reasons.append(f"+1 VWAP +{v:.2f}% 위")
+        elif v <= VWAP_BELOW_THRESHOLD_PCT:
+            score -= 1
+            reasons.append(f"-1 VWAP {v:.2f}% 아래")
+
+    # R14b 5/20분 이평 위치 (round 24, P0-2) — 통설: 정배열/역배열
+    m5 = snap.price_vs_ma5_pct
+    m20 = snap.price_vs_ma20_pct
+    m5_ok = m5 == m5
+    m20_ok = m20 == m20
+    if m5_ok and m20_ok:
+        if m5 >= MA5_THRESHOLD_PCT and m20 >= MA20_THRESHOLD_PCT:
+            score += 1
+            reasons.append(f"+1 정배열 (MA5 +{m5:.2f}% / MA20 +{m20:.2f}%)")
+        elif m5 <= -MA5_THRESHOLD_PCT and m20 <= -MA20_THRESHOLD_PCT:
+            score -= 1
+            reasons.append(f"-1 역배열 (MA5 {m5:.2f}% / MA20 {m20:.2f}%)")
+
+    # R14c 상한가 진입 시간 가산 (round 25, P1-1)
+    # 통설(상따): 9:30 이내 진입이 가장 강함, 10:30 이내까지 first-mover 인정.
+    t = snap.limit_up_hit_time
+    if t is not None:
+        hm = (t.hour, t.minute)
+        if hm < (LIMIT_UP_EARLY_HH, LIMIT_UP_EARLY_MM):
+            score += 1
+            reasons.append(f"+1 상한가 조기진입 ({t.hour:02d}:{t.minute:02d})")
+        elif hm < (LIMIT_UP_MID_HH, LIMIT_UP_MID_MM):
+            score += 0.5
+            reasons.append(f"+0.5 상한가 진입 ({t.hour:02d}:{t.minute:02d})")
+
+    # R14d 거래량 비율 검증 (round 28, P2-2)
+    # 통설(상따): 전일 대비 100~300% 정상 매집, 10배↑ 과열(약신호).
+    vr = snap.volume_ratio_vs_prev_day
+    if vr == vr:  # not NaN
+        if vr >= VOLUME_RATIO_EXCESSIVE:
+            score -= 1
+            reasons.append(f"-1 거래량 {vr:.1f}배 (과열)")
+        elif VOLUME_RATIO_NORMAL_MIN <= vr <= VOLUME_RATIO_NORMAL_MAX:
+            score += 0.5
+            reasons.append(f"+0.5 거래량 {vr:.1f}배 (정상)")
 
     # 진입 필수조건 (등급과 별도)
     required = _check_required(snap)
