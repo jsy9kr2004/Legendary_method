@@ -9,12 +9,12 @@
 | **시총 / 상장일 / 액면가** (M5.5) | KIS mst part2 | 매일 | KIS 계좌 필요 |
 | WICS 섹터 매핑 | wiseindex.com 크롤링 | 월 1회 | 무료 |
 | 네이버 금융 테마 | 네이버 금융 크롤링 | 월 1회 (7일 신선도 체크) | 무료 |
-| 장중 거래대금 순위 | KIS API `FHPST01710000` | 정기 4회 + 09:00~10:30 1~2초 | KIS 계좌 필요 |
-| 장중 종목 시세 | KIS API `FHKST01010100` | 정기 4회 + 상한가 폴링 + M6 모니터링 | KIS 계좌 필요 |
-| **분봉 시계열 OHLC** (M6, R12 봉 패턴 / R11 가속) | KIS API `FHKST03010200` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
-| **체결강도 VP** (M6, R10) | KIS API `inquire-ccnl` `체결강도` 필드 | 모니터링 종목 1~2초 | KIS 계좌 필요 |
-| **호가잔량** (M6, R10 보조 강등) | KIS API `inquire-asking-price-exp-ccn` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
-| **투자자별 순매수** (M6) | KIS API `inquire-investor` | 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| 장중 거래대금 순위 | KIS API `FHPST01710000` | 정기 4회 + M6 `/on` 상태일 때 1~2초 | KIS 계좌 필요 |
+| 장중 종목 시세 | KIS API `FHKST01010100` | 정기 4회 + 상한가 폴링 + M6 `/on` 상태 1~2초 | KIS 계좌 필요 |
+| **분봉 시계열 OHLC** (M6, R12 봉 패턴 / R11 가속) | KIS API `FHKST03010200` | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **체결강도 VP** (M6, R10) | KIS API `inquire-ccnl` `체결강도` 필드 | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **호가잔량** (M6, R10 보조 강등) | KIS API `inquire-asking-price-exp-ccn` | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **투자자별 순매수** (M6) | KIS API `inquire-investor` | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
 | **VI 발동 시각** (M6, R12.5) | KIS endpoint 미확정 — v0 분봉 ±10% 휴리스틱, v1 정밀 | 이벤트 | KIS 계좌 필요 |
 | **매수가/보유 상태** (M6, R15) | 텔레그램 `/buy` 명령 → 메모리 + JSON 영속 | 명령 시점 | — |
 | 시간외 단일가 | KIS API | 16:00~18:00 폴링 | KIS 계좌 필요 |
@@ -114,7 +114,9 @@ CREATE TABLE stock_themes (
 ### 장중
 
 ```
-09:00~10:30  → 모니터링 worker (M6, 평일만 자동 ON):
+/on ~ /off   → 모니터링 worker (M6, 24h 사용자 토글):
+               평일 09:00 자동 ON. /off 로만 종료 — 10:30 자동 OFF 폐지
+               (round 18). 사용자가 임의 시점에 /on/off 가능.
                주도주 + 사용자 추가 종목에 대해 1~2초 간격으로
                  - 분봉 거래대금 (FHKST03010200)
                  - 체결강도 (inquire-ccnl)
@@ -122,6 +124,8 @@ CREATE TABLE stock_themes (
                  - 투자자별 순매수 (inquire-investor)
                수집 → editMessageText로 텔레그램 메시지 갱신.
                전체 거래대금 30위 (R3 v1: 50위) 갱신은 30~60초 주기.
+               봇 명령 polling thread 는 데몬 시작 시 1회 띄워 24h 상시.
+               휴장일/주말 /on 도 허용되나 KIS 시세는 변동 없음 → 카드 정적.
 
 11:00         → 거래대금 50위 + 각 종목 시세 → 스냅샷 (정기 1차)
 13:00         → 동일 (정기 2차)
@@ -353,7 +357,7 @@ data/state/holdings.json
 |---|---|---|
 | 일봉 OHLCV (전종목) | ~1MB | ~250MB |
 | 장중 스냅샷 (4회) | ~50KB | ~12MB |
-| 모니터링 1초 로그 (M6, 09:00~10:30, 종목 5개 평균) | ~2MB | ~500MB |
+| 모니터링 1초 로그 (M6 `/on` 상태, 일 평균 90분 가동 기준, 종목 5개 평균) | ~2MB | ~500MB |
 | 레포트 마크다운 | ~30KB | ~8MB |
 | 메타 데이터 | 0 (월 1회) | ~5MB |
 
