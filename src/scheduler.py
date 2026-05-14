@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
+import threading
 from datetime import date, datetime
 from functools import wraps
 from pathlib import Path
@@ -817,11 +818,57 @@ def run() -> None:
         coalesce=True,
     )
 
+    # ── M7 PWA 대시보드 (옵션) ───────────────────────────────────────────────
+    # DASHBOARD_PWA_ENABLED=1 일 때만 uvicorn 을 별도 daemon thread 로 시작.
+    # session 은 scheduler/worker 와 공유 (_dashboard_session). FastAPI 가 worker
+    # tick 이 채운 last_payloads 를 WebSocket 으로 broadcast.
+    # bind: 기본 127.0.0.1. Tailscale 검증 시 환경변수 DASHBOARD_PWA_HOST 로
+    # 100.x.x.x 또는 0.0.0.0 지정 (dashboard-pwa.md §2.3 참조).
+    pwa_server = None
+    pwa_thread = None
+    if os.environ.get("DASHBOARD_PWA_ENABLED", "").lower() in ("1", "true", "yes"):
+        try:
+            import uvicorn  # noqa: WPS433
+
+            from src.dashboard.api import create_app
+
+            pwa_host = os.environ.get("DASHBOARD_PWA_HOST", "127.0.0.1")
+            pwa_port = int(os.environ.get("DASHBOARD_PWA_PORT", "8000"))
+            pwa_app = create_app(_dashboard_session)
+            pwa_config = uvicorn.Config(
+                pwa_app, host=pwa_host, port=pwa_port,
+                log_level="info", access_log=False,
+            )
+            pwa_server = uvicorn.Server(pwa_config)
+
+            def _run_pwa() -> None:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(pwa_server.serve())
+                finally:
+                    loop.close()
+
+            pwa_thread = threading.Thread(
+                target=_run_pwa, name="pwa-uvicorn", daemon=True,
+            )
+            pwa_thread.start()
+            logger.info(
+                f"[M7] PWA 대시보드 시작 — http://{pwa_host}:{pwa_port}/ "
+                "(Tailscale 인터페이스로 외부 접근)"
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[M7] PWA 시작 실패 — fallback 텔레그램 단독 운영: {e}")
+            pwa_server = None
+
     def _shutdown(signum, frame):
         logger.info("종료 시그널 수신 — 스케줄러 셧다운")
         scheduler.shutdown(wait=False)
         if _dashboard_command_stop is not None:
             _dashboard_command_stop.set()
+        if pwa_server is not None:
+            pwa_server.should_exit = True  # uvicorn graceful stop
         if settings.telegram_bot_token and settings.telegram_chat_id:
             try:
                 from src.dashboard.worker import cleanup_messages

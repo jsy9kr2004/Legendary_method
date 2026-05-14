@@ -195,8 +195,8 @@
 - [x] **WebSocket broadcast** — `session.last_payload_ts` 변경 감지 polling 1초 (worker tick 3초 + 1초 lag). 변경 시 전체 snapshot 송신 (diff 미구현, 페이로드 작아 OK)
 - [x] **REST 핸들러 = telegram_bot 핸들러 재사용** — `Command(kind=...)` 직접 생성 후 `apply_command(cmd, session, now_kst())` 호출. `_apply_buy` / `_apply_sell` / `add_manual` / `set_on/set_off` / `remove_manual_all` 한 군데서만 — 이중 구현 X
 - [x] **정적 HTML** — `src/dashboard/static/{index.html,app.js,manifest.json,icon.svg}`. Vanilla JS + Tailwind CDN. 종목별 카드 그리드 + 그룹 4컬럼 (보유/자동/부상/수동) + 보유 등록 모달 + 6자리 코드 추가 input + /on /off 버튼 + WS 자동 재연결 지수 백오프
-- [ ] **scheduler 통합** — `src/scheduler.py` `run()` 에 uvicorn 별도 thread 또는 `asyncio.run(uvicorn.Server.serve())` 추가. Worker thread (apscheduler) 와 FastAPI loop 공유 가능 여부 검증. host=127.0.0.1
-- [ ] **로컬 검증** — `localhost:8000` 에서 텔레그램 카드와 동일 정보 표시. mock 모드 demo fixture 동작 확인
+- [x] **scheduler 통합** — `src/scheduler.py` `run()` 에 `DASHBOARD_PWA_ENABLED=1` 환경변수 가드로 uvicorn 별도 daemon thread 시작. `DASHBOARD_PWA_HOST` (기본 127.0.0.1) / `DASHBOARD_PWA_PORT` (기본 8000). shutdown 시 `pwa_server.should_exit=True` graceful. 실패 시 텔레그램 단독 fallback (fail-loud) (2026-05-14)
+- [x] **로컬 검증 (demo)** — `python -m src.dashboard.serve_demo` 신규. mock session 에 1초 간격 데모 페이로드 갱신, FastAPI 만 띄워 PWA UI 검증. 실제 KIS/텔레그램 없이 카드 그리드 + WS broadcast + REST endpoints 동작 확인 완료 (2026-05-14). 실제 KIS 연결 검증은 사용자 데스크탑에서 `DASHBOARD_PWA_ENABLED=1 ./go serve` 로 수행
 
 **[Phase 2: 외부 접근]**
 
