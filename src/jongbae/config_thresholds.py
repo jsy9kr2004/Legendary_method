@@ -32,6 +32,29 @@ SECTOR_MIN_MEMBER_COUNT: int = 3
 # 한 주도섹터 당 주도주 후보 최대 개수. 회전율 기준 상위 N.
 LEADING_STOCK_TOP_PER_SECTOR: int = 1
 
+# 주도주 후보 자격: 절대 거래대금 N위 안에 들어야 한다.
+# 회전율만 보면 시총 작고 거래대금 작은 종목까지 1위로 잡혀 노이즈 종목이 올라옴.
+# 사용자 의도: "순수 거래 대금으로만 N위 내 들어야 한다." (30 → 50, 2026-05-12)
+LEADER_CANDIDATE_RANK_MAX: int = 50
+
+# 주도주 후보 자격: 일일 상승률이 이 임계 미만이어야 한다 (%).
+# 한국 일일 상하한 +30% 라서 +29~30% 종목은 사실상 상한가 도달/임박 → 거래정지 또는
+# 매수 불가. 종배는 "곧 상한가 도달할 후보" 진입을 노리는데 이미 도달한 종목은
+# 진입 불가능하므로 leader 후보에서 제외. 사용자 명시.
+LEADER_EXCLUDE_DAILY_RETURN_PCT: float = 29.0
+
+# 주도주 후보 자격: 일일 상승률이 이 임계 이상이어야 한다 (%).
+# 하한가 직전 종목도 거래대금/회전율이 터지는데, 인버스 매매를 안 하므로 후보에서 제외.
+# "거래대금이 갑자기 늘어나는 종목 = 주도주 후보"는 무조건 상승 중이어야 한다는
+# 사용자 명시. > 0 면 상승, == 0 은 보합도 제외(매수 의미 없음).
+LEADER_MIN_DAILY_RETURN_PCT: float = 0.0
+
+# 주도주 + 후보 자동 모니터링 풀 확장: 거래대금 50위 안에서 회전율 상위 N 개를
+# "후보"로 자동 모니터링에 추가. 주도섹터에 속하지 않더라도 시총 대비 거래대금이
+# 갑자기 늘어나는 종목을 first-mover 단계에서 잡기 위함. 사용자 명시.
+# MONITORING_MAX_CODES=10 안에서 leader 와 합쳐 들어감.
+CANDIDATE_POOL_TOP_N: int = 5
+
 
 # ── R3' 주도주 교체 상태 머신 (M6) ───────────────────────────────────────────
 
@@ -46,6 +69,12 @@ STRONG_RISE_ACCEL_RATIO: float = 10.0          # 가속배율 10배 = 실무 화
 
 # 자금 이탈 경보 — 가속배율 음수 (감소율).
 EXIT_ACCEL_RATIO: float = -0.4                 # 직전 30분 대비 -40% 이하
+
+# 1분봉 가속 — 더 빠른 first-mover / 이탈 시그널 (5분봉은 lag 3~5분).
+# 통설(i-whale 등): 직전 10분 평균 대비 3~5배 = 강한 진입 시그널.
+ONE_MIN_RISE_ACCEL_RATIO: float = 3.0          # 1분봉 가속 3배 이상 → ⚡ 진입
+ONE_MIN_RISE_MIN_BAR_VALUE: int = 500_000_000  # 동시 만족: 1분봉 거래대금 ≥ 5억
+ONE_MIN_EXIT_ACCEL_RATIO: float = 0.4          # 1분봉 가속 0.4 미만 → ⚠ 이탈
 
 # GRACE — 실제 교체 후 유예기 (a1, a2 함께 표시).
 GRACE_PERIOD_SECONDS: int = 5 * 60             # 5분
@@ -80,7 +109,7 @@ def monitoring_interval_seconds(n_codes: int) -> int:
     return 0  # 거부
 
 
-MONITORING_MAX_CODES: int = 10  # 이 이상은 추가 거부
+MONITORING_MAX_CODES: int = 4   # 텔레그램 화면 한도 — 4개 넘으면 한 번에 안 보임
 
 # 분봉 가속배율 계산 윈도우.
 ACCEL_RECENT_BAR_MINUTES: int = 5    # 최근 5분봉 거래대금

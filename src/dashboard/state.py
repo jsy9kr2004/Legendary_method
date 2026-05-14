@@ -35,8 +35,9 @@ from src.jongbae.config_thresholds import (
 
 
 class Source(str, Enum):
-    AUTO = "auto"      # 주도주 자동 추가
+    AUTO = "auto"      # 주도주 (주도섹터 결정 + 회전율 1위)
     MANUAL = "manual"  # 사용자 6자리 코드 입력
+    RISING = "rising"  # 거래대금 급증 후보 — 첫 알림 + 2분 유지, 매매 결정 시 사용자가 MANUAL 로 승격
 
 
 class LeaderState(str, Enum):
@@ -53,6 +54,9 @@ class MonitoredStock:
     added_at: datetime
     message_id: int | None = None    # Telegram message id (편집용)
     themes: list[str] = field(default_factory=list)
+    # RISING 한정: 자동 만료 시각 (첫 알림 + 2분 default). None 이면 만료 없음(AUTO/MANUAL).
+    # 만료되면 prune_expired() 가 제거 + 텔레그램 메시지 delete.
+    expires_at: datetime | None = None
 
 
 @dataclass
@@ -97,10 +101,26 @@ def in_monitoring_window(now: datetime) -> bool:
 class MonitoringSession:
     """대시보드 한 세션의 전체 상태."""
     paused: bool = False
+    # 시간창(평일 09:00~10:30) 가드를 우회. /on 명령으로 강제 ON, /off 로 해제.
+    # 평일 자동 09:00~10:30 외에 사용자가 임의 시각(8시/11시 등)에 켜고 싶을 때.
+    force_on: bool = False
     monitored: dict[str, MonitoredStock] = field(default_factory=dict)
     trackers: dict[str, LeaderTracker] = field(default_factory=dict)  # sector -> tracker
     # /off 시 카드 메시지 정리를 tick job 이 1회 수행하기 위한 플래그.
     off_cleanup_pending: bool = False
+    # 알림 디바운스: (code, kind) → 마지막 푸시했을 때의 accel 값.
+    # 같은 종목·같은 종류 알림이 5초마다 반복되지 않도록 edge-trigger 가드.
+    # 의미있게 더 악화되거나(0.1배 이상 차이) 한 번 정상권(accel ≥ 1.0) 복귀했다
+    # 다시 트리거되면 재푸시. 자세한 룰은 worker.py 알림 분기 참조.
+    last_alert_accel: dict[tuple[str, str], float] = field(default_factory=dict)
+    # 호가 잔량 색상 추적: code → 직전 색상('green'/'yellow'/'red'). 색상 전환 시 alert.
+    last_asking_color: dict[str, str] = field(default_factory=dict)
+    # 모니터링 메시지 재배치 플래그.
+    # 텔레그램은 메시지 순서 변경 불가 — 새 alert 가 발송되면 모니터링 메시지가
+    # 위로 밀려난다. 이 flag 가 True 면 다음 tick 에서 모든 모니터링 메시지를
+    # delete + 새로 send (silent) 해서 화면 최하단으로 재배치한다.
+    # set 트리거: ⭐ 자동 모니터링 추가/제거, ⚡/⚠ 알림 발송, 사용자 명령 응답.
+    reposition_pending: bool = False
 
     # ── 종목 추가/제거 ────────────────────────────────────────────────────────
 
@@ -115,10 +135,29 @@ class MonitoringSession:
             return False, f"잘못된 종목코드: {code} (6자리 숫자 필요)"
 
         if code in self.monitored:
-            existing = self.monitored.pop(code)
+            existing = self.monitored[code]
+            if existing.source == Source.RISING:
+                # 부상 후보 → 수동 승격 (만료 해제).
+                existing.source = Source.MANUAL
+                existing.expires_at = None
+                existing.added_at = now
+                return True, f"🔵 {code} {existing.name} — 부상 후보 → 수동 승격"
+            if existing.source == Source.AUTO:
+                # 자동 주도주 → 수동 승격 (보유 잠금).
+                # 사용자가 매수 후 같은 코드 입력 시 AUTO 가 +29% 도달해도 monitored
+                # 에서 빠지지 않게 MANUAL 로 잠금. 다시 입력하면 해제(아래 MANUAL 분기).
+                existing.source = Source.MANUAL
+                existing.added_at = now
+                return True, f"🔵 {code} {existing.name} — 자동 → 수동 승격 (보유 잠금)"
+            # MANUAL 이면 토글 해제
+            self.monitored.pop(code)
             return True, f"{code} {existing.name} — 모니터링 해제"
 
-        if len(self.monitored) >= MONITORING_MAX_CODES:
+        # MONITORING_MAX_CODES 는 core(AUTO+MANUAL) 한도 — RISING 카운트 제외.
+        core_count = sum(
+            1 for m in self.monitored.values() if m.source != Source.RISING
+        )
+        if core_count >= MONITORING_MAX_CODES:
             return False, f"⚠ 모니터링 종목 최대 {MONITORING_MAX_CODES}개 — 추가 거부 (해제 후 재시도)"
 
         self.monitored[code] = MonitoredStock(
@@ -193,7 +232,8 @@ class MonitoringSession:
                 self.monitored.pop(code)
                 changes.append(f"⭐→💤 {code} {entry.name} 자동 모니터링 종료")
 
-        # 자동분 추가/갱신
+        # 자동분 추가/갱신. MONITORING_MAX_CODES 는 core(AUTO+MANUAL) 한도 —
+        # RISING(부상 후보)은 별도 카운트하므로 슬롯 계산에서 제외.
         for ld in leaders:
             code = ld["code"]
             if code in self.monitored:
@@ -201,7 +241,10 @@ class MonitoringSession:
                 m = self.monitored[code]
                 m.themes = list(set(m.themes + ld.get("themes", [])))
                 continue
-            if len(self.monitored) >= MONITORING_MAX_CODES:
+            core_count = sum(
+                1 for m in self.monitored.values() if m.source != Source.RISING
+            )
+            if core_count >= MONITORING_MAX_CODES:
                 logger.warning(
                     f"모니터링 슬롯 가득 ({MONITORING_MAX_CODES}) — 자동 주도주 {code} 추가 보류"
                 )
@@ -216,6 +259,97 @@ class MonitoringSession:
             changes.append(f"⭐ 자동 모니터링 추가: {ld.get('name', code)} ({code})")
 
         return changes
+
+    # ── 부상 후보 (RISING) ────────────────────────────────────────────────────
+
+    def update_rising_candidates(
+        self,
+        candidates: list[dict[str, Any]],
+        now: datetime,
+        ttl_minutes: int = 2,
+        max_count: int = 5,
+    ) -> list[str]:
+        """거래대금 급증 후보를 RISING source 로 등록/갱신.
+
+        - 신규: TTL 분 후 만료 (default 2분). 신규 진입 변경 사항 리스트로 반환.
+        - 기존 RISING: candidates 안에 다시 들어있으면 expires_at 연장 (rolling).
+            없으면 그대로 두고 prune_expired 시점에 정리.
+        - AUTO/MANUAL 이미 있으면 RISING 추가 skip (중복 방지).
+
+        Args:
+            candidates: identify_rising_candidates 결과.
+            now: 현재 시각.
+            ttl_minutes: 신규 진입 시 유지 분.
+            max_count: 동시 RISING 종목 한도.
+
+        Returns:
+            첫 진입 종목 변경 메시지 리스트 (alert 발송용).
+        """
+        from datetime import timedelta
+
+        changes: list[str] = []
+        seen_in_pool: set[str] = set()
+        ttl = timedelta(minutes=ttl_minutes)
+
+        for cand in candidates:
+            code = cand["code"]
+            seen_in_pool.add(code)
+            if code in self.monitored:
+                m = self.monitored[code]
+                if m.source == Source.RISING:
+                    # 풀에 계속 있으면 TTL 연장 (rolling window)
+                    m.expires_at = now + ttl
+                    # 테마 라벨 갱신 (있다면)
+                    new_themes = cand.get("themes", [])
+                    if new_themes:
+                        m.themes = list(set(m.themes + new_themes))
+                # AUTO/MANUAL 이면 RISING 으로 덮어쓰지 않음
+                continue
+            # 신규 RISING. core 슬롯은 침범하지 않으나 RISING 한도는 별도.
+            rising_count = sum(
+                1 for m in self.monitored.values() if m.source == Source.RISING
+            )
+            if rising_count >= max_count:
+                continue
+            self.monitored[code] = MonitoredStock(
+                code=code,
+                name=cand.get("name", code),
+                source=Source.RISING,
+                added_at=now,
+                themes=list(cand.get("themes", [])),
+                expires_at=now + ttl,
+            )
+            changes.append(f"⚡ {cand.get('name', code)} ({code})")
+        return changes
+
+    def prune_expired(self, now: datetime) -> list[str]:
+        """RISING 중 expires_at 지난 종목 제거. 제거된 code 리스트 반환.
+
+        호출자가 텔레그램 메시지도 함께 delete 한다.
+        """
+        expired: list[str] = []
+        for code in list(self.monitored.keys()):
+            m = self.monitored[code]
+            if m.source != Source.RISING:
+                continue
+            if m.expires_at is not None and now >= m.expires_at:
+                self.monitored.pop(code)
+                expired.append(code)
+        return expired
+
+    def promote_rising_to_manual(self, code: str, now: datetime) -> bool:
+        """RISING → MANUAL 승격 (사용자 매매 결정 시).
+
+        Returns:
+            True 면 승격 성공. 종목이 없거나 RISING 이 아니면 False.
+        """
+        m = self.monitored.get(code)
+        if m is None or m.source != Source.RISING:
+            return False
+        m.source = Source.MANUAL
+        m.expires_at = None
+        m.added_at = now
+        return True
 
     # ── LeaderTracker 상태 머신 ──────────────────────────────────────────────
 

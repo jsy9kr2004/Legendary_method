@@ -133,6 +133,13 @@ def fetch_minute_bars(
     df = pd.DataFrame(records, columns=MINUTE_BAR_COLUMNS)
     # 오름차순 (시간순)
     df = df.sort_values(["date", "time"]).reset_index(drop=True)
+    # KIS acml_tr_pbmn 는 장 시작부터의 **누적 거래대금**.
+    # 호출자 (compute_accel_ratio, worker recent_value sum 등) 는
+    # 분봉당 거래대금을 가정하고 sum 한다 → diff 로 변환해야 정합.
+    # 첫 봉은 diff NaN → 0 (응답은 30개라 한 봉 손실 영향 미미).
+    df["trading_value"] = (
+        df["trading_value"].diff().fillna(0).clip(lower=0).astype("int64")
+    )
     return df
 
 

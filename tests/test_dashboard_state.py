@@ -87,6 +87,92 @@ def test_remove_manual_all_keeps_auto():
     assert "075180" in s.monitored  # 자동은 유지
 
 
+def test_rising_basic_add_and_ttl():
+    s = MonitoringSession()
+    now = datetime(2026, 5, 13, 9, 30)
+    changes = s.update_rising_candidates(
+        [{"code": "012200", "name": "계양전기", "themes": []}], now, ttl_minutes=2,
+    )
+    assert "012200" in s.monitored
+    assert s.monitored["012200"].source == Source.RISING
+    assert s.monitored["012200"].expires_at == now + timedelta(minutes=2)
+    assert len(changes) == 1 and "012200" in changes[0]
+
+
+def test_rising_ttl_extends_when_still_in_pool():
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 13, 9, 30)
+    s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
+    t1 = t0 + timedelta(minutes=1)
+    s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t1)
+    # 풀에 다시 들어오면 TTL rolling
+    assert s.monitored["012200"].expires_at == t1 + timedelta(minutes=2)
+
+
+def test_prune_expired_removes_only_rising():
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 13, 9, 30)
+    s.add_manual("005930", t0)
+    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["T"]}], t0)
+    s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0, ttl_minutes=2)
+    t_future = t0 + timedelta(minutes=3)
+    expired = s.prune_expired(t_future)
+    assert expired == ["012200"]
+    assert "005930" in s.monitored  # MANUAL 유지
+    assert "075180" in s.monitored  # AUTO 유지
+
+
+def test_auto_promote_to_manual_via_add():
+    """AUTO 종목 코드 재입력 시 MANUAL 로 승격 (보유 잠금) — +29% 도달 후에도 유지."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 13, 9, 30)
+    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["전기/전선"]}], t0)
+    assert s.monitored["075180"].source == Source.AUTO
+    # 사용자가 매수 후 같은 코드 입력 → MANUAL 승격
+    changed, msg = s.add_manual("075180", t0 + timedelta(minutes=1))
+    assert changed is True
+    assert "승격" in msg
+    assert s.monitored["075180"].source == Source.MANUAL
+    # AUTO 풀에서 빠진(=29% 도달 시뮬) 상황에서도 monitored 유지 확인
+    s.update_auto_leaders([], t0 + timedelta(minutes=2))  # leader 다 빠짐
+    assert "075180" in s.monitored  # MANUAL 이라 유지
+    # 다시 같은 코드 입력 → 해제
+    changed, msg = s.add_manual("075180", t0 + timedelta(minutes=3))
+    assert changed is True
+    assert "해제" in msg
+    assert "075180" not in s.monitored
+
+
+def test_rising_promote_to_manual_via_add():
+    """RISING 종목을 /add 로 누르면 MANUAL 승격 (해제 X, 만료 해제)."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 13, 9, 30)
+    s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
+    changed, msg = s.add_manual("012200", t0 + timedelta(minutes=1))
+    assert changed is True
+    assert "승격" in msg
+    m = s.monitored["012200"]
+    assert m.source == Source.MANUAL
+    assert m.expires_at is None
+
+
+def test_rising_does_not_consume_core_slot():
+    """RISING 은 core(AUTO+MANUAL) 한도(4) 와 별개로 카운트."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 13, 9, 30)
+    # core 4개 채움
+    for i in range(MONITORING_MAX_CODES):
+        s.add_manual(f"00000{i}"[-6:], t0)
+    # RISING 추가 — 슬롯 부족 메시지 없어야
+    s.update_rising_candidates(
+        [{"code": "999990", "name": "X", "themes": []}], t0, ttl_minutes=2,
+    )
+    assert "999990" in s.monitored
+    # 새 MANUAL 은 여전히 거부
+    changed, msg = s.add_manual("888880", t0)
+    assert changed is False and "최대" in msg
+
+
 def test_set_on_off_idempotent():
     """/on /off 는 멱등 — 같은 상태 재호출 시 (False, '이미 ...') 반환."""
     s = MonitoringSession()
