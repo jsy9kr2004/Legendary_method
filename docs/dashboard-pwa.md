@@ -246,10 +246,72 @@ PWA 측은 빌드 도구 없이 CDN 만 사용:
 
 ## 10. 운영
 
-- systemd 서비스 — 기존 `deploy/jongbae.service` 가 FastAPI 도 같이 띄움 (단일 프로세스)
-- 로그 — `loguru` 통일, FastAPI access log 도 같은 채널
-- 헬스체크 — `/api/health` endpoint (worker tick 마지막 시각 / KIS 토큰 / holdings.json 존재 여부)
-- 정전/재시작 — systemd `Restart=always`. holdings.json 은 이미 영속, 시계열은 메모리 손실 후 worker 가 새로 채움
+### 10.1 환경변수 (.env)
+
+기존 `.env` 에 다음 3 줄만 추가:
+
+```bash
+DASHBOARD_PWA_ENABLED=1            # 0/false/no 이면 운영에 영향 X (기본)
+DASHBOARD_PWA_HOST=127.0.0.1       # Tailscale 검증 시 100.x.x.x 또는 0.0.0.0
+DASHBOARD_PWA_PORT=8000
+```
+
+`deploy/jongbae.service` 가 이미 `EnvironmentFile=.env` 패턴이라 service 파일
+수정 X. `.env` 갱신 후 `sudo systemctl restart jongbae` 만.
+
+### 10.2 외부 접근
+
+| 옵션 | 권고 상황 | 명령 |
+|---|---|---|
+| **로컬만** (`127.0.0.1`) | 데스크탑에서 직접 사용 | 기본 |
+| **SSH 포트 포워딩** | 검증 단계 / 외부 접속 빈도 낮음 | iOS Termius 의 Port Forwarding (Local 8000→8000) |
+| **Tailscale** (권고) | 평소 운영 — 아이패드/폰 어디서나 | `DASHBOARD_PWA_HOST=0.0.0.0` + Tailscale 자체 ACL |
+| **0.0.0.0 + 라우터 포트포워딩** | 영구 비권장 | 인터넷에 직접 노출 — 거래 메타 데이터 유출 위험 |
+
+### 10.3 systemd 운영 라이프사이클
+
+```bash
+# 최초 적용
+cd ~/Legendary_method
+git pull && cp .env.example .env  # 처음만
+$EDITOR .env  # KIS/텔레그램/PWA 환경변수 채우기
+sudo bash deploy/install.sh        # 또는 기존 설치 → systemctl restart
+systemctl status jongbae           # active (running)
+journalctl -u jongbae -f           # 로그 추적 — "[M7] PWA 대시보드 시작" 확인
+
+# 환경변수만 갱신 시
+$EDITOR .env
+sudo systemctl restart jongbae
+
+# PWA 비활성화 (텔레그램만 운영)
+sed -i 's/DASHBOARD_PWA_ENABLED=1/DASHBOARD_PWA_ENABLED=0/' .env
+sudo systemctl restart jongbae
+```
+
+### 10.4 헬스체크
+
+`GET /api/health` 응답 예시:
+
+```json
+{
+  "ok": true,
+  "paused": false,
+  "monitored_count": 3,
+  "last_tick": "2026-05-15T10:23:45+09:00",
+  "stale_sec": 0.8,
+  "now": "2026-05-15T10:23:45+09:00"
+}
+```
+
+- `stale_sec > 10` 이면 worker tick 이 막혔다는 신호 → `journalctl -u jongbae` 확인
+- PWA UI 헤더에도 "⚠ stale" 표시 — 사용자가 자체 인지
+
+### 10.5 정전 / 재시작 복구
+
+- systemd `Restart=always` — 프로세스 죽으면 자동 재시작
+- `holdings.json` 은 atomic write 영속 — 보유 종목 손실 X
+- 분봉/VP 시계열은 메모리만 — 재시작 후 워밍업 5분 내 정상 (현재 영속화는 후속 트랙)
+- PWA WebSocket 클라이언트는 자동 재연결 (지수 백오프 1s/2s/4s/8s/cap 30s)
 
 ---
 

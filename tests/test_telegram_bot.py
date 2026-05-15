@@ -325,6 +325,70 @@ def test_apply_buy_code_only_without_last_price_errors(tmp_path, monkeypatch):
     assert "091340" not in holdings
 
 
+def test_apply_buy_off_hours_note_appended(tmp_path, monkeypatch):
+    """장 시간 외 buy 는 등록 진행 + '장 시간 외' 안내 한 줄 추가."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
+
+    s = MonitoringSession()
+    # 평일 16:30 — 정규장 (09:00~15:30) 외
+    now = datetime(2026, 5, 11, 16, 30)
+    msg = bot.apply_command(
+        bot.parse_command("/buy 091340 91300"), s, now,
+    )
+    assert "장 시간 외" in msg
+    assert "보유 모드 진입" in msg
+    # 등록은 진행됨
+    assert "091340" in et.load_holdings()
+
+
+def test_apply_buy_weekend_off_hours_note(tmp_path, monkeypatch):
+    """주말 buy 도 장 시간 외 안내."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
+
+    s = MonitoringSession()
+    # 토요일
+    now = datetime(2026, 5, 16, 10, 0)
+    msg = bot.apply_command(
+        bot.parse_command("/buy 091340 91300"), s, now,
+    )
+    assert "장 시간 외" in msg
+
+
+def test_apply_buy_in_regular_session_no_note(tmp_path, monkeypatch):
+    """정규장 시간 안에선 장 시간 외 안내 X."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    import src.notify.telegram_bot as bot
+    importlib.reload(bot)
+
+    s = MonitoringSession()
+    # 평일 11:30 — 정규장
+    now = datetime(2026, 5, 11, 11, 30)
+    msg = bot.apply_command(
+        bot.parse_command("/buy 091340 91300"), s, now,
+    )
+    assert "장 시간 외" not in msg
+    assert "보유 모드 진입" in msg
+
+
 def test_apply_sell_removes_holding(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     import importlib

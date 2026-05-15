@@ -216,6 +216,15 @@ def _apply_buy(
     if price is None:
         price = session.last_prices.get(code)
         if price is None or price <= 0:
+            # M7 wiring (PWA): 카드 페이로드의 current price 도 fallback.
+            # 데모 환경 / 워밍업 중 / 종목이 모니터링 풀에 갓 들어와 last_prices
+            # 가 비어 있어도 보유 등록 가능.
+            payload = session.last_payloads.get(code)
+            if payload:
+                cur = (payload.get("price") or {}).get("current")
+                if cur and cur > 0:
+                    price = float(cur)
+        if price is None or price <= 0:
             return (
                 f"⚠ {code} — 최근 시세 미확보. "
                 f"`/buy {code} PRICE` 로 매수가를 명시해 주세요."
@@ -236,13 +245,34 @@ def _apply_buy(
     sl = holding.stop_loss_price
     tp1 = holding.take_profit_1_price
     tp2 = holding.take_profit_2_price
+    # 장 시간 외 안내 — 등록은 진행하되 R15 트리거가 다음 정규장부터 의미를 가짐.
+    off_hours = not _is_regular_session(now)
+    off_hours_note = (
+        "\n⏸ 장 시간 외 — 다음 정규장(평일 09:00~15:30) 부터 시그널 평가 시작"
+        if off_hours else ""
+    )
     return (
         f"🟡 {code} {name} — 보유 모드 진입\n"
         f"매수가 {int(price):,}  진입 {now.strftime('%H:%M:%S')}\n"
         f"손절선 {int(sl):,} (-1.5%)\n"
         f"익절 1차 {int(tp1):,} (+2.0%) / 2차 {int(tp2):,} (+3.5%)\n"
         f"시간 손절 {minutes}분 후 +0.5% 미달 시 알림"
+        f"{off_hours_note}"
     )
+
+
+def _is_regular_session(now: datetime) -> bool:
+    """KRX 정규장 (평일 09:00~15:30) 여부.
+
+    M7 PWA / 텔레그램 /buy 명령에서 장 시간 외 안내용. NXT 프리장은 v0 미지원
+    (CLAUDE.md). 휴장일 정밀 캘린더(`calendar_kr.is_business_day`) 사용.
+    """
+    from src.calendar_kr import is_business_day
+
+    if not is_business_day(now.date()):
+        return False
+    t = now.time()
+    return (t.hour, t.minute) >= (9, 0) and (t.hour, t.minute) <= (15, 30)
 
 
 def _apply_sell(code: str, session: MonitoringSession) -> str:

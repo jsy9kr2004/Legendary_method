@@ -11,6 +11,7 @@
     reconnectAttempt: 0,
     cardEls: new Map(), // code -> DOM element
     pendingBuyCode: null,
+    lastSnapshot: null, // 마지막 받은 snapshot — stale 검사용
   };
 
   // ── DOM helpers ────────────────────────────────────────────────────────────
@@ -131,14 +132,34 @@
     return el;
   }
 
+  function refreshStaleIndicator() {
+    const snap = state.lastSnapshot;
+    if (!snap || !snap.updated_at) {
+      $("#updated-at").textContent = "갱신 —";
+      $("#updated-at").className = "text-xs text-slate-500 ml-auto";
+      return;
+    }
+    const ts = new Date(snap.updated_at);
+    const ageSec = (Date.now() - ts.getTime()) / 1000;
+    const stale = ageSec > 10;
+    $("#updated-at").textContent =
+      (stale ? "⚠ stale " : "갱신 ") +
+      ts.toLocaleTimeString("ko-KR") +
+      (stale ? ` (${Math.round(ageSec)}s)` : "");
+    $("#updated-at").className = stale
+      ? "text-xs text-amber-400 ml-auto"
+      : "text-xs text-slate-500 ml-auto";
+  }
+
   function applySnapshot(snap) {
     if (!snap) return;
+    state.lastSnapshot = snap;
     $("#session-state").textContent = snap.paused ? "/off" : "/on";
     $("#session-state").className = snap.paused
       ? "text-xs px-2 py-0.5 rounded bg-rose-800 text-rose-200"
       : "text-xs px-2 py-0.5 rounded bg-emerald-800 text-emerald-200";
     $("#monitored-count").textContent = `${(snap.stocks || []).length}종목`;
-    $("#updated-at").textContent = snap.updated_at ? "갱신 " + new Date(snap.updated_at).toLocaleTimeString("ko-KR") : "갱신 —";
+    refreshStaleIndicator();
 
     // 그룹별로 분배
     const groups = { auto: [], rising: [], manual: [], hold: [] };
@@ -300,4 +321,6 @@
 
   // ── Boot ───────────────────────────────────────────────────────────────────
   connectWS();
+  // broadcast 안 들어와도 stale 표시는 1초마다 자체 갱신
+  setInterval(refreshStaleIndicator, 1000);
 })();

@@ -206,8 +206,8 @@
 - [ ] **Tailscale 설정** — 데스크탑 + 아이패드 + 폰 한정. 도메인/Cloudflare 불필요. FastAPI 는 `127.0.0.1` + Tailscale 인터페이스만 bind (`0.0.0.0` 금지)
 - [ ] **HTTPS** — Tailscale MagicDNS / `tailscale serve` TLS
 - [ ] **PWA manifest + Service Worker** — 아이패드 홈화면 풀스크린 등록. offline cache 는 정적 자산만 (데이터는 WS)
-- [ ] **WebSocket 자동 재연결** — 지수 백오프 (1s/2s/4s/8s, cap 30s). 재연결 시 snapshot 재수신
-- [ ] **stale 표시** — 마지막 tick 으로부터 10s 초과 시 카드 ⚠ 마크 + 헤더 색상 흐림
+- [x] **WebSocket 자동 재연결** — 지수 백오프 1s/2s/4s/8s/cap 30s (`app.js`). 재연결 시 snapshot 재수신
+- [x] **stale 표시** — `state.lastSnapshot.updated_at` 기준 1초 주기 self-check, 10s 초과 시 헤더 `⚠ stale (Ns)` 호박색 (2026-05-15)
 
 **[Phase 3: 보유 토글 버튼 UI]**
 
@@ -215,7 +215,7 @@
 - [ ] **보유 등록 modal** — 가격 input (기본 현재가 자동 보충 / 수동 override) + TIME_STOP_MIN 옵션 input
 - [ ] **즉시 카드 모드 전환** — POST `/api/holdings` 응답 후 worker tick 기다리지 않고 optimistic UI. 서버 broadcast 도착 시 reconcile
 - [ ] **텔레그램 동기화 검증** — PWA 에서 보유 등록 → 텔레그램 카드도 [보유] 모드 전환되는지 확인
-- [ ] **장 시간 외 가드** — 장 시간 외 보유 등록 시 안내 ("장 시간 외 — 다음 거래일 09:00 ON 시 평가 시작")
+- [x] **장 시간 외 가드** — `_apply_buy` 가 KRX 정규장(평일 09:00~15:30) 외 등록 시 안내 한 줄 추가 ("⏸ 장 시간 외 — 다음 정규장부터 시그널 평가 시작"). 등록은 진행. `_is_regular_session()` 헬퍼 + 3 테스트 케이스 (2026-05-15)
 - [ ] **수동 종목 추가** — 6자리 코드 입력 input → POST `/api/watchlist` → 텔레그램 `6자리 숫자` 토글과 동일 핸들러
 
 **[Phase 4: UX 개선 — 선택]**
