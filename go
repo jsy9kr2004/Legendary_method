@@ -139,7 +139,7 @@ cmd_status() {
             echo "[go] PWA  DISABLED  (.env 의 DASHBOARD_PWA_ENABLED=1 로 켜기)"
         fi
         if is_alive "$DEMO_PID_FILE"; then
-            echo "[go] PWA  DEMO 별도 실행 중 (PID=$(cat "$DEMO_PID_FILE"))"
+            echo "[go] DEMO 별도 실행 중 (PID=$(cat "$DEMO_PID_FILE")) — ./go demo stop 으로 종료"
         fi
         if [[ -f "$WATCHDOG_LOG" ]]; then
             echo "--- 최근 watchdog 로그 ---"
@@ -149,7 +149,7 @@ cmd_status() {
     fi
     echo "[go] not running"
     if is_alive "$DEMO_PID_FILE"; then
-        echo "[go] PWA DEMO 만 실행 중 (PID=$(cat "$DEMO_PID_FILE"))"
+        echo "[go] DEMO 만 실행 중 (PID=$(cat "$DEMO_PID_FILE")) — ./go demo stop 으로 종료"
     fi
     return 1
 }
@@ -180,7 +180,7 @@ cmd_stop() {
     fi
     if is_alive "$DEMO_PID_FILE"; then
         echo "[go] PWA 데모도 함께 종료"
-        cmd_pwa_demo_stop
+        cmd_demo_stop
         stopped_any=1
     fi
     if (( stopped_any == 0 )); then
@@ -284,41 +284,40 @@ cmd_start() {
 
 # ──────────────────── PWA 데모 (검증용) ────────────────────
 
-cmd_pwa_demo() {
+cmd_demo_start() {
     ensure_venv
     if is_alive "$DEMO_PID_FILE"; then
-        echo "[go] PWA 데모 이미 실행 중 (PID=$(cat "$DEMO_PID_FILE"))"
+        echo "[go] 데모 이미 실행 중 (PID=$(cat "$DEMO_PID_FILE"))"
         return 0
     fi
     mkdir -p "$LOG_DIR"
-    echo "[go] PWA 데모 시작 (mock 데이터 — KIS/텔레그램 무관) → $DEMO_LOG"
+    echo "[go] 데모 시작 (mock 데이터 — KIS/텔레그램 무관) → $DEMO_LOG"
     setsid nohup "$PY" -m src.dashboard.serve_demo </dev/null >"$DEMO_LOG" 2>&1 &
     local pid=$!
     echo "$pid" > "$DEMO_PID_FILE"
     disown $pid 2>/dev/null || true
-    # 부팅 대기
     local i
     for i in 1 2 3 4 5; do
         if curl -fsS --max-time 1 "http://127.0.0.1:8000/api/health" >/dev/null 2>&1; then
-            echo "[go] PWA 데모 → http://127.0.0.1:8000/  PID=$pid"
-            echo "[go] 중지: ./go pwa-demo-stop   로그: tail -f $DEMO_LOG"
+            echo "[go] 데모 → http://127.0.0.1:8000/  PID=$pid"
+            echo "[go] 중지: ./go demo stop   로그: tail -f $DEMO_LOG"
             return 0
         fi
         sleep 1
     done
-    echo "[go] PWA 데모 부팅 실패. $DEMO_LOG 확인" >&2
+    echo "[go] 데모 부팅 실패. $DEMO_LOG 확인" >&2
     return 1
 }
 
-cmd_pwa_demo_stop() {
+cmd_demo_stop() {
     if ! is_alive "$DEMO_PID_FILE"; then
-        echo "[go] PWA 데모 실행 중 아님"
+        echo "[go] 데모 실행 중 아님"
         rm -f "$DEMO_PID_FILE"
         return 0
     fi
     local pid
     pid="$(cat "$DEMO_PID_FILE")"
-    echo "[go] PWA 데모 종료 PID=$pid"
+    echo "[go] 데모 종료 PID=$pid"
     kill -TERM "$pid" 2>/dev/null || true
     local i
     for i in 1 2 3 4 5; do
@@ -330,6 +329,26 @@ cmd_pwa_demo_stop() {
     fi
     rm -f "$DEMO_PID_FILE"
     echo "[go] 종료됨"
+}
+
+cmd_demo() {
+    local sub="${1:-help}"
+    shift || true
+    case "$sub" in
+        start)          cmd_demo_start ;;
+        stop)           cmd_demo_stop ;;
+        help|-h|--help)
+            cat <<'EOF'
+./go demo start    PWA 데모 시작 (mock 데이터 — KIS/텔레그램 무관)
+./go demo stop     PWA 데모 종료
+EOF
+            ;;
+        *)
+            echo "[go] unknown: ./go demo $sub" >&2
+            echo "    사용법: ./go demo start | stop" >&2
+            return 2
+            ;;
+    esac
 }
 
 cmd_logs() {
@@ -369,8 +388,8 @@ Legendary Method — 간편 실행 스크립트
   setup       venv 생성 + 의존성 설치 (idempotent)
   test        pytest 실행
 
-  pwa-demo       PWA UI 검증용 mock 서버 (KIS/텔레그램 무관, 백그라운드)
-  pwa-demo-stop  pwa-demo 종료
+  demo start     PWA UI 검증용 mock 서버 (KIS/텔레그램 무관, 백그라운드)
+  demo stop      PWA 데모 종료
 
 처음 실행:
   cp .env.example .env       # 토큰 + DASHBOARD_PWA_ENABLED=1 등 입력
@@ -386,8 +405,8 @@ PWA 대시보드:
     DASHBOARD_PWA_PORT=8000
 
   검증 (KIS/텔레그램 안 만지고 UI 만 보기):
-    ./go pwa-demo             # 백그라운드 mock 서버 시작
-    ./go pwa-demo-stop        # 종료
+    ./go demo start           # 백그라운드 mock 서버 시작
+    ./go demo stop            # 종료
 
 watchdog 정책:
   - scheduler가 죽으면 5초 후 자동 재시작 (PWA daemon thread 도 함께 재기동)
@@ -413,8 +432,7 @@ case "$cmd" in
     status)             cmd_status ;;
     logs)               cmd_logs ;;
     test)               cmd_test "$@" ;;
-    pwa-demo)           cmd_pwa_demo ;;
-    pwa-demo-stop)      cmd_pwa_demo_stop ;;
+    demo)               cmd_demo "$@" ;;
     help|-h|--help|"")  cmd_help ;;
     __watchdog__)       run_watchdog ;;
     *)
