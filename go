@@ -25,6 +25,33 @@ LOG_DIR="$ROOT/logs"
 PID_FILE="$ROOT/.go.pid"
 CHILD_PID_FILE="$ROOT/.go.child.pid"
 WATCHDOG_LOG="$LOG_DIR/watchdog.log"
+DEMO_PID_FILE="$ROOT/.go.pwa-demo.pid"
+DEMO_LOG="$LOG_DIR/pwa-demo.log"
+
+# ──────────────────── .env 헬퍼 (PWA 상태 표시용) ────────────────────
+
+# .env 에서 키 값을 추출. 없으면 빈 문자열.
+env_get() {
+    local key="$1"
+    [[ -f "$ROOT/.env" ]] || { echo ""; return; }
+    grep -E "^${key}=" "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- \
+        | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^"//; s/"$//'
+}
+
+pwa_enabled() {
+    local v
+    v="$(env_get DASHBOARD_PWA_ENABLED | tr '[:upper:]' '[:lower:]')"
+    [[ "$v" == "1" || "$v" == "true" || "$v" == "yes" ]]
+}
+
+pwa_url() {
+    local host port
+    host="$(env_get DASHBOARD_PWA_HOST)"; host="${host:-127.0.0.1}"
+    port="$(env_get DASHBOARD_PWA_PORT)"; port="${port:-8000}"
+    # bind=0.0.0.0 이면 로컬 curl 은 127.0.0.1 이 자연스러움
+    [[ "$host" == "0.0.0.0" ]] && host="127.0.0.1"
+    echo "http://${host}:${port}"
+}
 
 # ──────────────────── venv / 의존성 ────────────────────
 
@@ -99,6 +126,21 @@ cmd_status() {
         wpid="$(cat "$PID_FILE")"
         cpid="$(cat "$CHILD_PID_FILE" 2>/dev/null || echo '?')"
         echo "[go] running. watchdog PID=$wpid, scheduler PID=$cpid"
+        if pwa_enabled; then
+            local url health
+            url="$(pwa_url)"
+            health="$(curl -fsS --max-time 2 "$url/api/health" 2>/dev/null || echo '')"
+            if [[ -n "$health" ]]; then
+                echo "[go] PWA  ENABLED → $url/  (health: $health)"
+            else
+                echo "[go] PWA  ENABLED → $url/  (health 응답 없음 — 워밍업 중일 수 있음)"
+            fi
+        else
+            echo "[go] PWA  DISABLED  (.env 의 DASHBOARD_PWA_ENABLED=1 로 켜기)"
+        fi
+        if is_alive "$DEMO_PID_FILE"; then
+            echo "[go] PWA  DEMO 별도 실행 중 (PID=$(cat "$DEMO_PID_FILE"))"
+        fi
         if [[ -f "$WATCHDOG_LOG" ]]; then
             echo "--- 최근 watchdog 로그 ---"
             tail -n 5 "$WATCHDOG_LOG"
@@ -106,35 +148,45 @@ cmd_status() {
         return 0
     fi
     echo "[go] not running"
+    if is_alive "$DEMO_PID_FILE"; then
+        echo "[go] PWA DEMO 만 실행 중 (PID=$(cat "$DEMO_PID_FILE"))"
+    fi
     return 1
 }
 
 cmd_stop() {
-    if ! is_alive "$PID_FILE"; then
-        echo "[go] not running"
-        rm -f "$PID_FILE" "$CHILD_PID_FILE"
-        return 0
-    fi
-    local wpid cpid
-    wpid="$(cat "$PID_FILE")"
-    cpid="$(cat "$CHILD_PID_FILE" 2>/dev/null || true)"
-    echo "[go] stopping watchdog PID=$wpid (scheduler PID=${cpid:-?})"
-    # wrapper 먼저 → 재시작 안 함. trap이 자식도 정리하지만 명시적으로 한 번 더.
-    kill -TERM "$wpid" 2>/dev/null || true
-    [[ -n "$cpid" ]] && kill -TERM "$cpid" 2>/dev/null || true
-    # grace 10초
-    local i
-    for i in $(seq 1 10); do
-        is_alive "$PID_FILE" || break
-        sleep 1
-    done
+    local stopped_any=0
     if is_alive "$PID_FILE"; then
-        echo "[go] grace 만료, SIGKILL"
-        kill -9 "$wpid" 2>/dev/null || true
-        [[ -n "$cpid" ]] && kill -9 "$cpid" 2>/dev/null || true
+        local wpid cpid
+        wpid="$(cat "$PID_FILE")"
+        cpid="$(cat "$CHILD_PID_FILE" 2>/dev/null || true)"
+        echo "[go] stopping watchdog PID=$wpid (scheduler PID=${cpid:-?})"
+        # scheduler 의 SIGTERM 핸들러가 PWA uvicorn daemon thread 도 함께 정리.
+        kill -TERM "$wpid" 2>/dev/null || true
+        [[ -n "$cpid" ]] && kill -TERM "$cpid" 2>/dev/null || true
+        local i
+        for i in $(seq 1 10); do
+            is_alive "$PID_FILE" || break
+            sleep 1
+        done
+        if is_alive "$PID_FILE"; then
+            echo "[go] grace 만료, SIGKILL"
+            kill -9 "$wpid" 2>/dev/null || true
+            [[ -n "$cpid" ]] && kill -9 "$cpid" 2>/dev/null || true
+        fi
+        rm -f "$PID_FILE" "$CHILD_PID_FILE"
+        echo "[go] stopped"
+        stopped_any=1
     fi
-    rm -f "$PID_FILE" "$CHILD_PID_FILE"
-    echo "[go] stopped"
+    if is_alive "$DEMO_PID_FILE"; then
+        echo "[go] PWA 데모도 함께 종료"
+        cmd_pwa_demo_stop
+        stopped_any=1
+    fi
+    if (( stopped_any == 0 )); then
+        echo "[go] not running"
+        rm -f "$PID_FILE" "$CHILD_PID_FILE" "$DEMO_PID_FILE"
+    fi
 }
 
 # 분리된 셸에서 setsid + nohup으로 실행됨. 직접 호출 X.
@@ -218,11 +270,66 @@ cmd_start() {
 
     if is_alive "$PID_FILE"; then
         echo "[go] running. watchdog PID=$(cat "$PID_FILE")"
+        if pwa_enabled; then
+            echo "[go] PWA 대시보드 → $(pwa_url)/  (텔레그램과 동일 데이터, 카드 그리드)"
+        else
+            echo "[go] PWA 대시보드 OFF — .env 에 DASHBOARD_PWA_ENABLED=1 추가 후 재시작 시 자동 기동"
+        fi
         echo "[go] 상태: ./go status   |   로그: ./go logs   |   중지: ./go stop"
     else
         echo "[go] FAILED to start. $WATCHDOG_LOG 확인" >&2
         return 1
     fi
+}
+
+# ──────────────────── PWA 데모 (검증용) ────────────────────
+
+cmd_pwa_demo() {
+    ensure_venv
+    if is_alive "$DEMO_PID_FILE"; then
+        echo "[go] PWA 데모 이미 실행 중 (PID=$(cat "$DEMO_PID_FILE"))"
+        return 0
+    fi
+    mkdir -p "$LOG_DIR"
+    echo "[go] PWA 데모 시작 (mock 데이터 — KIS/텔레그램 무관) → $DEMO_LOG"
+    setsid nohup "$PY" -m src.dashboard.serve_demo </dev/null >"$DEMO_LOG" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$DEMO_PID_FILE"
+    disown $pid 2>/dev/null || true
+    # 부팅 대기
+    local i
+    for i in 1 2 3 4 5; do
+        if curl -fsS --max-time 1 "http://127.0.0.1:8000/api/health" >/dev/null 2>&1; then
+            echo "[go] PWA 데모 → http://127.0.0.1:8000/  PID=$pid"
+            echo "[go] 중지: ./go pwa-demo-stop   로그: tail -f $DEMO_LOG"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "[go] PWA 데모 부팅 실패. $DEMO_LOG 확인" >&2
+    return 1
+}
+
+cmd_pwa_demo_stop() {
+    if ! is_alive "$DEMO_PID_FILE"; then
+        echo "[go] PWA 데모 실행 중 아님"
+        rm -f "$DEMO_PID_FILE"
+        return 0
+    fi
+    local pid
+    pid="$(cat "$DEMO_PID_FILE")"
+    echo "[go] PWA 데모 종료 PID=$pid"
+    kill -TERM "$pid" 2>/dev/null || true
+    local i
+    for i in 1 2 3 4 5; do
+        is_alive "$DEMO_PID_FILE" || break
+        sleep 1
+    done
+    if is_alive "$DEMO_PID_FILE"; then
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$DEMO_PID_FILE"
+    echo "[go] 종료됨"
 }
 
 cmd_logs() {
@@ -249,9 +356,9 @@ Legendary Method — 간편 실행 스크립트
   ./go <command> [args...]
 
 명령:
-  start     setup + 일봉 incremental + 스케줄러 백그라운드 실행 (watchdog 포함)
-  stop      백그라운드 스케줄러 + watchdog 종료
-  status    실행 상태 확인
+  start     setup + 일봉 incremental + 스케줄러 백그라운드 실행 (watchdog + PWA)
+  stop      백그라운드 스케줄러 + watchdog + PWA 일괄 종료
+  status    실행 상태 확인 (PWA 헬스체크 포함)
   logs      최근 로그 출력 (watchdog + 오늘자 trader)
 
   tel         텔레그램 연결 테스트  (예: ./go tel "안녕")
@@ -262,15 +369,28 @@ Legendary Method — 간편 실행 스크립트
   setup       venv 생성 + 의존성 설치 (idempotent)
   test        pytest 실행
 
+  pwa-demo       PWA UI 검증용 mock 서버 (KIS/텔레그램 무관, 백그라운드)
+  pwa-demo-stop  pwa-demo 종료
+
 처음 실행:
-  cp .env.example .env       # 토큰 등 입력
+  cp .env.example .env       # 토큰 + DASHBOARD_PWA_ENABLED=1 등 입력
   ./go tel                   # 텔레그램 연결 확인
   ./go init                  # (선택) 5년치 종목 일봉 백필 — 시간 걸림
   ./go init-index            # (선택) 지수 3년치 백필 — historical 시장 국면 매칭
-  ./go start                 # 스케줄러 데몬 시작
+  ./go start                 # 스케줄러 + PWA 데몬 시작
+
+PWA 대시보드:
+  .env 에 다음 3 줄 추가 시 ./go start 가 PWA 도 같이 띄움:
+    DASHBOARD_PWA_ENABLED=1
+    DASHBOARD_PWA_HOST=127.0.0.1      # Tailscale 시 0.0.0.0 또는 100.x.x.x
+    DASHBOARD_PWA_PORT=8000
+
+  검증 (KIS/텔레그램 안 만지고 UI 만 보기):
+    ./go pwa-demo             # 백그라운드 mock 서버 시작
+    ./go pwa-demo-stop        # 종료
 
 watchdog 정책:
-  - scheduler가 죽으면 5초 후 자동 재시작
+  - scheduler가 죽으면 5초 후 자동 재시작 (PWA daemon thread 도 함께 재기동)
   - 10분 안에 5회 초과 재시작 시 watchdog도 중단 (crash loop 방지)
   - 셸을 닫아도 백그라운드 유지 (setsid + nohup)
 EOF
@@ -293,6 +413,8 @@ case "$cmd" in
     status)             cmd_status ;;
     logs)               cmd_logs ;;
     test)               cmd_test "$@" ;;
+    pwa-demo)           cmd_pwa_demo ;;
+    pwa-demo-stop)      cmd_pwa_demo_stop ;;
     help|-h|--help|"")  cmd_help ;;
     __watchdog__)       run_watchdog ;;
     *)
