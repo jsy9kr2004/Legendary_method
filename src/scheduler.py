@@ -869,6 +869,8 @@ def run() -> None:
             _dashboard_command_stop.set()
         if pwa_server is not None:
             pwa_server.should_exit = True  # uvicorn graceful stop
+            if pwa_thread is not None and pwa_thread.is_alive():
+                pwa_thread.join(timeout=3.0)  # WS 클라이언트 graceful close 대기
         if settings.telegram_bot_token and settings.telegram_chat_id:
             try:
                 from src.dashboard.worker import cleanup_messages
