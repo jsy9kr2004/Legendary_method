@@ -45,6 +45,41 @@
     return ({ auto: "⭐ 자동", rising: "⚡ 부상", manual: "🔵 수동", hold: "💎 보유" })[source] || source;
   }
 
+  // source 별 정렬 우선순위 — 보유 → 자동 → 부상 → 수동.
+  const SOURCE_ORDER = { hold: 0, auto: 1, rising: 2, manual: 3 };
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+  }
+
+  function fmtRatio(v, suffix = "배") {
+    if (v === null || v === undefined) return "—";
+    return `${v.toFixed(1)}${suffix}`;
+  }
+
+  function fmtScore(v) {
+    if (v === null || v === undefined) return "0.0";
+    return (v >= 0 ? "+" : "") + v.toFixed(1);
+  }
+
+  // 카드 우상단 액션 버튼 묶음 — source 별 분기.
+  // - auto/rising: [→ 수동] (toggle_code, MANUAL 승격) + [+ 보유]
+  // - manual:     [× 해제] (toggle_code, 제거)         + [+ 보유]
+  // - hold:       [✕ 청산]
+  function buildActionButtons(payload) {
+    const code = payload.code;
+    if (payload.source === "hold") {
+      return `<button data-act="sell" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-rose-700 hover:bg-rose-600">✕ 청산</button>`;
+    }
+    const toManual = payload.source === "manual"
+      ? `<button data-act="unwatch" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-slate-600 hover:bg-slate-500" title="감시 해제">× 해제</button>`
+      : `<button data-act="promote" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-sky-700 hover:bg-sky-600" title="수동으로 잠금 (자동 풀에서 빠져도 유지)">→ 수동</button>`;
+    const buy = `<button data-act="buy" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600">+ 보유</button>`;
+    return `<div class="flex gap-1">${toManual}${buy}</div>`;
+  }
+
   // ── Card render ────────────────────────────────────────────────────────────
   function renderCard(payload) {
     const code = payload.code;
@@ -66,27 +101,31 @@
     const ask = payload.asking || {};
     const holding = payload.holding;
     const triggers = payload.trigger_states || {};
+    const triggerLines = payload.trigger_lines || [];
     const transition = payload.transition;
 
     const grade = header.grade || "";
     const gradeSpan = grade
-      ? `<span class="${gradeClass(grade)} font-bold">${grade} ${header.score >= 0 ? "+" : ""}${(header.score ?? 0).toFixed(1)}점</span>`
+      ? `<span class="${gradeClass(grade)} font-bold">${grade} ${fmtScore(header.score)}점</span>`
       : "";
     const lupMark = price.is_limit_up ? ' <span class="text-rose-400">🔴상한가</span>' : "";
 
-    // Buy/Sell 토글 버튼
-    const isHold = payload.source === "hold";
-    const toggleBtn = isHold
-      ? `<button data-act="sell" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-rose-700 hover:bg-rose-600">✕ 청산</button>`
-      : `<button data-act="buy" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600">+ 보유</button>`;
+    const actions = buildActionButtons(payload);
 
-    // Triggers 한 줄 요약 — 발화 항목만
-    const firedKinds = Object.entries(triggers).filter(([, v]) => v).map(([k]) => k);
-    const triggerLine = firedKinds.length
-      ? `<div class="text-rose-300 mt-1">⚠ ${firedKinds.join(" / ")}</div>`
-      : "";
-    if (firedKinds.length) el.classList.add("pulse-trigger");
+    // 청산 시그널 — payload.trigger_lines 그대로 출력 (텔레그램과 동일 텍스트).
+    // 발화 항목(✅) 이 하나라도 있으면 카드 빨간 펄스.
+    const anyFired = Object.values(triggers).some((v) => v);
+    if (anyFired) el.classList.add("pulse-trigger");
     else el.classList.remove("pulse-trigger");
+    let triggerBlock = "";
+    if (triggerLines.length) {
+      const html = triggerLines.map((line) => {
+        const fired = line.includes("✅");
+        const cls = fired ? "text-rose-300" : "text-slate-400";
+        return `<div class="${cls}">${escapeHtml(line)}</div>`;
+      }).join("");
+      triggerBlock = `<div class="mt-1 pt-1 border-t border-slate-700">${html}</div>`;
+    }
 
     // Transition (a1 카드에 a2 부상 후보 표시)
     const transitionLine = transition && transition.state
@@ -108,14 +147,14 @@
 
     el.innerHTML = `
       <div class="flex items-center gap-2">
-        <span class="font-bold text-slate-100">${payload.name}</span>
+        <span class="font-bold text-slate-100">${escapeHtml(payload.name)}</span>
         <span class="text-slate-400">${code}</span>
         <span class="text-[10px] text-slate-500">${sourceLabel(payload.source)}</span>
         ${gradeSpan}
-        <span class="ml-auto">${toggleBtn}</span>
+        <span class="ml-auto">${actions}</span>
       </div>
-      <div class="text-slate-400">테마: ${themes}</div>
-      ${reasons ? `<div class="text-slate-300">사유: ${reasons}</div>` : ""}
+      <div class="text-slate-400">테마: ${escapeHtml(themes)}</div>
+      ${reasons ? `<div class="text-slate-300">사유: ${escapeHtml(reasons)}</div>` : ""}
       ${transitionLine}
       <div class="mt-1">
         <span class="text-slate-100 font-bold">${fmtNum(price.current)}원</span>
@@ -124,10 +163,10 @@
       </div>
       ${holdingLine}
       <div class="text-slate-400">거래대금 ${fmtBillion(vol.amount)} (${vol.rank ?? "—"}위) · 회전율 ${fmtPct(vol.turnover_pct)}</div>
-      <div class="text-slate-400">5m가속 ${a5.ratio !== null && a5.ratio !== undefined ? a5.ratio.toFixed(1) + "배" : "—"} · 1m가속 ${a1.ratio !== null && a1.ratio !== undefined ? a1.ratio.toFixed(1) + "배" : "—"}</div>
+      <div class="text-slate-400">5m가속 ${fmtRatio(a5.ratio)} · 1m가속 ${fmtRatio(a1.ratio)}</div>
       <div class="text-slate-400">체결강도 ${vp.current !== null && vp.current !== undefined ? vp.current.toFixed(0) : "—"} (5MA ${vp.ma_5 !== null && vp.ma_5 !== undefined ? vp.ma_5.toFixed(0) : "—"} / 1MA ${vp.ma_1 !== null && vp.ma_1 !== undefined ? vp.ma_1.toFixed(0) : "—"})</div>
-      <div class="text-slate-400">호가 매수 ${fmtNum(ask.bid_total)} / 매도 ${fmtNum(ask.ask_total)} (${ask.ratio !== null && ask.ratio !== undefined ? ask.ratio.toFixed(1) + "배" : "—"})</div>
-      ${triggerLine}
+      <div class="text-slate-400">호가 매수 ${fmtNum(ask.bid_total)} / 매도 ${fmtNum(ask.ask_total)} (${fmtRatio(ask.ratio)})</div>
+      ${triggerBlock}
     `;
     return el;
   }
@@ -161,14 +200,18 @@
     $("#monitored-count").textContent = `${(snap.stocks || []).length}종목`;
     refreshStaleIndicator();
 
-    // 그룹별로 분배
-    const groups = { auto: [], rising: [], manual: [], hold: [] };
-    (snap.stocks || []).forEach((s) => {
-      (groups[s.source] || groups.manual).push(s);
+    // 단일 그리드 — source 우선순위 정렬 (보유 → 자동 → 부상 → 수동), 점수 내림차순
+    const stocks = (snap.stocks || []).slice().sort((a, b) => {
+      const sa = SOURCE_ORDER[a.source] ?? 9;
+      const sb = SOURCE_ORDER[b.source] ?? 9;
+      if (sa !== sb) return sa - sb;
+      const ba = a.header?.score ?? -Infinity;
+      const bb = b.header?.score ?? -Infinity;
+      return bb - ba;
     });
 
     // 빠진 카드 정리
-    const presentCodes = new Set((snap.stocks || []).map((s) => s.code));
+    const presentCodes = new Set(stocks.map((s) => s.code));
     for (const code of Array.from(state.cardEls.keys())) {
       if (!presentCodes.has(code)) {
         state.cardEls.get(code).remove();
@@ -176,18 +219,10 @@
       }
     }
 
-    // 그룹별 렌더
-    for (const [g, stocks] of Object.entries(groups)) {
-      const list = document.querySelector(`[data-list="${g}"]`);
-      const countEl = document.querySelector(`[data-count="${g}"]`);
-      if (countEl) countEl.textContent = stocks.length;
-      if (!list) continue;
-      list.innerHTML = "";
-      stocks.forEach((s) => {
-        const card = renderCard(s);
-        list.appendChild(card);
-      });
-    }
+    const grid = $("#cards");
+    if (!grid) return;
+    grid.innerHTML = "";
+    stocks.forEach((s) => grid.appendChild(renderCard(s)));
   }
 
   // ── WebSocket ──────────────────────────────────────────────────────────────
@@ -263,6 +298,15 @@
       try {
         const r = await post("/api/holdings", { action: "sell", code });
         flash(r.message || `${code} 청산`);
+      } catch (e) {
+        flash(`오류: ${e.message}`);
+      }
+    } else if (act === "promote" || act === "unwatch") {
+      // 둘 다 6자리 코드 토글 핸들러 — 자동/부상 → 수동 잠금, 수동 → 제거.
+      // 핸들러가 source 별 분기를 알아서 처리 (add_manual 동작).
+      try {
+        const r = await post("/api/watchlist", { action: "toggle", code });
+        flash(r.message);
       } catch (e) {
         flash(`오류: ${e.message}`);
       }

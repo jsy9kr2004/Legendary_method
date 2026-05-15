@@ -64,6 +64,69 @@ def _krx_tick_size(price: int) -> int:
     return 1_000
 
 
+def build_trigger_lines(
+    *,
+    trigger_states: dict[str, bool] | None,
+    is_holding: bool,
+    vp_5ma: float | None,
+    vp_1ma: float | None,
+    accel_ratio_1m: float | None,
+    divergence: Any,
+) -> list[str]:
+    """R15 청산 시그널 C1~C5 표시 라인 list.
+
+    텔레그램 카드(`render_monitor_message`) 와 PWA 페이로드(`build_monitor_payload`)
+    둘 다 동일 형식. 보유/감시 모드 분기 — 보유 모드는 C5 포함, 라벨에 "2분 지속".
+    """
+    if trigger_states is None:
+        return []
+
+    lines: list[str] = []
+    section_label = "청산 시그널" if is_holding else "청산 시그널 (현재 시점)"
+    lines.append(f"─ {section_label} ─")
+
+    # C1: 체결강도 5MA 100 하향
+    c1_mark = "✅" if trigger_states.get("C1_vp_below_100") else "❌"
+    c1_detail_parts = []
+    if vp_5ma is not None and vp_5ma == vp_5ma:
+        c1_detail_parts.append(f"5MA {vp_5ma:.0f}")
+    if vp_1ma is not None and vp_1ma == vp_1ma:
+        c1_detail_parts.append(f"1MA {vp_1ma:.0f}")
+    c1_detail = " / ".join(c1_detail_parts) if c1_detail_parts else "—"
+    lines.append(f"{c1_mark} 체결강도 5MA 100 하향 (현재 {c1_detail})")
+
+    # C2: Bearish Divergence
+    c2_mark = "✅" if trigger_states.get("C2_bearish_divergence") else "❌"
+    if divergence is not None:
+        p = getattr(divergence, "price_change_pct", float("nan"))
+        v = getattr(divergence, "vp_5ma_delta", float("nan"))
+        p_str = f"{p:+.2f}%" if p == p else "—"
+        v_str = f"{v:+.0f}" if v == v else "—"
+        lines.append(f"{c2_mark} Bearish Divergence (가격 {p_str} / 체결강도 {v_str})")
+    else:
+        lines.append(f"{c2_mark} Bearish Divergence")
+
+    # C3: 자금 고갈
+    c3_mark = "✅" if trigger_states.get("C3_vol_drain") else "❌"
+    c3_detail = (
+        f" — 현재 {accel_ratio_1m:.1f}배"
+        if accel_ratio_1m is not None and accel_ratio_1m == accel_ratio_1m else ""
+    )
+    c3_rule = "1분 가속 < 0.5, 2분 지속" if is_holding else "1분 가속 < 0.5"
+    lines.append(f"{c3_mark} 자금 고갈 ({c3_rule}){c3_detail}")
+
+    # C4: 윗꼬리 50%↑ 음봉 (1분봉)
+    c4_mark = "✅" if trigger_states.get("C4_bearish_candle") else "❌"
+    lines.append(f"{c4_mark} 윗꼬리 50%↑ 음봉 (1분봉 기준)")
+
+    # C5: VI 발동 후 재상승 실패 — 보유 모드만
+    if is_holding:
+        c5_mark = "✅" if trigger_states.get("C5_vi_failure") else "❌"
+        lines.append(f"{c5_mark} VI 발동 후 5분 내 재상승 실패")
+
+    return lines
+
+
 def render_monitor_message(
     monitored: MonitoredStock,
     snapshot_row: dict[str, Any] | None,
@@ -302,52 +365,15 @@ def render_monitor_message(
     # 외국인 / 기관 / 프로그램 — round 22: 데이터 신뢰도 낮아 카드에서 제거.
     # 단 investor 인자는 호환 위해 유지.
 
-    # 청산 시그널 (R15 C 그룹). 보유 모드 = triggers_fired sticky.
-    # 감시/부상/수동 모드 = 현재 시점 instantaneous (compute_c_signal_states).
-    # 진입 의사결정 시 "매도 시그널 켜진 종목 회피" 용도. C5 (VI) 는 인프라 부재
-    # 라 보유 모드만 노출 — 감시 모드에서는 행 숨김.
-    if trigger_states is not None:
-        section_label = "청산 시그널" if is_holding else "청산 시그널 (현재 시점)"
-        lines.append(f"─ {section_label} ─")
-        # C1: 체결강도 5MA 100 하향
-        c1_mark = "✅" if trigger_states.get("C1_vp_below_100") else "❌"
-        c1_detail_parts = []
-        if vp_5ma is not None and vp_5ma == vp_5ma:
-            c1_detail_parts.append(f"5MA {vp_5ma:.0f}")
-        if vp_1ma is not None and vp_1ma == vp_1ma:
-            c1_detail_parts.append(f"1MA {vp_1ma:.0f}")
-        c1_detail = " / ".join(c1_detail_parts) if c1_detail_parts else "—"
-        lines.append(f"{c1_mark} 체결강도 5MA 100 하향 (현재 {c1_detail})")
-        # C2: Bearish Divergence
-        c2_mark = "✅" if trigger_states.get("C2_bearish_divergence") else "❌"
-        if divergence is not None:
-            p_str = (
-                f"{divergence.price_change_pct:+.2f}%"
-                if divergence.price_change_pct == divergence.price_change_pct else "—"
-            )
-            v_str = (
-                f"{divergence.vp_5ma_delta:+.0f}"
-                if divergence.vp_5ma_delta == divergence.vp_5ma_delta else "—"
-            )
-            lines.append(f"{c2_mark} Bearish Divergence (가격 {p_str} / 체결강도 {v_str})")
-        else:
-            lines.append(f"{c2_mark} Bearish Divergence")
-        # C3: 자금 고갈 (1분 가속 < 0.5). 보유 모드는 2분 지속 후에야 발화 — 사용자가
-        # "현재 0.0배인데 ❌인 이유" 혼동 방지 위해 라벨에 명시 (round 33).
-        c3_mark = "✅" if trigger_states.get("C3_vol_drain") else "❌"
-        c3_detail = (
-            f" — 현재 {accel_ratio_1m:.1f}배"
-            if accel_ratio_1m is not None and accel_ratio_1m == accel_ratio_1m else ""
-        )
-        c3_rule = "1분 가속 < 0.5, 2분 지속" if is_holding else "1분 가속 < 0.5"
-        lines.append(f"{c3_mark} 자금 고갈 ({c3_rule}){c3_detail}")
-        # C4: 윗꼬리 50%↑ 음봉 (1분봉)
-        c4_mark = "✅" if trigger_states.get("C4_bearish_candle") else "❌"
-        lines.append(f"{c4_mark} 윗꼬리 50%↑ 음봉 (1분봉 기준)")
-        # C5: VI 발동 후 재상승 실패 — 보유 모드만 (감시 모드는 VI 감지 인프라 부재)
-        if is_holding:
-            c5_mark = "✅" if trigger_states.get("C5_vi_failure") else "❌"
-            lines.append(f"{c5_mark} VI 발동 후 5분 내 재상승 실패")
+    # 청산 시그널 (R15 C 그룹) — build_trigger_lines 헬퍼 (텔레그램 / PWA 공용).
+    lines.extend(build_trigger_lines(
+        trigger_states=trigger_states,
+        is_holding=is_holding,
+        vp_5ma=vp_5ma,
+        vp_1ma=vp_1ma,
+        accel_ratio_1m=accel_ratio_1m,
+        divergence=divergence,
+    ))
 
     # RISING 한정: 사용자 명령 안내 — 바로 복사해서 수동 모니터링 승격 가능
     if monitored.source == Source.RISING:
@@ -503,6 +529,15 @@ def build_monitor_payload(
             "candidate_turnover": _clean(transition_info.get("candidate_turnover")),
         }
 
+    trigger_lines = build_trigger_lines(
+        trigger_states=trigger_states,
+        is_holding=is_holding,
+        vp_5ma=vp_5ma,
+        vp_1ma=vp_1ma,
+        accel_ratio_1m=accel_ratio_1m,
+        divergence=divergence,
+    )
+
     return {
         "code": monitored.code,
         "name": monitored.name or monitored.code,
@@ -520,5 +555,6 @@ def build_monitor_payload(
         "transition": transition_block,
         "grace_remaining_sec": grace_remaining_seconds,
         "trigger_states": dict(trigger_states) if trigger_states else None,
+        "trigger_lines": trigger_lines,
         "updated_at": now.isoformat(),
     }
