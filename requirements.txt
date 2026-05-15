@@ -17,6 +17,10 @@ pyarrow>=14.0.0           # parquet I/O
 # 알림
 python-telegram-bot>=20.7  # or use raw requests
 
+# PWA 대시보드 (M7)
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0   # websockets 의존성도 함께 설치
+
 # 환경설정
 python-dotenv>=1.0.0
 pyyaml>=6.0

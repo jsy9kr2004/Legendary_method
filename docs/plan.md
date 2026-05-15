@@ -178,6 +178,79 @@
 
 **정책 확인 (CLAUDE.md `자동 매매 절대 금지`):** R15 매도 트리거는 카드 표시 전용. 텔레그램 별도 푸시 X, KIS 실주문 자동 등록 X. 손절 자동화 / 분할 익절 자동화는 영구 미지원.
 
+### Milestone 7: PWA 대시보드 (Week 8~)
+
+**배경:** 텔레그램은 한 화면에 동시 표시 가능한 메시지 갯수에 한계가 있어 종목 6~10개를 아이패드 한 화면에 한눈에 보기 어렵다. M6 카드를 그대로 재현하되 화면 1장에 다 보이는 PWA 대시보드를 추가. 텔레그램 봇은 이벤트 푸시(상한가 진입/14:50 결정/16:00 사후) + 명령 백워드 호환용으로 점진 축소. 상세 사양은 `docs/dashboard-pwa.md`.
+
+**핵심 정책 (CLAUDE.md `자동 매매 절대 금지` 유지):**
+
+- PWA → 서버 input: **holdings.json 토글 / 종목 추가 제거 / `/on`·`/off` 만 허용** (텔레그램 봇 명령과 동일 effect)
+- PWA → 서버 input: **KIS 거래소 주문 영구 X**. KIS 실주문 코드 작성 X
+- 서버 → PWA: 모니터링 카드 + 시계열 push only
+- M6 카드 렌더 (`render.py`) + holdings.json + worker 와 데이터·로직 공유. 텔레그램·PWA 는 채널만 추가, 핸들러는 한 군데
+- 데이터 외부 클라우드 송신 X — 집 데스크탑에서 직접 서빙
+
+**[Phase 1: 로컬 MVP]**
+
+- [x] **FastAPI 서버 셋업** — `src/dashboard/api.py` `create_app(session, broadcast_interval_sec=1.0)`. WS `/ws/monitor` (snapshot on connect + payload_ts 변경 시 tick broadcast), REST `/api/health` `/api/snapshot` `/api/holdings` (buy/sell) `/api/session` (on/off) `/api/watchlist` (toggle/clear). 정적 `/static/*` + `/` → index.html. `tests/test_dashboard_api.py` 16 케이스. (2026-05-14)
+- [x] **카드 JSON 페이로드 생성** — `src/dashboard/render.py` `build_monitor_payload()`. NaN/Inf → None sanitize, DivergenceState.bearish/bullish → kind 문자열, LeaderState enum → value. `MonitoringSession.last_payloads` 필드에 worker tick 마다 갱신, stale 종목 자동 정리. `tests/test_dashboard_payload.py` 9 케이스 + worker integration 3 케이스 추가. 전체 770 테스트 통과. (2026-05-14)
+- [x] **WebSocket broadcast** — `session.last_payload_ts` 변경 감지 polling 1초 (worker tick 3초 + 1초 lag). 변경 시 전체 snapshot 송신 (diff 미구현, 페이로드 작아 OK)
+- [x] **REST 핸들러 = telegram_bot 핸들러 재사용** — `Command(kind=...)` 직접 생성 후 `apply_command(cmd, session, now_kst())` 호출. `_apply_buy` / `_apply_sell` / `add_manual` / `set_on/set_off` / `remove_manual_all` 한 군데서만 — 이중 구현 X
+- [x] **정적 HTML** — `src/dashboard/static/{index.html,app.js,manifest.json,icon.svg}`. Vanilla JS + Tailwind CDN. 종목별 카드 그리드 + 그룹 4컬럼 (보유/자동/부상/수동) + 보유 등록 모달 + 6자리 코드 추가 input + /on /off 버튼 + WS 자동 재연결 지수 백오프
+- [x] **scheduler 통합** — `src/scheduler.py` `run()` 에 `DASHBOARD_PWA_ENABLED=1` 환경변수 가드로 uvicorn 별도 daemon thread 시작. `DASHBOARD_PWA_HOST` (기본 127.0.0.1) / `DASHBOARD_PWA_PORT` (기본 8000). shutdown 시 `pwa_server.should_exit=True` graceful. 실패 시 텔레그램 단독 fallback (fail-loud) (2026-05-14)
+- [x] **로컬 검증 (demo)** — `python -m src.dashboard.serve_demo` 신규. mock session 에 1초 간격 데모 페이로드 갱신, FastAPI 만 띄워 PWA UI 검증. 실제 KIS/텔레그램 없이 카드 그리드 + WS broadcast + REST endpoints 동작 확인 완료 (2026-05-14). 실제 KIS 연결 검증은 사용자 데스크탑에서 `DASHBOARD_PWA_ENABLED=1 ./go serve` 로 수행
+
+**[Phase 2: 외부 접근]**
+
+- [ ] **Tailscale 설정** — 데스크탑 + 아이패드 + 폰 한정. 도메인/Cloudflare 불필요. FastAPI 는 `127.0.0.1` + Tailscale 인터페이스만 bind (`0.0.0.0` 금지)
+- [ ] **HTTPS** — Tailscale MagicDNS / `tailscale serve` TLS
+- [ ] **PWA manifest + Service Worker** — 아이패드 홈화면 풀스크린 등록. offline cache 는 정적 자산만 (데이터는 WS)
+- [ ] **WebSocket 자동 재연결** — 지수 백오프 (1s/2s/4s/8s, cap 30s). 재연결 시 snapshot 재수신
+- [ ] **stale 표시** — 마지막 tick 으로부터 10s 초과 시 카드 ⚠ 마크 + 헤더 색상 흐림
+
+**[Phase 3: 보유 토글 버튼 UI]**
+
+- [ ] **카드 상단 토글 버튼** — 보유 X 시 `[+ 보유 등록]`, 보유 시 `[✕ 청산 처리]`. 클릭 시 confirm dialog
+- [ ] **보유 등록 modal** — 가격 input (기본 현재가 자동 보충 / 수동 override) + TIME_STOP_MIN 옵션 input
+- [ ] **즉시 카드 모드 전환** — POST `/api/holdings` 응답 후 worker tick 기다리지 않고 optimistic UI. 서버 broadcast 도착 시 reconcile
+- [ ] **텔레그램 동기화 검증** — PWA 에서 보유 등록 → 텔레그램 카드도 [보유] 모드 전환되는지 확인
+- [ ] **장 시간 외 가드** — 장 시간 외 보유 등록 시 안내 ("장 시간 외 — 다음 거래일 09:00 ON 시 평가 시작")
+- [ ] **수동 종목 추가** — 6자리 코드 입력 input → POST `/api/watchlist` → 텔레그램 `6자리 숫자` 토글과 동일 핸들러
+
+**[Phase 4: UX 개선 — 선택]**
+
+- [ ] **종목 그룹 컬럼** — 자동(주도주) / 부상(RISING) / 보유(HOLD) / 수동(MANUAL) 4 컬럼. 가로 화면 그리드
+- [ ] **카드 클릭 → 상세 펼침** — R14 사유 전체, R15 트리거 A/B/C 상세, 시계열 미니차트
+- [ ] **시계열 미니차트** — 가격 / VP / 회전율 / accel sparkline. 초안: 텍스트 sparkline (의존성 0). 정밀: lightweight-charts CDN (Phase 4 후반)
+- [ ] **음소거된 푸시 (opt-in)** — 새 STRONG 등급 진입 시 Web Notifications. 기본 OFF
+- [ ] **R15 트리거 강조** — 청산 시그널 발화 시 카드 빨간 펄스
+- [ ] **세션 토글 UI** — `/on` / `/off` 버튼 상단 고정. 현재 세션 상태(ON/OFF + 활성 종목 수) 항상 표시
+
+**[Phase 5: 운영 안정성]**
+
+- [ ] **WebSocket 끊김 → 텔레그램 에러 알림** (fail-loud). 5분 이상 클라이언트 0명일 때만 1회 (스팸 방지)
+- [ ] **systemd 통합** — `deploy/jongbae.service` 가 FastAPI 도 같이 띄움 (단일 프로세스)
+- [ ] **`/api/health` endpoint** — worker 마지막 tick 시각 / KIS 토큰 유효성 / holdings.json 존재 여부. cron 또는 외부 monitor 용
+- [ ] **인증** — Tailscale 자체 인증으로 충분. 별도 토큰 X. 본 정책은 디바이스가 늘어나면 재검토
+
+**[데이터 영속화 — 복기 도구와 공유]**
+
+- [ ] **분봉 시계열 parquet 적재** — `data/intraday_series/YYYY-MM-DD/CODE.parquet`. worker tick 시 메모리 deque → 1~5분 주기 flush. M7 미니차트 + 복기 도구(L269~) + 향후 백테스트 공통 소스
+- [ ] **시총 데이터 적재 (M5.5 선행 활용)** — 회전율 정확도 향상. PWA 회전율 표시 일관성
+
+**완료 기준 (M7 v0):** 아이패드 홈화면 풀스크린에서 종목 6~10개 카드 + 보유 토글 버튼 동작. 텔레그램과 동일 데이터, 같은 1~3초 갱신. PWA 에서 보유 등록 시 텔레그램 카드도 동기화. `/on` / `/off` 양방향 동작. KIS 주문 input 부재 확인.
+
+**확정 사항 (2026-05-14):**
+
+1. **외부 접근**: Tailscale (본인 디바이스 한정)
+2. **인증**: Tailscale only (별도 토큰/SSO 없음)
+3. **차트 라이브러리**: 텍스트 sparkline → Phase 4 후반 lightweight-charts CDN
+4. **분봉 영속화 범위**: 모니터링 종목만 (`data/intraday_series/YYYY-MM-DD/CODE.parquet`)
+5. **텔레그램 봇 위상**: 동시 운영 (이벤트 푸시 + PWA fallback)
+6. **트랙 순서**: M5.5 / 분봉 영속화와 **분리**. **Phase 1 MVP 먼저** (M6 메모리 deque 그대로 사용) → 아이패드 dogfooding → M5.5(시총)·분봉 영속화는 후속 트랙. 복기 도구 컨셉 정해질 때 분봉 영속화 같이 진행
+
+상세는 `docs/dashboard-pwa.md` §7.
+
 ---
 
 ## v0 범위 정의 (명시적)

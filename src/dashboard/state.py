@@ -114,6 +114,11 @@ class MonitoringSession:
     # R14c 가산점(9:30 이전 +1, 10:30 이전 +0.5). 데몬 재시작 시 비어있음 — 당일
     # 재감지 시 채워짐.
     limit_up_hit_times: dict[str, time] = field(default_factory=dict)
+    # M7 PWA 대시보드용 페이로드. worker tick 이 매 사이클 갱신, FastAPI WebSocket
+    # endpoint 가 polling 후 broadcast. 텔레그램 텍스트(message_ids) 와 별도 채널.
+    # 빠진 monitored 종목은 tick 끝에 정리. 데몬 재시작 시 비어있음.
+    last_payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
+    last_payload_ts: datetime | None = None
 
     # ── 종목 추가/제거 ────────────────────────────────────────────────────────
 
