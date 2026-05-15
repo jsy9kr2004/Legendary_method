@@ -41,12 +41,20 @@
     return grade ? `grade-${grade}` : "";
   }
 
-  function sourceLabel(source) {
-    return ({ auto: "⭐ 자동", rising: "⚡ 부상", manual: "🔵 수동", hold: "💎 보유" })[source] || source;
+  // round 35: multi-flag 라벨 조합. payload.flags = {auto, rising, manual, hold}
+  // 켜진 flag 만 모아서 표시 — 예: "💎 보유 / 🔵 수동 / ⭐ 자동"
+  function flagsLabel(flags) {
+    const parts = [];
+    if (!flags) return "";
+    if (flags.hold) parts.push("💎 보유");
+    if (flags.manual) parts.push("🔵 수동");
+    if (flags.auto) parts.push("⭐ 자동");
+    if (flags.rising) parts.push("⚡ 후보");
+    return parts.join(" / ");
   }
 
-  // source 별 정렬 우선순위 — 보유 → 자동 → 부상 → 수동.
-  const SOURCE_ORDER = { hold: 0, auto: 1, rising: 2, manual: 3 };
+  // source 별 정렬 우선순위 — 보유 → 수동 → 자동 → 후보.
+  const SOURCE_ORDER = { hold: 0, manual: 1, auto: 2, rising: 3 };
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => (
@@ -64,20 +72,27 @@
     return (v >= 0 ? "+" : "") + v.toFixed(1);
   }
 
-  // 카드 우상단 액션 버튼 묶음 — source 별 분기.
-  // - auto/rising: [→ 수동] (toggle_code, MANUAL 승격) + [+ 보유]
-  // - manual:     [× 해제] (toggle_code, 제거)         + [+ 보유]
-  // - hold:       [✕ 청산]
+  // round 35: 카드 우상단 액션 버튼 — flag 조합별 분기.
+  //   보유 flag O               → [✕ 청산]
+  //   수동 flag X / 보유 X      → [→ 수동] [+ 보유]
+  //   수동 flag O / 보유 X      → [× 해제] [+ 보유]
+  // 모든 버튼은 telegram_bot 의 apply_command(toggle_code/buy/sell) 핸들러와 동일 효과.
   function buildActionButtons(payload) {
     const code = payload.code;
-    if (payload.source === "hold") {
-      return `<button data-act="sell" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-rose-700 hover:bg-rose-600">✕ 청산</button>`;
+    const flags = payload.flags || {};
+    const buttons = [];
+    if (flags.hold) {
+      buttons.push(`<button data-act="sell" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-rose-700 hover:bg-rose-600">✕ 청산</button>`);
+    } else {
+      // 수동 토글 버튼
+      if (flags.manual) {
+        buttons.push(`<button data-act="unwatch" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-slate-600 hover:bg-slate-500" title="수동 핀 해제">× 해제</button>`);
+      } else {
+        buttons.push(`<button data-act="promote" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-sky-700 hover:bg-sky-600" title="자동/후보 풀 이탈해도 유지">→ 수동</button>`);
+      }
+      buttons.push(`<button data-act="buy" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600">+ 보유</button>`);
     }
-    const toManual = payload.source === "manual"
-      ? `<button data-act="unwatch" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-slate-600 hover:bg-slate-500" title="감시 해제">× 해제</button>`
-      : `<button data-act="promote" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-sky-700 hover:bg-sky-600" title="수동으로 잠금 (자동 풀에서 빠져도 유지)">→ 수동</button>`;
-    const buy = `<button data-act="buy" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600">+ 보유</button>`;
-    return `<div class="flex gap-1">${toManual}${buy}</div>`;
+    return `<div class="flex gap-1">${buttons.join("")}</div>`;
   }
 
   // ── Card render ────────────────────────────────────────────────────────────
@@ -149,7 +164,7 @@
       <div class="flex items-center gap-2">
         <span class="font-bold text-slate-100">${escapeHtml(payload.name)}</span>
         <span class="text-slate-400">${code}</span>
-        <span class="text-[10px] text-slate-500">${sourceLabel(payload.source)}</span>
+        <span class="text-[10px] text-slate-300">${flagsLabel(payload.flags)}</span>
         ${gradeSpan}
         <span class="ml-auto">${actions}</span>
       </div>

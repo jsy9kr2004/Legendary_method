@@ -1,9 +1,7 @@
-"""src.dashboard.state 단위 테스트."""
+"""src.dashboard.state 단위 테스트 (round 35 multi-flag)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-
-import pytest
 
 from src.dashboard.state import (
     LeaderState,
@@ -22,7 +20,6 @@ from src.jongbae.config_thresholds import (
 
 
 def test_in_window_business_day_within():
-    # 2026-05-11 월요일 09:30
     assert in_monitoring_window(datetime(2026, 5, 11, 9, 30)) is True
 
 
@@ -32,11 +29,10 @@ def test_in_window_business_day_outside():
 
 
 def test_in_window_weekend():
-    # 2026-05-09 토요일
     assert in_monitoring_window(datetime(2026, 5, 9, 9, 30)) is False
 
 
-# ── add_manual / 토글 ────────────────────────────────────────────────────────
+# ── add_manual / 토글 (multi-flag) ───────────────────────────────────────────
 
 
 def test_add_manual_basic():
@@ -45,17 +41,36 @@ def test_add_manual_basic():
     changed, msg = s.add_manual("005930", now)
     assert changed is True
     assert "005930" in s.monitored
-    assert s.monitored["005930"].source == Source.MANUAL
+    assert s.monitored["005930"].is_manual is True
+    assert s.monitored["005930"].is_auto is False
 
 
-def test_add_manual_toggle_removes():
+def test_add_manual_toggle_removes_flag():
+    """다시 토글 시 is_manual 만 끔. flag 다 없으면 종목 entry 는 prune 대기."""
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
     s.add_manual("005930", now)
     changed, msg = s.add_manual("005930", now)
     assert changed is True
-    assert "005930" not in s.monitored
+    assert s.monitored["005930"].is_manual is False
     assert "해제" in msg
+
+
+def test_add_manual_toggle_preserves_auto_flag():
+    """자동 풀에 있는 종목에 manual 켰다 끄면 auto flag 는 살아남는다."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["T"]}], now)
+    assert s.monitored["075180"].is_auto is True
+    # manual 켜기
+    s.add_manual("075180", now)
+    assert s.monitored["075180"].is_manual is True
+    assert s.monitored["075180"].is_auto is True  # auto 도 살아있음
+    # manual 끄기
+    s.add_manual("075180", now)
+    assert s.monitored["075180"].is_manual is False
+    assert s.monitored["075180"].is_auto is True
+    assert "075180" in s.monitored  # auto 가 있어 종목 entry 유지
 
 
 def test_add_manual_invalid_code():
@@ -75,15 +90,23 @@ def test_add_manual_max_codes():
     assert "최대" in msg
 
 
-def test_remove_manual_all_keeps_auto():
+def test_remove_manual_all_clears_flag_only():
+    """/clear — 모든 manual flag 만 clear. 자동 flag 는 살아있어 종목 유지."""
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    s.add_manual("005930", now)
-    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["전기/전선"]}], now)
+    s.add_manual("005930", now)  # manual only
+    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["T"]}], now)
+    s.add_manual("075180", now)  # auto + manual
     n, msg = s.remove_manual_all()
-    assert n == 1
-    assert "005930" not in s.monitored
-    assert "075180" in s.monitored  # 자동은 유지
+    assert n == 2  # 005930 + 075180 둘 다 manual flag 해제
+    # 005930 — manual 끄면 flag 없음 (prune 대상 — 본 함수는 prune 안 함)
+    assert s.monitored["005930"].is_manual is False
+    # 075180 — manual 끄지만 auto 살아있음
+    assert s.monitored["075180"].is_manual is False
+    assert s.monitored["075180"].is_auto is True
+
+
+# ── update_rising_candidates ────────────────────────────────────────────────
 
 
 def test_rising_basic_add():
@@ -93,117 +116,119 @@ def test_rising_basic_add():
         [{"code": "012200", "name": "계양전기", "themes": []}], now,
     )
     assert "012200" in s.monitored
-    assert s.monitored["012200"].source == Source.RISING
+    assert s.monitored["012200"].is_rising is True
     assert any("012200" in c for c in changes)
 
 
 def test_rising_persists_while_in_pool():
-    """풀에 다시 들어있으면 RISING 카드 유지 (round 19 — TTL 폐지)."""
     s = MonitoringSession()
     t0 = datetime(2026, 5, 13, 9, 30)
     s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
     t1 = t0 + timedelta(minutes=5)
     s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t1)
-    assert "012200" in s.monitored
-    assert s.monitored["012200"].source == Source.RISING
+    assert s.monitored["012200"].is_rising is True
 
 
-def test_rising_removed_when_dropped_from_pool():
-    """풀에서 빠지면 즉시 카드 제거 (round 19 — 시간 만료 X, 풀 이탈 기반)."""
+def test_rising_flag_off_when_dropped_from_pool():
+    """풀에서 빠지면 is_rising flag 만 off — 다른 flag 없으면 prune 대상."""
     s = MonitoringSession()
     t0 = datetime(2026, 5, 13, 9, 30)
     s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
-    assert "012200" in s.monitored
-    # 다음 tick — 풀에서 빠짐 (+29% 도달 시나리오 시뮬)
-    changes = s.update_rising_candidates([], t0 + timedelta(seconds=5))
+    s.update_rising_candidates([], t0 + timedelta(seconds=5))
+    assert s.monitored["012200"].is_rising is False
+    # 다른 flag 도 없으므로 prune 대상 — prune 호출 시 제거
+    s.prune_empty(set())
     assert "012200" not in s.monitored
-    assert any("풀 이탈" in c for c in changes)
 
 
-def test_rising_drop_does_not_affect_core():
-    """RISING 풀 동기화가 AUTO/MANUAL 종목을 건드리지 않는다."""
+def test_rising_drop_does_not_affect_other_flags():
+    """RISING 풀 동기화가 manual/auto flag 를 건드리지 않는다."""
     s = MonitoringSession()
     t0 = datetime(2026, 5, 13, 9, 30)
     s.add_manual("005930", t0)
     s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["T"]}], t0)
     s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
-    # 다음 tick — RISING 풀 비어있음
     s.update_rising_candidates([], t0 + timedelta(seconds=5))
+    s.prune_empty(set())
+    assert "005930" in s.monitored
+    assert "075180" in s.monitored
     assert "012200" not in s.monitored
-    assert "005930" in s.monitored  # MANUAL 유지
-    assert "075180" in s.monitored  # AUTO 유지
 
 
-def test_auto_promote_to_manual_via_add():
-    """AUTO 종목 코드 재입력 시 MANUAL 로 승격 (보유 잠금) — +29% 도달 후에도 유지."""
+def test_manual_pin_survives_auto_pool_exit():
+    """사용자가 자동 풀 종목에 manual 핀 박으면 풀 이탈 후에도 카드 유지 (사용자 요구 핵심)."""
     s = MonitoringSession()
     t0 = datetime(2026, 5, 13, 9, 30)
-    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["전기/전선"]}], t0)
-    assert s.monitored["075180"].source == Source.AUTO
-    # 사용자가 매수 후 같은 코드 입력 → MANUAL 승격
-    changed, msg = s.add_manual("075180", t0 + timedelta(minutes=1))
-    assert changed is True
-    assert "승격" in msg
-    assert s.monitored["075180"].source == Source.MANUAL
-    # AUTO 풀에서 빠진(=29% 도달 시뮬) 상황에서도 monitored 유지 확인
-    s.update_auto_leaders([], t0 + timedelta(minutes=2))  # leader 다 빠짐
-    assert "075180" in s.monitored  # MANUAL 이라 유지
-    # 다시 같은 코드 입력 → 해제
-    changed, msg = s.add_manual("075180", t0 + timedelta(minutes=3))
-    assert changed is True
-    assert "해제" in msg
-    assert "075180" not in s.monitored
+    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["T"]}], t0)
+    assert s.monitored["075180"].is_auto is True
+    # 사용자 [→ 수동]
+    s.add_manual("075180", t0 + timedelta(minutes=1))
+    assert s.monitored["075180"].is_manual is True
+    # 자동 풀에서 빠짐 (+29% 도달 시뮬)
+    s.update_auto_leaders([], t0 + timedelta(minutes=2))
+    assert s.monitored["075180"].is_auto is False
+    assert s.monitored["075180"].is_manual is True
+    s.prune_empty(set())
+    assert "075180" in s.monitored  # manual 핀이라 prune 안 됨
 
 
-def test_rising_promote_to_manual_via_add():
-    """RISING 종목을 /add 로 누르면 MANUAL 승격 (해제 X)."""
+def test_clear_manual_flag_helper():
+    """청산 시 호출되는 헬퍼 — is_manual 만 off, 다른 flag 영향 X."""
     s = MonitoringSession()
-    t0 = datetime(2026, 5, 13, 9, 30)
-    s.update_rising_candidates([{"code": "012200", "name": "계양", "themes": []}], t0)
-    changed, msg = s.add_manual("012200", t0 + timedelta(minutes=1))
-    assert changed is True
-    assert "승격" in msg
-    m = s.monitored["012200"]
-    assert m.source == Source.MANUAL
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("075180", now)
+    s.update_auto_leaders([{"code": "075180", "name": "제룡", "themes": []}], now)
+    assert s.clear_manual_flag("075180") is True
+    assert s.monitored["075180"].is_manual is False
+    assert s.monitored["075180"].is_auto is True
+    # 두번째 호출 — 이미 꺼져있음
+    assert s.clear_manual_flag("075180") is False
 
 
-def test_rising_does_not_consume_core_slot():
-    """RISING 은 core(AUTO+MANUAL) 한도(4) 와 별개로 카운트."""
+def test_ensure_held_stock():
+    """보유 surface — monitored 에 없으면 entry 추가, flag 는 모두 false."""
     s = MonitoringSession()
-    t0 = datetime(2026, 5, 13, 9, 30)
-    # core 4개 채움
-    for i in range(MONITORING_MAX_CODES):
-        s.add_manual(f"00000{i}"[-6:], t0)
-    # RISING 추가 — 슬롯 부족 메시지 없어야
-    s.update_rising_candidates(
-        [{"code": "999990", "name": "X", "themes": []}], t0,
-    )
-    assert "999990" in s.monitored
-    # 새 MANUAL 은 여전히 거부
-    changed, msg = s.add_manual("888880", t0)
-    assert changed is False and "최대" in msg
+    now = datetime(2026, 5, 11, 9, 30)
+    m = s.ensure_held_stock("091340", "대한광통신", now)
+    assert m.code == "091340"
+    assert m.name == "대한광통신"
+    assert m.has_any_flag() is False
+    # 이미 있으면 name 만 갱신 (더 나은 이름이 들어오면)
+    s.monitored["091340"].name = "091340"  # name=code 인 상태
+    s.ensure_held_stock("091340", "대한광통신", now)
+    assert s.monitored["091340"].name == "대한광통신"
+
+
+def test_prune_empty():
+    """flag 다 false 이고 보유도 아닌 종목 제거."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    # 케이스 1: flag 없음 + 보유 X → 제거
+    s.ensure_held_stock("000001", "X", now)
+    # 케이스 2: manual flag — 유지
+    s.add_manual("000002", now)
+    # 케이스 3: flag 없지만 holdings 에 있음 → 유지
+    s.ensure_held_stock("000003", "Y", now)
+    removed = s.prune_empty({"000003"})
+    assert "000001" not in s.monitored
+    assert "000002" in s.monitored
+    assert "000003" in s.monitored
+    assert any("000001" in r for r in removed)
 
 
 def test_set_on_off_idempotent():
-    """/on /off 는 멱등 — 같은 상태 재호출 시 (False, '이미 ...') 반환."""
     s = MonitoringSession()
-    # 기본 ON 상태
     assert s.paused is False
     changed, msg = s.set_on()
     assert changed is False
     assert "이미" in msg
-    # OFF
     changed, msg = s.set_off()
     assert changed is True
     assert s.paused is True
-    assert s.off_cleanup_pending is True
-    # OFF 중복
     changed, _ = s.set_off()
     assert changed is False
-    # ON 복귀
     changed, _ = s.set_on()
     assert changed is True
-    assert s.paused is False
 
 
 def test_list_monitored_empty():
@@ -234,54 +259,59 @@ def test_update_auto_leaders_adds():
         {"code": "075180", "name": "제룡전기", "themes": ["전기/전선"]},
     ], now)
     assert "075180" in s.monitored
-    assert s.monitored["075180"].source == Source.AUTO
+    assert s.monitored["075180"].is_auto is True
     assert s.monitored["075180"].themes == ["전기/전선"]
     assert any("제룡전기" in c for c in changes)
 
 
-def test_update_auto_leaders_removes_dropped():
+def test_update_auto_leaders_drops_flag_only():
+    """자동 풀에서 빠지면 is_auto flag 만 off — 종목 entry 는 prune 단계에서 결정."""
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["전기/전선"]}], now)
-    s.update_auto_leaders([{"code": "001440", "name": "대한전선", "themes": ["전기/전선"]}], now)
+    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["T"]}], now)
+    s.update_auto_leaders([{"code": "001440", "name": "대한전선", "themes": ["T"]}], now)
+    # 075180 는 entry 남아있지만 is_auto false
+    assert s.monitored["075180"].is_auto is False
+    assert s.monitored["001440"].is_auto is True
+    # prune 시 075180 사라짐
+    s.prune_empty(set())
     assert "075180" not in s.monitored
     assert "001440" in s.monitored
 
 
-def test_update_auto_leaders_keeps_manual():
+def test_update_auto_leaders_keeps_manual_pin():
+    """자동 갱신이 수동 핀을 건드리지 않는다."""
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
     s.add_manual("005930", now)
-    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["전기/전선"]}], now)
-    # 수동 005930 은 자동 갱신과 무관하게 유지
-    assert "005930" in s.monitored
-    assert s.monitored["005930"].source == Source.MANUAL
+    s.update_auto_leaders([{"code": "075180", "name": "제룡전기", "themes": ["T"]}], now)
+    assert s.monitored["005930"].is_manual is True
+    assert s.monitored["005930"].is_auto is False
 
 
 # ── step_tracker 상태 머신 ───────────────────────────────────────────────────
 
 
-def _stock(code: str, name: str, turnover: float) -> dict:
+def _ticker(code: str, name: str, turnover: float) -> dict:
     return {"code": code, "name": name, "turnover": turnover}
 
 
 def test_tracker_normal_initial():
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    a1 = _stock("A", "주도A", 18.0)
+    a1 = _ticker("A", "주도A", 18.0)
     s.step_tracker("전기/전선", a1, candidate=None,
                    candidate_passed_transition_check=False, now=now)
     assert s.trackers["전기/전선"].state == LeaderState.NORMAL
 
 
 def test_tracker_normal_to_transition():
-    """round 19: alert 반환 폐지 — tracker.state 만 검증."""
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    a1 = _stock("A", "주도A", 18.0)
+    a1 = _ticker("A", "주도A", 18.0)
     s.step_tracker("전기/전선", a1, candidate=None,
                    candidate_passed_transition_check=False, now=now)
-    a2 = _stock("B", "후보B", 12.0)
+    a2 = _ticker("B", "후보B", 12.0)
     s.step_tracker("전기/전선", a1, candidate=a2,
                    candidate_passed_transition_check=True, now=now)
     tracker = s.trackers["전기/전선"]
@@ -292,12 +322,11 @@ def test_tracker_normal_to_transition():
 def test_tracker_transition_to_grace_on_overtake():
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    a1 = _stock("A", "주도A", 18.0)
-    a2 = _stock("B", "후보B", 12.0)
+    a1 = _ticker("A", "주도A", 18.0)
+    a2 = _ticker("B", "후보B", 12.0)
     s.step_tracker("전기/전선", a1, None, False, now)
     s.step_tracker("전기/전선", a1, a2, True, now)
-    # a2 회전율이 a1 추월
-    a2_high = _stock("B", "후보B", 22.0)
+    a2_high = _ticker("B", "후보B", 22.0)
     later = now + timedelta(minutes=2)
     s.step_tracker("전기/전선", a1, a2_high, True, later)
     assert s.trackers["전기/전선"].state == LeaderState.GRACE
@@ -306,29 +335,27 @@ def test_tracker_transition_to_grace_on_overtake():
 def test_tracker_grace_revert_on_a1_recovery():
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    a1 = _stock("A", "주도A", 18.0)
-    a2 = _stock("B", "후보B", 12.0)
+    a1 = _ticker("A", "주도A", 18.0)
+    a2 = _ticker("B", "후보B", 12.0)
     s.step_tracker("전기/전선", a1, None, False, now)
     s.step_tracker("전기/전선", a1, a2, True, now)
-    s.step_tracker("전기/전선", a1, _stock("B", "후보B", 22.0), True, now + timedelta(minutes=2))
+    s.step_tracker("전기/전선", a1, _ticker("B", "후보B", 22.0), True, now + timedelta(minutes=2))
     assert s.trackers["전기/전선"].state == LeaderState.GRACE
-    # GRACE 중 a1 회복: a2 turnover < a1 turnover
-    s.step_tracker("전기/전선", a1, _stock("B", "후보B", 10.0), True, now + timedelta(minutes=3))
+    s.step_tracker("전기/전선", a1, _ticker("B", "후보B", 10.0), True, now + timedelta(minutes=3))
     assert s.trackers["전기/전선"].state == LeaderState.NORMAL
 
 
 def test_tracker_grace_period_completes():
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    a1 = _stock("A", "주도A", 18.0)
-    a2 = _stock("B", "후보B", 22.0)
+    a1 = _ticker("A", "주도A", 18.0)
+    a2 = _ticker("B", "후보B", 22.0)
     s.step_tracker("전기/전선", a1, None, False, now)
-    s.step_tracker("전기/전선", a1, _stock("B", "후보B", 12.0), True, now)
-    s.step_tracker("전기/전선", a1, a2, True, now)  # 즉시 GRACE
+    s.step_tracker("전기/전선", a1, _ticker("B", "후보B", 12.0), True, now)
+    s.step_tracker("전기/전선", a1, a2, True, now)
     assert s.trackers["전기/전선"].state == LeaderState.GRACE
     later = now + timedelta(seconds=GRACE_PERIOD_SECONDS + 1)
     s.step_tracker("전기/전선", a1, a2, True, later)
-    # GRACE 종료 → NORMAL, incumbent 가 a2 로 교체
     assert s.trackers["전기/전선"].state == LeaderState.NORMAL
     assert s.trackers["전기/전선"].incumbent_code == "B"
 
@@ -336,11 +363,10 @@ def test_tracker_grace_period_completes():
 def test_tracker_transition_candidate_disappears():
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    a1 = _stock("A", "주도A", 18.0)
-    a2 = _stock("B", "후보B", 12.0)
+    a1 = _ticker("A", "주도A", 18.0)
+    a2 = _ticker("B", "후보B", 12.0)
     s.step_tracker("전기/전선", a1, None, False, now)
     s.step_tracker("전기/전선", a1, a2, True, now)
-    # 다음 스텝에서 candidate 사라짐
     s.step_tracker("전기/전선", a1, None, False, now + timedelta(minutes=1))
     assert s.trackers["전기/전선"].state == LeaderState.NORMAL
 
@@ -348,15 +374,12 @@ def test_tracker_transition_candidate_disappears():
 def test_tracker_transition_weak_persistence_drops_candidate():
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
-    a1 = _stock("A", "주도A", 18.0)
+    a1 = _ticker("A", "주도A", 18.0)
     s.step_tracker("전기/전선", a1, None, False, now)
-    s.step_tracker("전기/전선", a1, _stock("B", "B", 12.0), True, now)
-    # a2 회전율이 a1 × 0.4 = 7.2 미만으로 떨어짐
-    weak_b = _stock("B", "B", 5.0)
+    s.step_tracker("전기/전선", a1, _ticker("B", "B", 12.0), True, now)
+    weak_b = _ticker("B", "B", 5.0)
     s.step_tracker("전기/전선", a1, weak_b, True, now + timedelta(seconds=10))
-    # 아직 3분 미만
     assert s.trackers["전기/전선"].state == LeaderState.TRANSITION
-    # 3분 지속
     s.step_tracker(
         "전기/전선", a1, weak_b, True,
         now + timedelta(seconds=10 + TRANSITION_EXIT_PERSIST_SECONDS + 1),

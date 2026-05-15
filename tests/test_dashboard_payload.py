@@ -22,10 +22,13 @@ def _stock(
     buy_grade: str | None = None,
     buy_reasons: list[str] | None = None,
 ) -> MonitoredStock:
+    """round 35: source 인자를 받아 해당 flag 켜기 (테스트 호환)."""
     return MonitoredStock(
         code=code,
         name=name,
-        source=source,
+        is_auto=(source == Source.AUTO),
+        is_rising=(source == Source.RISING),
+        is_manual=(source == Source.MANUAL),
         added_at=datetime(2026, 5, 11, 9, 0),
         themes=themes or ["전기/전선"],
         buy_score=buy_score,
