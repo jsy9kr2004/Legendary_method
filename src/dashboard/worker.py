@@ -568,63 +568,74 @@ def dashboard_tick(
                 holding=None,
             )
 
-        # round 33: 모든 모니터링 모드(AUTO/MANUAL/HOLD/RISING) 에 R14 매수 점수 계산.
-        # 이전엔 _evaluate_rising_funnel 안에서만 점수가 매겨져 RISING 카드에만 등급
-        # 라벨이 떴다 — 사용자가 "보유/주도주 카드에도 STRONG/WATCH 항상 보고 싶다".
-        # 입력은 매 tick fetch 한 값 재사용 — 추가 KIS 호출 없음.
-        if snap_row is not None:
-            bid_ask = float("nan")
-            if asking is not None:
-                v = asking.get("bid_ask_ratio")
-                if v is not None and v == v:
-                    bid_ask = float(v)
-            price_for_grade = float(snap_row.get("price") or 0)
-            high_for_grade = float(snap_row.get("intraday_high") or 0)
-            dist_high = (
-                (price_for_grade - high_for_grade) / high_for_grade * 100.0
-                if high_for_grade > 0 and price_for_grade > 0 else float("nan")
-            )
-            vwap_g = compute_vwap(bars) if not bars.empty else float("nan")
-            ma5_g = compute_minute_ma(bars, window_minutes=5) if not bars.empty else float("nan")
-            ma20_g = compute_minute_ma(bars, window_minutes=20) if not bars.empty else float("nan")
-            vwap_pct_g = (
-                price_vs_vwap_pct(price_for_grade, vwap_g)
-                if price_for_grade > 0 else float("nan")
-            )
-            ma5_pct_g = (
-                price_vs_ma_pct(price_for_grade, ma5_g)
-                if price_for_grade > 0 else float("nan")
-            )
-            ma20_pct_g = (
-                price_vs_ma_pct(price_for_grade, ma20_g)
-                if price_for_grade > 0 else float("nan")
-            )
-            today_volume_g = float(snap_row.get("volume") or 0)
-            prev_volume_g = _prev_day_volume(daily_ohlcv, code)
-            if today_volume_g > 0 and prev_volume_g == prev_volume_g and prev_volume_g > 0:
-                vol_ratio_g = today_volume_g / prev_volume_g
-            else:
-                vol_ratio_g = float("nan")
-            grade_snap = GraderSnapshot(
-                volume_turnover_rank=int(snap_row.get("rank") or 0) or None,
-                vol_accel_1m=accel_1m if accel_1m == accel_1m else float("nan"),
-                vol_accel_5m=accel if accel == accel else float("nan"),
-                candle=candle_for_trig,
-                vp=vp_now,
-                vp_5ma=vp_5ma if vp_5ma == vp_5ma else float("nan"),
-                divergence=divergence_state,
-                bid_ask_ratio=bid_ask,
-                dist_from_intraday_high_pct=dist_high,
-                price_vs_vwap_pct=vwap_pct_g,
-                price_vs_ma5_pct=ma5_pct_g,
-                price_vs_ma20_pct=ma20_pct_g,
-                volume_ratio_vs_prev_day=vol_ratio_g,
-                limit_up_hit_time=session.limit_up_hit_times.get(code),
-            )
-            sc = calculate_buy_score(grade_snap)
-            monitored.buy_score = sc.score
-            monitored.buy_grade = sc.grade
-            monitored.buy_reasons = list(sc.reasons)
+        # round 33/35: 모든 모니터링 모드(AUTO/MANUAL/HOLD/RISING) 에 R14 매수 점수 계산.
+        # round 33 에선 `if snap_row is not None:` 가드가 있어서 거래대금 50위 밖
+        # 종목(주로 보유 / 수동)은 grade 계산 자체가 skip 됐다. 사용자 보고:
+        # "보유/수동 모니터링 어느 경우든 등급 안 뜸". 가드 폐지 — snap_row 가 없어도
+        # bars/ccnl 같은 다른 fetch 결과로 부분 점수라도 계산해서 monitored.buy_grade
+        # 채움. grader 입력은 모두 NaN-safe 라 부분 데이터로도 동작.
+        snap_row_d = snap_row or {}
+        bid_ask = float("nan")
+        if asking is not None:
+            v = asking.get("bid_ask_ratio")
+            if v is not None and v == v:
+                bid_ask = float(v)
+        # 가격 fallback: snap_row > bars 마지막 close > 0. 50위 밖 종목도 bars 가 있으면
+        # divergence / VWAP / MA / dist_high 계산 가능.
+        price_for_grade = float(snap_row_d.get("price") or 0)
+        if price_for_grade <= 0 and not bars.empty and "close" in bars.columns:
+            price_for_grade = float(bars.iloc[-1]["close"]) if pd.notna(bars.iloc[-1]["close"]) else 0.0
+        high_for_grade = float(snap_row_d.get("intraday_high") or 0)
+        # intraday_high 도 fallback — bars 의 최고가
+        if high_for_grade <= 0 and not bars.empty and "high" in bars.columns:
+            high_for_grade = float(bars["high"].max()) if pd.notna(bars["high"].max()) else 0.0
+        dist_high = (
+            (price_for_grade - high_for_grade) / high_for_grade * 100.0
+            if high_for_grade > 0 and price_for_grade > 0 else float("nan")
+        )
+        vwap_g = compute_vwap(bars) if not bars.empty else float("nan")
+        ma5_g = compute_minute_ma(bars, window_minutes=5) if not bars.empty else float("nan")
+        ma20_g = compute_minute_ma(bars, window_minutes=20) if not bars.empty else float("nan")
+        vwap_pct_g = (
+            price_vs_vwap_pct(price_for_grade, vwap_g)
+            if price_for_grade > 0 else float("nan")
+        )
+        ma5_pct_g = (
+            price_vs_ma_pct(price_for_grade, ma5_g)
+            if price_for_grade > 0 else float("nan")
+        )
+        ma20_pct_g = (
+            price_vs_ma_pct(price_for_grade, ma20_g)
+            if price_for_grade > 0 else float("nan")
+        )
+        today_volume_g = float(snap_row_d.get("volume") or 0)
+        prev_volume_g = _prev_day_volume(daily_ohlcv, code)
+        if today_volume_g > 0 and prev_volume_g == prev_volume_g and prev_volume_g > 0:
+            vol_ratio_g = today_volume_g / prev_volume_g
+        else:
+            vol_ratio_g = float("nan")
+        # rank 가 0/None 이면 None — grader 의 회전율 가산 (+1) 만 skip, 다른 시그널 정상 평가.
+        rank_for_grade = int(snap_row_d.get("rank") or 0) or None
+        grade_snap = GraderSnapshot(
+            volume_turnover_rank=rank_for_grade,
+            vol_accel_1m=accel_1m if accel_1m == accel_1m else float("nan"),
+            vol_accel_5m=accel if accel == accel else float("nan"),
+            candle=candle_for_trig,
+            vp=vp_now,
+            vp_5ma=vp_5ma if vp_5ma == vp_5ma else float("nan"),
+            divergence=divergence_state,
+            bid_ask_ratio=bid_ask,
+            dist_from_intraday_high_pct=dist_high,
+            price_vs_vwap_pct=vwap_pct_g,
+            price_vs_ma5_pct=ma5_pct_g,
+            price_vs_ma20_pct=ma20_pct_g,
+            volume_ratio_vs_prev_day=vol_ratio_g,
+            limit_up_hit_time=session.limit_up_hit_times.get(code),
+        )
+        sc = calculate_buy_score(grade_snap)
+        monitored.buy_score = sc.score
+        monitored.buy_grade = sc.grade
+        monitored.buy_reasons = list(sc.reasons)
 
         text = render_monitor_message(
             monitored=monitored,
