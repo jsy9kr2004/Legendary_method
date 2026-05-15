@@ -194,7 +194,10 @@
 **[Phase 1: 로컬 MVP]**
 
 - [x] **FastAPI 서버 셋업** — `src/dashboard/api.py` `create_app(session, broadcast_interval_sec=1.0)`. WS `/ws/monitor` (snapshot on connect + payload_ts 변경 시 tick broadcast), REST `/api/health` `/api/snapshot` `/api/holdings` (buy/sell) `/api/session` (on/off) `/api/watchlist` (toggle/clear). 정적 `/static/*` + `/` → index.html. `tests/test_dashboard_api.py` 16 케이스. (2026-05-14)
-- [x] **카드 JSON 페이로드 생성** — `src/dashboard/render.py` `build_monitor_payload()`. NaN/Inf → None sanitize, DivergenceState.bearish/bullish → kind 문자열, LeaderState enum → value. `MonitoringSession.last_payloads` 필드에 worker tick 마다 갱신, stale 종목 자동 정리. `tests/test_dashboard_payload.py` 9 케이스 + worker integration 3 케이스 추가. 전체 770 테스트 통과. (2026-05-14)
+- [x] **카드 JSON 페이로드 생성** — `src/dashboard/render.py` `build_monitor_payload()`. NaN/Inf → None sanitize, DivergenceState.bearish/bullish → kind 문자열, LeaderState enum → value. `MonitoringSession.last_payloads` 필드에 worker tick 마다 갱신, stale 종목 자동 정리. (2026-05-14)
+- [x] **trigger_lines 페이로드 + 청산 시그널 카드 표시** — `build_trigger_lines()` 헬퍼로 텔레그램/PWA 공용. C1~C5 텍스트 줄 list (현재 VP/가속 수치 포함). PWA 가 코드명 (`C1_vp_below_100`) 만 보여주던 문제 해결, 텔레그램과 동일 인지 정보 (2026-05-15)
+- [x] **수동 전환 / 해제 버튼** — 자동/부상 카드 `[→ 수동]`, 수동 카드 `[× 해제]`, 보유 카드 `[✕ 청산]`. 모두 기존 `apply_command` (`toggle_code` / `sell`) 핸들러 재사용 (2026-05-15)
+- [x] **그룹 컬럼 폐지** — 카드에 source 라벨 + 좌측 보더 색상 이미 있어 중복. 단일 그리드 + source priority sort (보유 → 자동 → 부상 → 수동) 후 점수 내림차순 (2026-05-15)
 - [x] **WebSocket broadcast** — `session.last_payload_ts` 변경 감지 polling 1초 (worker tick 3초 + 1초 lag). 변경 시 전체 snapshot 송신 (diff 미구현, 페이로드 작아 OK)
 - [x] **REST 핸들러 = telegram_bot 핸들러 재사용** — `Command(kind=...)` 직접 생성 후 `apply_command(cmd, session, now_kst())` 호출. `_apply_buy` / `_apply_sell` / `add_manual` / `set_on/set_off` / `remove_manual_all` 한 군데서만 — 이중 구현 X
 - [x] **정적 HTML** — `src/dashboard/static/{index.html,app.js,manifest.json,icon.svg}`. Vanilla JS + Tailwind CDN. 종목별 카드 그리드 + 그룹 4컬럼 (보유/자동/부상/수동) + 보유 등록 모달 + 6자리 코드 추가 input + /on /off 버튼 + WS 자동 재연결 지수 백오프

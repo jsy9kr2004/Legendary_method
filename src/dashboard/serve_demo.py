@@ -21,6 +21,7 @@ import uvicorn
 
 from src.config import now_kst
 from src.dashboard.api import create_app
+from src.dashboard.render import build_trigger_lines
 from src.dashboard.state import MonitoringSession
 
 
@@ -43,6 +44,25 @@ def _build_demo_payload(
 
     is_holding = holding is not None
     effective_source = "hold" if is_holding else source
+
+    # 데모 trigger_states — 한 종목만 일부 발화시켜 UI 표시 검증
+    vp_5ma_demo = round(random.uniform(80, 160), 0)
+    vp_1ma_demo = round(random.uniform(80, 160), 0)
+    accel_1m_demo = round(random.uniform(0.2, 4.0), 1)
+    trigger_states = {
+        "C1_vp_below_100": vp_5ma_demo < 100,
+        "C2_bearish_divergence": False,
+        "C3_vol_drain": accel_1m_demo < 0.5,
+        "C4_bearish_candle": False,
+    }
+    if is_holding:
+        trigger_states["C5_vi_failure"] = False
+    trigger_lines = build_trigger_lines(
+        trigger_states=trigger_states,
+        is_holding=is_holding,
+        vp_5ma=vp_5ma_demo, vp_1ma=vp_1ma_demo,
+        accel_ratio_1m=accel_1m_demo, divergence=None,
+    )
 
     holding_block: dict | None = None
     if is_holding:
@@ -86,11 +106,11 @@ def _build_demo_payload(
             "turnover_pct": round(random.uniform(5, 20), 1),
         },
         "accel_5m": {"ratio": round(random.uniform(0.5, 6.0), 1), "bar_value": 5_000_000_000},
-        "accel_1m": {"ratio": round(random.uniform(0.5, 6.0), 1), "bar_value": 1_000_000_000},
+        "accel_1m": {"ratio": accel_1m_demo, "bar_value": 1_000_000_000},
         "vp": {
             "current": round(random.uniform(80, 160), 0),
-            "ma_5": round(random.uniform(80, 160), 0),
-            "ma_1": round(random.uniform(80, 160), 0),
+            "ma_5": vp_5ma_demo,
+            "ma_1": vp_1ma_demo,
             "buy_ratio": round(random.uniform(-30, 60), 1),
         },
         "asking": {
@@ -106,7 +126,8 @@ def _build_demo_payload(
         "holding": holding_block,
         "transition": None,
         "grace_remaining_sec": None,
-        "trigger_states": None,
+        "trigger_states": trigger_states,
+        "trigger_lines": trigger_lines,
         "updated_at": now.isoformat(),
     }
 

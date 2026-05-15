@@ -258,6 +258,80 @@ def test_payload_trigger_states():
     assert payload["trigger_states"]["A1_stop_price"] is False
 
 
+def test_payload_trigger_lines_for_pwa():
+    """PWA 가 trigger_states 보고 자체 렌더하지 않게 — payload.trigger_lines 가
+    텔레그램 카드와 동일 텍스트 줄 list 로 제공돼야 함.
+    """
+    triggers = {
+        "C1_vp_below_100": False,
+        "C2_bearish_divergence": False,
+        "C3_vol_drain": True,
+        "C4_bearish_candle": False,
+    }
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        now=datetime(2026, 5, 11, 9, 32, 18),
+        trigger_states=triggers,
+        vp_5ma=95.0,
+        vp_1ma=90.0,
+        accel_ratio_1m=0.3,
+    )
+    lines = payload["trigger_lines"]
+    # 헤더 + C1~C4 = 5줄 (감시 모드, C5 제외)
+    assert len(lines) == 5
+    assert "청산 시그널 (현재 시점)" in lines[0]
+    # C1 ❌ + 현재 VP 수치 표시
+    assert "❌" in lines[1] and "95" in lines[1]
+    # C3 ✅ (발화) + 현재 1분 가속 0.3 표시
+    assert "✅" in lines[3] and "0.3배" in lines[3]
+
+
+def test_payload_trigger_lines_holding_includes_c5():
+    """보유 모드는 C5 (VI 발동) 포함, 5줄 + C5 = 6줄."""
+    from src.jongbae.exit_triggers import Holding
+
+    triggers = {
+        "C1_vp_below_100": False, "C2_bearish_divergence": False,
+        "C3_vol_drain": False, "C4_bearish_candle": False,
+        "C5_vi_failure": False,
+    }
+    holding = Holding(
+        code="091340", entry_price=89000.0,
+        entry_time=datetime(2026, 5, 11, 9, 2),
+        time_stop_minutes=10,
+    )
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        now=datetime(2026, 5, 11, 9, 32, 18),
+        trigger_states=triggers,
+        holding=holding,
+    )
+    lines = payload["trigger_lines"]
+    # 보유 모드 = "청산 시그널" (instantaneous 라벨 X)
+    assert "청산 시그널" in lines[0] and "(현재 시점)" not in lines[0]
+    # 6줄 (헤더 + C1~C5)
+    assert len(lines) == 6
+    assert "VI" in lines[-1]
+
+
+def test_payload_trigger_lines_empty_when_states_none():
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        now=datetime(2026, 5, 11, 9, 32, 18),
+        trigger_states=None,
+    )
+    assert payload["trigger_lines"] == []
+
+
 def test_payload_missing_snapshot_row():
     """snapshot_row=None 이어도 빈 dict 로 안전하게 빌드."""
     payload = build_monitor_payload(
