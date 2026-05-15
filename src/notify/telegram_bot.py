@@ -216,6 +216,15 @@ def _apply_buy(
     if price is None:
         price = session.last_prices.get(code)
         if price is None or price <= 0:
+            # M7 wiring (PWA): 카드 페이로드의 current price 도 fallback.
+            # 데모 환경 / 워밍업 중 / 종목이 모니터링 풀에 갓 들어와 last_prices
+            # 가 비어 있어도 보유 등록 가능.
+            payload = session.last_payloads.get(code)
+            if payload:
+                cur = (payload.get("price") or {}).get("current")
+                if cur and cur > 0:
+                    price = float(cur)
+        if price is None or price <= 0:
             return (
                 f"⚠ {code} — 최근 시세 미확보. "
                 f"`/buy {code} PRICE` 로 매수가를 명시해 주세요."

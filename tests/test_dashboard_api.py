@@ -154,6 +154,50 @@ def test_holdings_buy_price_autofill(client, session, tmp_path, monkeypatch):
     assert data["091340"]["entry_price"] == 91300.0
 
 
+def test_holdings_buy_price_fallback_to_payload(
+    client, session, tmp_path, monkeypatch,
+):
+    """price 생략 + last_prices 비어 있어도 last_payloads.current 로 fallback (M7).
+
+    데모 환경 또는 워밍업 중 last_prices 가 채워지기 전이라도 PWA 카드 데이터
+    (session.last_payloads) 가 있으면 그 current price 로 자동 보충.
+    """
+    holdings_path = tmp_path / "holdings.json"
+    monkeypatch.setattr(
+        "src.jongbae.exit_triggers._state_path", lambda: holdings_path,
+    )
+    session.add_manual("091340", datetime(2026, 5, 11, 9, 30))
+    # last_prices 비어 있음, last_payloads 에만 current price 있음
+    session.last_payloads["091340"] = {
+        "code": "091340",
+        "name": "대한광통신",
+        "price": {"current": 91300},
+    }
+
+    r = client.post("/api/holdings", json={"action": "buy", "code": "091340"})
+    assert r.status_code == 200, r.json()
+    assert "보유 모드" in r.json()["message"]
+    data = json.loads(holdings_path.read_text())
+    assert data["091340"]["entry_price"] == 91300.0
+
+
+def test_holdings_buy_price_missing_everywhere(
+    client, session, tmp_path, monkeypatch,
+):
+    """last_prices / last_payloads 모두 비어 있으면 명시 안내. 위험한 0 등록은 X."""
+    holdings_path = tmp_path / "holdings.json"
+    monkeypatch.setattr(
+        "src.jongbae.exit_triggers._state_path", lambda: holdings_path,
+    )
+    session.add_manual("091340", datetime(2026, 5, 11, 9, 30))
+    # 둘 다 빈 상태
+
+    r = client.post("/api/holdings", json={"action": "buy", "code": "091340"})
+    assert r.status_code == 200
+    assert "최근 시세 미확보" in r.json()["message"]
+    assert not holdings_path.exists()
+
+
 def test_holdings_invalid_action(client):
     r = client.post("/api/holdings", json={"action": "trade", "code": "091340"})
     assert r.status_code == 400
