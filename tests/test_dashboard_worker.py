@@ -349,6 +349,117 @@ def test_rising_funnel_drops_when_vp_explicitly_low():
     assert result == [], f"VP 85 (명시적 약함) 인데 funnel 통과: {result}"
 
 
+def test_grade_assigned_to_manual_stock_outside_top50():
+    """round 35: 수동 종목이 거래대금 50위 밖 (snap_by_code 에 없음) 이어도
+    bars 데이터만 있으면 monitored.buy_grade 채워야 함. 사용자 보고: "수동
+    모니터링해도 등급 안 뜸" 회귀."""
+    from src.dashboard.state import MonitoringSession
+    s = MonitoringSession()
+    # 수동 종목 추가 — snap 에는 안 들어감 (top 50 밖)
+    s.add_manual("999000", datetime(2026, 5, 11, 9, 30))
+
+    # snap 에는 다른 종목만 (top 50 안)
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "075180", "name": "제룡전기", "price": 91300,
+        "prev_close": 70200, "daily_return": 30.0, "intraday_high": 91500,
+        "intraday_low": 70300, "volume": 1_000_000,
+        "trading_value": 100_000_000_000, "is_limit_up": True,
+        "market_cap": 5_000, "turnover": 20.0,
+    }])
+    # bars 강한 양봉 — 수동 종목 999000 에 대해
+    strong_bars = pd.DataFrame([
+        *[{"open": 5000, "high": 5050, "low": 4990, "close": 5000,
+           "trading_value": 500_000_000} for _ in range(6)],
+        *[{"open": 5200, "high": 5300, "low": 5180, "close": 5280,
+           "trading_value": 2_500_000_000} for _ in range(5)],
+    ])
+
+    msg_ids: dict = {}
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         patch("src.dashboard.worker.fetch_minute_bars", return_value=strong_bars), \
+         patch("src.dashboard.worker.fetch_ccnl_strength",
+               return_value={"ccnl_strength": 135.0, "buy_ratio": float("nan")}), \
+         patch("src.dashboard.worker.fetch_asking_price",
+               return_value={"bid_ask_ratio": 1.2, "bid_total_volume": 0,
+                             "ask_total_volume": 0,
+                             "bid1_price": 5280, "ask1_price": 5290,
+                             "bid1_volume": 0, "ask1_volume": 0}), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         patch("src.dashboard.worker.send_message_single",
+               return_value={"ok": True, "result": {"message_id": 1}}), \
+         patch("src.dashboard.worker.edit_message"):
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=datetime(2026, 5, 11, 9, 30),
+        )
+    # 수동 종목 grade 가 채워졌는지
+    m = s.monitored["999000"]
+    assert m.buy_grade is not None, "snap_row 없는 수동 종목에 등급이 안 채워짐"
+    assert m.buy_score is not None
+    assert m.buy_grade in ("STRONG", "WATCH", "NEUTRAL", "AVOID")
+
+
+def test_grade_assigned_to_holding_stock_outside_top50():
+    """보유 종목이 거래대금 50위 밖이어도 등급 표시."""
+    from src.dashboard.state import MonitoringSession
+    from src.jongbae.exit_triggers import Holding
+
+    s = MonitoringSession()
+    s.add_manual("888000", datetime(2026, 5, 11, 9, 30))
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "075180", "name": "제룡전기", "price": 91300,
+        "prev_close": 70200, "daily_return": 30.0, "intraday_high": 91500,
+        "intraday_low": 70300, "volume": 1_000_000,
+        "trading_value": 100_000_000_000, "is_limit_up": True,
+        "market_cap": 5_000, "turnover": 20.0,
+    }])
+    bars = pd.DataFrame([
+        *[{"open": 3000, "high": 3010, "low": 2990, "close": 3000,
+           "trading_value": 200_000_000} for _ in range(6)],
+        *[{"open": 3050, "high": 3100, "low": 3030, "close": 3080,
+           "trading_value": 600_000_000} for _ in range(5)],
+    ])
+
+    holding = Holding(
+        code="888000", entry_price=3000,
+        entry_time=datetime(2026, 5, 11, 9, 20),
+        high_since_entry=3100,
+    )
+    msg_ids: dict = {}
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         patch("src.dashboard.worker.fetch_minute_bars", return_value=bars), \
+         patch("src.dashboard.worker.fetch_ccnl_strength",
+               return_value={"ccnl_strength": 115.0, "buy_ratio": float("nan")}), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         patch("src.dashboard.worker.load_holdings",
+               return_value={"888000": holding}), \
+         patch("src.dashboard.worker.send_message_single",
+               return_value={"ok": True, "result": {"message_id": 1}}), \
+         patch("src.dashboard.worker.edit_message"):
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=datetime(2026, 5, 11, 9, 30),
+        )
+    m = s.monitored["888000"]
+    assert m.buy_grade is not None, "보유 종목에 등급이 안 채워짐"
+
+
 def test_cleanup_messages_deletes_all():
     s = MonitoringSession()
     s.add_manual("005930", datetime(2026, 5, 11, 9, 30))
