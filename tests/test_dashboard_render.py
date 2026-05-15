@@ -235,20 +235,20 @@ def test_render_holding_mode_basic():
     assert "1MA 123" in msg
     # 청산 시그널 섹션
     assert "─ 청산 시그널 ─" in msg
-    assert "❌ 체결강도 5MA 100 하향 (현재 5MA 135 / 1MA 123)" in msg
-    assert "❌ Bearish Divergence" in msg
+    assert "▢ 체결강도 5MA 100 하향 (현재 5MA 135 / 1MA 123)" in msg
+    assert "▢ Bearish Divergence" in msg
     assert "가격 +0.80%" in msg
     assert "체결강도 -3" in msg
     # round 33: 보유 모드 C3 라벨에 "2분 지속" 명시.
-    assert "❌ 자금 고갈 (1분 가속 < 0.5, 2분 지속) — 현재 3.5배" in msg
-    assert "❌ 윗꼬리 50%↑ 음봉 (1분봉 기준)" in msg
-    assert "❌ VI 발동 후 5분 내 재상승 실패" in msg
+    assert "▢ 자금 고갈 (1분 가속 < 0.5, 2분 지속) — 현재 3.5배" in msg
+    assert "▢ 윗꼬리 50%↑ 음봉 (1분봉 기준)" in msg
+    assert "▢ VI 발동 후 5분 내 재상승 실패" in msg
     # +29% 매도가 라인은 보유 모드에서 미표시
     assert "+29% 매도가" not in msg
 
 
 def test_render_holding_mode_with_fired_triggers():
-    """발화된 트리거는 ✅, 미발화는 ❌."""
+    """발화된 트리거는 🚧, 미발화는 ▢."""
     from src.jongbae.exit_triggers import Holding
 
     entry = datetime(2026, 5, 14, 10, 3, 45)
@@ -274,9 +274,9 @@ def test_render_holding_mode_with_fired_triggers():
         vp_5ma=92.0, vp_1ma=85.0,
         holding=holding, trigger_states=triggers,
     )
-    assert "✅ 체결강도 5MA 100 하향" in msg
-    assert "✅ Bearish Divergence" in msg
-    assert "❌ 자금 고갈" in msg
+    assert "🚧 체결강도 5MA 100 하향" in msg
+    assert "🚧 Bearish Divergence" in msg
+    assert "▢ 자금 고갈" in msg
 
 
 def test_render_strength_line_always_shown_when_ccnl_missing():
@@ -329,7 +329,7 @@ def test_render_watch_mode_c3_label_no_sustain():
             "C5_vi_failure": False,
         },
     )
-    assert "✅ 자금 고갈 (1분 가속 < 0.5)" in msg
+    assert "🚧 자금 고갈 (1분 가속 < 0.5)" in msg
     assert "2분 지속" not in msg
 
 
