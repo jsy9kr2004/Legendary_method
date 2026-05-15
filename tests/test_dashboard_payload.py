@@ -286,10 +286,10 @@ def test_payload_trigger_lines_for_pwa():
     # 헤더 + C1~C4 = 5줄 (감시 모드, C5 제외)
     assert len(lines) == 5
     assert "청산 시그널 (현재 시점)" in lines[0]
-    # C1 ❌ + 현재 VP 수치 표시
-    assert "❌" in lines[1] and "95" in lines[1]
-    # C3 ✅ (발화) + 현재 1분 가속 0.3 표시
-    assert "✅" in lines[3] and "0.3배" in lines[3]
+    # C1 ▢ + 현재 VP 수치 표시
+    assert "▢" in lines[1] and "95" in lines[1]
+    # C3 🚧 (발화) + 현재 1분 가속 0.3 표시
+    assert "🚧" in lines[3] and "0.3배" in lines[3]
 
 
 def test_payload_trigger_lines_holding_includes_c5():

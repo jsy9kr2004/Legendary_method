@@ -131,16 +131,16 @@
 
     const actions = buildActionButtons(payload);
 
-    // 청산 시그널 — payload.trigger_lines 그대로 출력 (텔레그램과 동일 텍스트).
-    // 발화 항목(✅) 이 하나라도 있으면 카드 빨간 펄스.
+    // 청산 시그널 — payload.trigger_lines 그대로 출력. round 36: 마크 ▢ / 🚧.
+    // 발화 항목 (🚧) 있으면 카드 빨간 펄스 + 라인 amber 강조.
     const anyFired = Object.values(triggers).some((v) => v);
     if (anyFired) el.classList.add("pulse-trigger");
     else el.classList.remove("pulse-trigger");
     let triggerBlock = "";
     if (triggerLines.length) {
       const html = triggerLines.map((line) => {
-        const fired = line.includes("✅");
-        const cls = fired ? "text-rose-300" : "text-slate-400";
+        const fired = line.includes("🚧");
+        const cls = fired ? "text-amber-300 font-semibold" : "text-slate-400";
         return `<div class="${cls}">${escapeHtml(line)}</div>`;
       }).join("");
       triggerBlock = `<div class="mt-1 pt-1 border-t border-slate-700">${html}</div>`;
@@ -151,18 +151,41 @@
       ? `<div class="text-violet-300">🔥 ${transition.state.toUpperCase()} a2: ${transition.candidate_code} (${fmtPct(transition.candidate_turnover)})</div>`
       : "";
 
-    // 보유 정보
+    // 보유 정보 — 매수가/손익/손절·익절 값 또렷, 라벨 흐림
     let holdingLine = "";
     if (holding) {
       const elapsedMin = Math.floor(holding.elapsed_sec / 60);
       const elapsedSec = holding.elapsed_sec % 60;
+      const pnl = holding.pnl_pct;
+      const pnlCls = (pnl !== null && pnl !== undefined && pnl >= 0) ? "text-emerald-300" : "text-rose-300";
       holdingLine = `
-        <div class="text-cyan-300">매수 ${fmtNum(holding.entry_price)}원 → 손익 ${fmtPct(holding.pnl_pct)}  경과 ${elapsedMin}분 ${elapsedSec}초</div>
-        <div class="text-slate-400">손절 ${fmtNum(holding.stop_loss_price)} / 익절1 ${fmtNum(holding.take_profit_1_price)} / 익절2 ${fmtNum(holding.take_profit_2_price)}</div>`;
+        <div>
+          <span class="text-cyan-400">매수</span>
+          <span class="text-cyan-200 font-semibold">${fmtNum(holding.entry_price)}원</span>
+          <span class="text-slate-500">→</span>
+          <span class="text-cyan-400">손익</span>
+          <span class="${pnlCls} font-semibold">${fmtPct(holding.pnl_pct)}</span>
+          <span class="text-slate-500 ml-2">경과</span>
+          <span class="text-slate-200">${elapsedMin}분 ${elapsedSec}초</span>
+        </div>
+        <div>
+          <span class="text-slate-400">손절</span>
+          <span class="text-slate-200 font-semibold">${fmtNum(holding.stop_loss_price)}</span>
+          <span class="text-slate-500">/ 익절1</span>
+          <span class="text-slate-200 font-semibold">${fmtNum(holding.take_profit_1_price)}</span>
+          <span class="text-slate-500">/ 익절2</span>
+          <span class="text-slate-200 font-semibold">${fmtNum(holding.take_profit_2_price)}</span>
+        </div>`;
     }
 
     const themes = (payload.themes || []).join(" / ") || "—";
     const reasons = (header.reasons || []).slice(0, 3).join(" / ");
+
+    // round 36: 라벨/값 분리 — 라벨은 slate-400 흐림, 값은 slate-100 + font-semibold 또렷.
+    // 위계: 라벨 < 단위/괄호 < 값. 슬쩍 보면 숫자가 먼저 들어오게.
+    const vpC = vp.current !== null && vp.current !== undefined ? vp.current.toFixed(0) : "—";
+    const vp5 = vp.ma_5 !== null && vp.ma_5 !== undefined ? vp.ma_5.toFixed(0) : "—";
+    const vp1 = vp.ma_1 !== null && vp.ma_1 !== undefined ? vp.ma_1.toFixed(0) : "—";
 
     el.innerHTML = `
       <div class="flex items-center gap-2">
@@ -172,19 +195,48 @@
         ${gradeSpan}
         <span class="ml-auto">${actions}</span>
       </div>
-      <div class="text-slate-400">테마: ${escapeHtml(themes)}</div>
+      <div><span class="text-slate-400">테마</span> <span class="text-slate-200">${escapeHtml(themes)}</span></div>
       ${reasons ? `<div class="text-slate-300">사유: ${escapeHtml(reasons)}</div>` : ""}
       ${transitionLine}
       <div class="mt-1">
         <span class="text-slate-100 font-bold">${fmtNum(price.current)}원</span>
         <span class="text-slate-300">(${fmtPct(price.change_pct)})</span>${lupMark}
-        ${price.sell_29_pct ? `<span class="text-slate-500 ml-2">+29% 매도 ${fmtNum(price.sell_29_pct)}</span>` : ""}
+        ${price.sell_29_pct ? `<span class="text-slate-500 ml-2">+29% 매도</span> <span class="text-slate-200">${fmtNum(price.sell_29_pct)}</span>` : ""}
       </div>
       ${holdingLine}
-      <div class="text-slate-400">거래대금 ${fmtBillion(vol.amount)} (${vol.rank ?? "—"}위) · 회전율 ${fmtPct(vol.turnover_pct)}</div>
-      <div class="text-slate-400">5m가속 ${fmtRatio(a5.ratio)} · 1m가속 ${fmtRatio(a1.ratio)}</div>
-      <div class="text-slate-400">체결강도 ${vp.current !== null && vp.current !== undefined ? vp.current.toFixed(0) : "—"} (5MA ${vp.ma_5 !== null && vp.ma_5 !== undefined ? vp.ma_5.toFixed(0) : "—"} / 1MA ${vp.ma_1 !== null && vp.ma_1 !== undefined ? vp.ma_1.toFixed(0) : "—"})</div>
-      <div class="text-slate-400">호가 매수 ${fmtNum(ask.bid_total)} / 매도 ${fmtNum(ask.ask_total)} (${fmtRatio(ask.ratio)})</div>
+      <div>
+        <span class="text-slate-400">거래대금</span>
+        <span class="text-slate-100 font-semibold">${fmtBillion(vol.amount)}</span>
+        <span class="text-slate-500">(${vol.rank ?? "—"}위)</span>
+        <span class="text-slate-400 ml-1">·</span>
+        <span class="text-slate-400">회전율</span>
+        <span class="text-slate-100 font-semibold">${fmtPct(vol.turnover_pct)}</span>
+      </div>
+      <div>
+        <span class="text-slate-400">5m가속</span>
+        <span class="text-slate-100 font-semibold">${fmtRatio(a5.ratio)}</span>
+        <span class="text-slate-400 ml-1">·</span>
+        <span class="text-slate-400">1m가속</span>
+        <span class="text-slate-100 font-semibold">${fmtRatio(a1.ratio)}</span>
+      </div>
+      <div>
+        <span class="text-slate-400">체결강도</span>
+        <span class="text-slate-100 font-semibold">${vpC}</span>
+        <span class="text-slate-500">(5MA</span>
+        <span class="text-slate-200">${vp5}</span>
+        <span class="text-slate-500">/ 1MA</span>
+        <span class="text-slate-200">${vp1}</span>
+        <span class="text-slate-500">)</span>
+      </div>
+      <div>
+        <span class="text-slate-400">호가</span>
+        <span class="text-slate-400 ml-1">매수</span>
+        <span class="text-slate-100 font-semibold">${fmtNum(ask.bid_total)}</span>
+        <span class="text-slate-500">/</span>
+        <span class="text-slate-400">매도</span>
+        <span class="text-slate-100 font-semibold">${fmtNum(ask.ask_total)}</span>
+        <span class="text-slate-500">(${fmtRatio(ask.ratio)})</span>
+      </div>
       ${triggerBlock}
     `;
     return el;
