@@ -77,49 +77,74 @@ def test_fetch_minute_bars_api_error_returns_empty():
 
 
 def test_fetch_ccnl_basic():
+    """KIS 공식 응답 스키마: output 은 체결 30건 list, 각 행에 tday_rltv (round 34)."""
     payload = {
-        "output1": {
-            "cttr": "142.50",
-            "shnu_cntg_smtn": "320000",
-            "seln_cntg_smtn": "180000",
-        }
+        "output": [
+            {"stck_cntg_hour": "093000", "stck_prpr": "59300", "cntg_vol": "120",
+             "tday_rltv": "142.50", "prdy_ctrt": "1.20"},
+            {"stck_cntg_hour": "092959", "stck_prpr": "59200", "cntg_vol": "100",
+             "tday_rltv": "140.30", "prdy_ctrt": "1.05"},
+        ]
     }
     result = fetch_ccnl_strength(_client(payload), "005930")
     assert result is not None
+    # 가장 최신 행(stck_cntg_hour 최대)의 체결강도
     assert result["ccnl_strength"] == 142.5
-    assert result["buy_volume"] == 320000
-    assert result["sell_volume"] == 180000
-    assert result["buy_ratio"] > 60.0  # 매수 우세
+    assert result["cntg_vol"] == 120
 
 
 def test_fetch_ccnl_balanced():
     payload = {
-        "output1": {
-            "cttr": "100.00",
-            "shnu_cntg_smtn": "100000",
-            "seln_cntg_smtn": "100000",
-        }
+        "output": [
+            {"stck_cntg_hour": "093000", "cntg_vol": "100", "tday_rltv": "100.00"},
+        ]
     }
     result = fetch_ccnl_strength(_client(payload), "005930")
-    assert result["buy_ratio"] == 50.0
+    assert result["ccnl_strength"] == 100.0
 
 
-def test_fetch_ccnl_falls_back_to_qty_fields():
-    """smtn 필드 없으면 qty 필드로 fallback."""
+def test_fetch_ccnl_picks_latest_row():
+    """가장 최신 체결(stck_cntg_hour 큰 값)의 tday_rltv 사용 — 응답이 정순/역순
+    어떻게 와도 상관없게."""
     payload = {
-        "output1": {
-            "cttr": "100",
-            "shnu_cntg_qty": "5000",
-            "seln_cntg_qty": "5000",
-        }
+        "output": [
+            {"stck_cntg_hour": "091500", "tday_rltv": "95.0", "cntg_vol": "50"},
+            {"stck_cntg_hour": "093015", "tday_rltv": "118.5", "cntg_vol": "200"},
+            {"stck_cntg_hour": "092700", "tday_rltv": "108.0", "cntg_vol": "80"},
+        ]
+    }
+    result = fetch_ccnl_strength(_client(payload), "005930")
+    assert result["ccnl_strength"] == 118.5
+    assert result["cntg_vol"] == 200
+
+
+def test_fetch_ccnl_legacy_output1_key():
+    """일부 응답이 output1 키로 오는 경우 호환 (round 34, 보수적 fallback)."""
+    payload = {
+        "output1": [
+            {"stck_cntg_hour": "093000", "tday_rltv": "130.0", "cntg_vol": "75"},
+        ]
     }
     result = fetch_ccnl_strength(_client(payload), "005930")
     assert result is not None
-    assert result["buy_volume"] == 5000
+    assert result["ccnl_strength"] == 130.0
 
 
 def test_fetch_ccnl_empty_response():
     assert fetch_ccnl_strength(_client({}), "005930") is None
+
+
+def test_fetch_ccnl_missing_strength_field_returns_nan():
+    """응답에 tday_rltv 가 빈 문자열 → NaN 반환 (None 아님)."""
+    import math
+    payload = {
+        "output": [
+            {"stck_cntg_hour": "093000", "tday_rltv": "", "cntg_vol": "100"},
+        ]
+    }
+    result = fetch_ccnl_strength(_client(payload), "005930")
+    assert result is not None
+    assert math.isnan(result["ccnl_strength"])
 
 
 # ── fetch_asking_price ───────────────────────────────────────────────────────
