@@ -383,6 +383,76 @@ def test_cleanup_messages_clears_last_payloads():
     assert s.last_payloads == {}
 
 
+def test_rising_funnel_passes_when_vp_data_missing():
+    """round 33: KIS cttr 응답이 NaN/None 이어도 후보 drop 하지 않음.
+
+    배경: 사용자가 30분간 RISING 카드 0건. 진단: KIS ccnl 응답에서 cttr 가 빈
+    문자열 → _to_float 가 NaN 반환. 이전 Stage 3 는 NaN 도 hard-fail 로 drop.
+    fix: NaN/None 은 Stage 4 풀스코어로 통과시키고 VP 가산점만 0 처리.
+
+    여기서는 모멘텀/봉/거래대금이 강해 VP 가산 없이도 R14 ≥ 2.0 통과해야 함.
+    """
+    from src.dashboard.worker import _evaluate_rising_funnel
+
+    snap = {
+        "rank": 3, "code": "091340", "name": "대한광통신",
+        "price": 91300, "intraday_high": 91500,
+        "turnover": 12.0, "trading_value": 80_000_000_000,
+        "daily_return": 15.0,
+    }
+    snap_by_code = {"091340": snap}
+    stage1 = [{"code": "091340", "name": "대한광통신", "themes": ["AI"],
+               "turnover": 12.0, "rank": 3}]
+
+    strong_bars = pd.DataFrame([
+        *[{"open": 90000, "high": 90100, "low": 89900, "close": 90000,
+           "trading_value": 1_000_000_000} for _ in range(6)],
+        *[{"open": 90500, "high": 91500, "low": 90400, "close": 91300,
+           "trading_value": 5_000_000_000} for _ in range(5)],
+    ])
+    tick_cache: dict = {}
+    # ccnl 응답에 cttr 가 NaN — KIS 빈 응답 시뮬레이션
+    with patch("src.dashboard.worker.fetch_minute_bars", return_value=strong_bars), \
+         patch("src.dashboard.worker.fetch_ccnl_strength",
+               return_value={"ccnl_strength": float("nan")}), \
+         patch("src.dashboard.worker.fetch_asking_price",
+               return_value={"bid_ask_ratio": 2.5, "bid_total_volume": 0,
+                             "ask_total_volume": 0}), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None):
+        result = _evaluate_rising_funnel(stage1, MagicMock(), snap_by_code, tick_cache)
+    assert len(result) == 1, "VP NaN 종목이 Stage 3 에서 drop 됨 — fix 회귀"
+    assert result[0]["code"] == "091340"
+
+
+def test_rising_funnel_drops_when_vp_explicitly_low():
+    """VP 가 명시적으로 100 미만이면 그대로 drop (회귀 안전)."""
+    from src.dashboard.worker import _evaluate_rising_funnel
+
+    snap = {
+        "rank": 3, "code": "091340", "name": "대한광통신",
+        "price": 91300, "intraday_high": 91500,
+        "turnover": 12.0, "trading_value": 80_000_000_000,
+        "daily_return": 15.0,
+    }
+    snap_by_code = {"091340": snap}
+    stage1 = [{"code": "091340", "name": "대한광통신", "themes": ["AI"],
+               "turnover": 12.0, "rank": 3}]
+    strong_bars = pd.DataFrame([
+        *[{"open": 90000, "high": 90100, "low": 89900, "close": 90000,
+           "trading_value": 1_000_000_000} for _ in range(6)],
+        *[{"open": 90500, "high": 91500, "low": 90400, "close": 91300,
+           "trading_value": 5_000_000_000} for _ in range(5)],
+    ])
+    tick_cache: dict = {}
+    with patch("src.dashboard.worker.fetch_minute_bars", return_value=strong_bars), \
+         patch("src.dashboard.worker.fetch_ccnl_strength",
+               return_value={"ccnl_strength": 85.0}), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None):
+        result = _evaluate_rising_funnel(stage1, MagicMock(), snap_by_code, tick_cache)
+    assert result == [], f"VP 85 (명시적 약함) 인데 funnel 통과: {result}"
+
+
 def test_cleanup_messages_deletes_all():
     s = MonitoringSession()
     s.add_manual("005930", datetime(2026, 5, 11, 9, 30))
