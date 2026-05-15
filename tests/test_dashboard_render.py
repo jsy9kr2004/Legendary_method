@@ -234,7 +234,8 @@ def test_render_holding_mode_basic():
     assert "❌ Bearish Divergence" in msg
     assert "가격 +0.80%" in msg
     assert "체결강도 -3" in msg
-    assert "❌ 자금 고갈 (1분 가속 < 0.5) — 현재 3.5배" in msg
+    # round 33: 보유 모드 C3 라벨에 "2분 지속" 명시.
+    assert "❌ 자금 고갈 (1분 가속 < 0.5, 2분 지속) — 현재 3.5배" in msg
     assert "❌ 윗꼬리 50%↑ 음봉 (1분봉 기준)" in msg
     assert "❌ VI 발동 후 5분 내 재상승 실패" in msg
     # +29% 매도가 라인은 보유 모드에서 미표시
@@ -271,6 +272,82 @@ def test_render_holding_mode_with_fired_triggers():
     assert "✅ 체결강도 5MA 100 하향" in msg
     assert "✅ Bearish Divergence" in msg
     assert "❌ 자금 고갈" in msg
+
+
+def test_render_strength_line_always_shown_when_ccnl_missing():
+    """round 33: ccnl=None 이어도 체결강도 라인 항상 표시 (— placeholder)."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 1_000_000_000},
+        accel_ratio=2.0, recent_bar_value=1_000_000_000,
+        ccnl=None, asking=None, investor=None,
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "체결강도" in msg
+    assert "데이터 없음" in msg
+
+
+def test_render_strength_line_with_ma_when_ccnl_nan():
+    """ccnl 응답에 cttr 가 NaN 이어도 5MA/1MA 가 있으면 같이 표시."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 1_000_000_000},
+        accel_ratio=2.0, recent_bar_value=1_000_000_000,
+        ccnl={"ccnl_strength": float("nan"), "buy_ratio": float("nan")},
+        asking=None, investor=None,
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+        vp_5ma=115.0, vp_1ma=120.0,
+    )
+    assert "체결강도: —" in msg
+    assert "5MA 115" in msg
+    assert "1MA 120" in msg
+
+
+def test_render_watch_mode_c3_label_no_sustain():
+    """감시 모드는 C3 instantaneous — '2분 지속' 표기 없음."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 1_000_000_000},
+        accel_ratio=2.0, recent_bar_value=1_000_000_000,
+        ccnl=None, asking=None, investor=None,
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+        accel_ratio_1m=0.3, last_bar_value=100_000_000,
+        trigger_states={
+            "C1_vp_below_100": False, "C2_bearish_divergence": False,
+            "C3_vol_drain": True, "C4_bearish_candle": False,
+            "C5_vi_failure": False,
+        },
+    )
+    assert "✅ 자금 고갈 (1분 가속 < 0.5)" in msg
+    assert "2분 지속" not in msg
+
+
+def test_render_buy_grade_label_shows_on_any_source():
+    """round 33: buy_grade 가 set 되어 있으면 AUTO/MANUAL/HOLD 모두 라벨 표시."""
+    from src.dashboard.state import MonitoredStock, Source
+    stock = MonitoredStock(
+        code="091340", name="대한광통신", source=Source.AUTO,
+        added_at=datetime(2026, 5, 11, 9, 0),
+        themes=["AI"],
+        buy_score=6.5, buy_grade="STRONG",
+        buy_reasons=["+2 VP", "+2 양봉"],
+    )
+    msg = render_monitor_message(
+        stock,
+        snapshot_row={"price": 91300, "daily_return": 18.0, "is_limit_up": False,
+                      "turnover": 12.0, "trading_value": 80_000_000_000},
+        accel_ratio=3.0, recent_bar_value=2_000_000_000,
+        ccnl={"ccnl_strength": 135.0}, asking=None, investor=None,
+        sparkline="", now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "STRONG" in msg
+    assert "+6.5점" in msg
 
 
 def test_render_themes_slash_join():

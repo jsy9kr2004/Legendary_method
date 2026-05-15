@@ -242,26 +242,30 @@ def render_monitor_message(
     else:
         lines.append("⚪ 1분봉가속: —")
 
-    # 체결강도 — 색상 (≥120 매수강세 / 80~120 균형 / <80 매도강세) + 5MA / 1MA (round 22)
-    if ccnl:
-        strength = ccnl.get("ccnl_strength")
-        buy_ratio = ccnl.get("buy_ratio")
-        if strength is not None and strength == strength:
-            if strength >= 120:
-                color_c = "🟢"; balance = "매수 우세"
-            elif strength < 80:
-                color_c = "🔴"; balance = "매도 우세"
-            else:
-                color_c = "🟡"; balance = "균형"
-            ma_part = ""
-            if vp_5ma is not None and vp_5ma == vp_5ma:
-                ma_part += f"  5MA {vp_5ma:.0f}"
-            if vp_1ma is not None and vp_1ma == vp_1ma:
-                ma_part += f"  1MA {vp_1ma:.0f}"
-            lines.append(
-                f"{color_c} 체결강도: {strength:.0f} ({balance}){ma_part}  매수비율 "
-                f"{_fmt_pct(buy_ratio) if buy_ratio is not None else '—'}"
-            )
+    # 체결강도 — 색상 (≥120 매수강세 / 80~120 균형 / <80 매도강세) + 5MA / 1MA (round 22).
+    # round 33: ccnl/strength 가 None/NaN 이어도 라인 항상 표시. 데이터 누락 시 "—"
+    # placeholder 로 자리를 잡고, MA 가 있으면 따로 표시. 사용자가 "체결강도가 안 보임"
+    # 으로 인지하지 않도록 일관성 우선.
+    strength = ccnl.get("ccnl_strength") if ccnl else None
+    buy_ratio = ccnl.get("buy_ratio") if ccnl else None
+    if strength is not None and strength == strength:
+        if strength >= 120:
+            color_c = "🟢"; balance = "매수 우세"
+        elif strength < 80:
+            color_c = "🔴"; balance = "매도 우세"
+        else:
+            color_c = "🟡"; balance = "균형"
+        strength_str = f"{strength:.0f} ({balance})"
+    else:
+        color_c = "⚪"
+        strength_str = "— (데이터 없음)"
+    ma_part = ""
+    if vp_5ma is not None and vp_5ma == vp_5ma:
+        ma_part += f"  5MA {vp_5ma:.0f}"
+    if vp_1ma is not None and vp_1ma == vp_1ma:
+        ma_part += f"  1MA {vp_1ma:.0f}"
+    br_str = _fmt_pct(buy_ratio) if buy_ratio is not None and buy_ratio == buy_ratio else "—"
+    lines.append(f"{color_c} 체결강도: {strength_str}{ma_part}  매수비율 {br_str}")
 
     # 호가 잔량 — 매수/매도 잔량 합 + 비율 색상 (🟢🟡🔴) + 1호가 상세
     # 색상 임계는 대칭 (1.5배 / 0.67배). 1.5 = 매수 1.5배, 1/1.5 ≈ 0.67 = 매도 1.5배.
@@ -328,13 +332,15 @@ def render_monitor_message(
             lines.append(f"{c2_mark} Bearish Divergence (가격 {p_str} / 체결강도 {v_str})")
         else:
             lines.append(f"{c2_mark} Bearish Divergence")
-        # C3: 자금 고갈 (1분 가속 < 0.5)
+        # C3: 자금 고갈 (1분 가속 < 0.5). 보유 모드는 2분 지속 후에야 발화 — 사용자가
+        # "현재 0.0배인데 ❌인 이유" 혼동 방지 위해 라벨에 명시 (round 33).
         c3_mark = "✅" if trigger_states.get("C3_vol_drain") else "❌"
         c3_detail = (
             f" — 현재 {accel_ratio_1m:.1f}배"
             if accel_ratio_1m is not None and accel_ratio_1m == accel_ratio_1m else ""
         )
-        lines.append(f"{c3_mark} 자금 고갈 (1분 가속 < 0.5){c3_detail}")
+        c3_rule = "1분 가속 < 0.5, 2분 지속" if is_holding else "1분 가속 < 0.5"
+        lines.append(f"{c3_mark} 자금 고갈 ({c3_rule}){c3_detail}")
         # C4: 윗꼬리 50%↑ 음봉 (1분봉)
         c4_mark = "✅" if trigger_states.get("C4_bearish_candle") else "❌"
         lines.append(f"{c4_mark} 윗꼬리 50%↑ 음봉 (1분봉 기준)")
