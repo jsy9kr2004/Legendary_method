@@ -73,18 +73,22 @@
   }
 
   // round 35: 카드 우상단 액션 버튼 — flag 조합별 분기.
-  //   보유 flag O               → [✕ 청산]
-  //   수동 flag X / 보유 X      → [→ 수동] [+ 보유]
-  //   수동 flag O / 보유 X      → [× 해제] [+ 보유]
-  // 모든 버튼은 telegram_bot 의 apply_command(toggle_code/buy/sell) 핸들러와 동일 효과.
+  //   보유 + 매수가 미입력      → [💰 매수가 입력] [✕ 청산]
+  //   보유                       → [✕ 청산]
+  //   수동 flag X / 보유 X       → [→ 수동] [+ 보유]
+  //   수동 flag O / 보유 X       → [× 해제] [+ 보유]
   function buildActionButtons(payload) {
     const code = payload.code;
     const flags = payload.flags || {};
     const buttons = [];
     if (flags.hold) {
+      const holding = payload.holding || {};
+      const noPrice = !holding.entry_price || holding.entry_price <= 0;
+      if (noPrice) {
+        buttons.push(`<button data-act="set-price" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-amber-700 hover:bg-amber-600" title="보유 모드 진입 시 매수가 미입력 — 지금 갱신">💰 매수가 입력</button>`);
+      }
       buttons.push(`<button data-act="sell" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-rose-700 hover:bg-rose-600">✕ 청산</button>`);
     } else {
-      // 수동 토글 버튼
       if (flags.manual) {
         buttons.push(`<button data-act="unwatch" data-code="${code}" class="text-[10px] px-2 py-0.5 rounded bg-slate-600 hover:bg-slate-500" title="수동 핀 해제">× 해제</button>`);
       } else {
@@ -299,12 +303,14 @@
     if (!t) return;
     const act = t.dataset.act;
     const code = t.dataset.code;
-    if (act === "buy") {
-      // 보유 등록 모달 오픈
+    if (act === "buy" || act === "set-price") {
+      // 보유 등록 / 매수가 갱신 모달 (같은 핸들러 — buy 가 holdings.json 덮어쓰기).
+      // set-price 는 이미 보유 중인 종목의 entry_price 갱신.
       state.pendingBuyCode = code;
       const card = state.cardEls.get(code);
       const name = card?.querySelector(".font-bold")?.textContent || code;
-      $("#buy-modal-name").textContent = `${name} (${code})`;
+      const suffix = act === "set-price" ? " — 매수가 갱신" : "";
+      $("#buy-modal-name").textContent = `${name} (${code})${suffix}`;
       $("#buy-price").value = "";
       $("#buy-time-stop").value = "";
       $("#buy-modal").classList.remove("hidden");
