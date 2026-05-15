@@ -147,24 +147,34 @@ def fetch_minute_bars(
 
 
 def fetch_ccnl_strength(client: KISClient, code: str) -> dict[str, Any] | None:
-    """체결강도 조회 (당일 누적 + 최근 30체결).
+    """체결강도 조회 (당일 누적, 최근 30체결 row 중 가장 최신).
+
+    KIS 공식 응답 필드 (`inquire-ccnl` / TR FHKST01010300, output array):
+        stck_cntg_hour    체결 시각 (HHMMSS)
+        stck_prpr         현재가
+        prdy_vrss         전일 대비
+        prdy_vrss_sign    전일 대비 부호
+        cntg_vol          체결량 (해당 체결 1건)
+        tday_rltv         **당일 체결강도** ← 100 = 매수=매도, 100↑ = 매수 우세
+        prdy_ctrt         전일 대비율 (%)
 
     Returns:
         {
             "code": code,
-            "ccnl_strength": float,    # 체결강도 (cttr). 100 = 매수=매도, 100↑ = 매수 우세
-            "buy_volume": int,         # 누적 매수 체결량
-            "sell_volume": int,        # 누적 매도 체결량
-            "buy_ratio": float,        # buy / (buy + sell) * 100
+            "ccnl_strength": float,  # tday_rltv (당일 누적 체결강도)
+            "cntg_vol":      int,    # 최근 체결 1건의 체결량
+            "buy_ratio":     float,  # 이 API 응답에 매수/매도 누적이 없어 NaN.
+                                     # 카드 표시는 ccnl_strength 가 충분.
         }
-        실패 시 None.
+        실패/응답 비어있음 시 None.
 
-    참고 응답 필드 (output1):
-        cttr             체결강도
-        seln_cntg_qty    매도 체결량
-        shnu_cntg_qty    매수 체결량
-        seln_cntg_smtn   매도 체결 누적
-        shnu_cntg_smtn   매수 체결 누적
+    정정 이력 (round 34):
+        round 22 까지 응답 필드명을 `cttr` / `seln_cntg_smtn` / `shnu_cntg_smtn` 으로
+        잘못 추정. 사용자 보고로 카드의 체결강도가 항상 "—" 표시되는 현상 진단 →
+        공식 KIS 샘플 (koreainvestment/open-trading-api) 의 `chk_inquire_ccnl.py`
+        COLUMN_MAPPING 확인. 실제 필드는 `tday_rltv` (당일 체결강도, 100=균형).
+        매수/매도 누적 체결량은 본 API 에 없어 buy_ratio 는 NaN 으로 보고 — 굳이
+        필요하면 별도 API (inquire-time-itemconclusion 등).
     """
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
@@ -176,30 +186,40 @@ def fetch_ccnl_strength(client: KISClient, code: str) -> dict[str, Any] | None:
         logger.error(f"{code} 체결강도 조회 실패: {e}")
         return None
 
-    out = payload.get("output1") or payload.get("output") or {}
-    if not out:
-        # output 이 list 형태일 수도 있음 (체결 30건). 최근 1건 사용.
-        rows = payload.get("output2") or []
-        if not rows:
+    # 응답 구조: payload["output"] = [{...}, ...] (체결 30건, 최신순). 일부 응답에서
+    # output1 으로 오는 케이스 호환 위해 둘 다 시도. 일반적으로는 output (단수, list).
+    rows = payload.get("output") or payload.get("output1") or []
+    if isinstance(rows, dict):
+        # 예외적으로 dict 면 그대로 사용 (단일 객체 응답 대응)
+        out = rows
+    elif isinstance(rows, list) and rows:
+        # 가장 최신 체결 = 첫 번째 행 (API 가 최신순 반환). 안전 위해 stck_cntg_hour
+        # 가 가장 큰 행 — 종목별로 정렬 상이할 수 있어 max 로 확정.
+        out = max(
+            rows,
+            key=lambda r: str(r.get("stck_cntg_hour", "")) if isinstance(r, dict) else "",
+        )
+        if not isinstance(out, dict):
             return None
-        out = rows[0]
+    else:
+        return None
 
-    if isinstance(out, list):
-        out = out[0] if out else {}
+    ccnl_strength = _to_float(out.get("tday_rltv"))
+    cntg_vol = _to_int(out.get("cntg_vol"))
 
-    ccnl_strength = _to_float(out.get("cttr"))
-    sell_qty = _to_int(out.get("seln_cntg_smtn") or out.get("seln_cntg_qty"))
-    buy_qty = _to_int(out.get("shnu_cntg_smtn") or out.get("shnu_cntg_qty"))
-
-    total = sell_qty + buy_qty
-    buy_ratio = (buy_qty / total * 100.0) if total > 0 else float("nan")
+    # round 34: NaN 응답 진단 로그 — KIS 가 cttr 빈 값을 반환하는 케이스 추적용.
+    # 1회만 보고 싶진 않으니 debug 레벨 — 운영 시 명시적으로 켜야 보임.
+    if ccnl_strength != ccnl_strength:
+        logger.debug(
+            f"{code} 체결강도 응답 비어있음 (tday_rltv 누락 또는 빈 문자열). "
+            f"output 키 목록: {list(out.keys())[:8] if isinstance(out, dict) else type(out).__name__}"
+        )
 
     return {
         "code": code,
         "ccnl_strength": ccnl_strength,
-        "buy_volume": buy_qty,
-        "sell_volume": sell_qty,
-        "buy_ratio": buy_ratio,
+        "cntg_vol": cntg_vol,
+        "buy_ratio": float("nan"),  # 이 API 응답에 누적 매수/매도 체결량 없음
     }
 
 
