@@ -10,8 +10,12 @@ from src.dashboard.state import LeaderState, MonitoredStock, Source
 def _stock(code: str = "075180", name: str = "제룡전기",
            source: Source = Source.AUTO,
            themes: list[str] | None = None) -> MonitoredStock:
+    """round 35: source 인자를 받아 해당 flag 켜기 (테스트 호환)."""
     return MonitoredStock(
-        code=code, name=name, source=source,
+        code=code, name=name,
+        is_auto=(source == Source.AUTO),
+        is_rising=(source == Source.RISING),
+        is_manual=(source == Source.MANUAL),
         added_at=datetime(2026, 5, 11, 9, 0),
         themes=themes or ["전기/전선"],
     )
@@ -35,7 +39,7 @@ def test_render_basic_fields():
     )
     assert "제룡전기" in msg
     assert "075180" in msg
-    assert "⭐자동" in msg
+    assert "⭐ 자동" in msg
     assert "🔴상한가" in msg
     assert "+30.0%" in msg
     assert "18.3%" in msg
@@ -60,7 +64,7 @@ def test_render_manual_source():
         sparkline="",
         now=datetime(2026, 5, 11, 9, 0),
     )
-    assert "🔵수동" in msg
+    assert "🔵 수동" in msg
 
 
 def test_render_with_grace_label():
@@ -217,9 +221,10 @@ def test_render_holding_mode_basic():
         vp_5ma=135.0, vp_1ma=123.0,
         holding=holding, trigger_states=triggers, divergence=div,
     )
-    # 헤더 — [보유] prefix + source emoji 없음 (중복 제거)
-    assert "[보유] 대한광통신 (091340)" in msg
-    assert "🔵수동" not in msg
+    # 헤더 — multi-flag (round 35): is_manual + holding → "[💎 보유 / 🔵 수동]"
+    assert "💎 보유" in msg
+    assert "🔵 수동" in msg
+    assert "대한광통신 (091340)" in msg
     # 합쳐진 시간/가격 라인 — 매수가 + 손익 + 경과 초
     assert "(+1,200초)" in msg
     assert "92,500원" in msg
@@ -330,9 +335,9 @@ def test_render_watch_mode_c3_label_no_sustain():
 
 def test_render_buy_grade_label_shows_on_any_source():
     """round 33: buy_grade 가 set 되어 있으면 AUTO/MANUAL/HOLD 모두 라벨 표시."""
-    from src.dashboard.state import MonitoredStock, Source
+    from src.dashboard.state import MonitoredStock
     stock = MonitoredStock(
-        code="091340", name="대한광통신", source=Source.AUTO,
+        code="091340", name="대한광통신", is_auto=True,
         added_at=datetime(2026, 5, 11, 9, 0),
         themes=["AI"],
         buy_score=6.5, buy_grade="STRONG",

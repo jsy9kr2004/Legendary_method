@@ -360,38 +360,48 @@ def dashboard_tick(
         f"leaders={len(leaders)}, rising_stage1={len(rising_stage1)}"
     )
 
-    # 2) 자동 모니터링 갱신 (주도주만) — 추가/제거 시 메시지 send/delete
-    prev_auto_codes = {c for c, m in session.monitored.items() if m.source.value == "auto"}
+    # round 35: multi-flag 모델. monitored 에서 빠진 종목만 message 삭제.
+    # flag 변화만으로는 카드 유지 (manual/hold 가 다른 flag 보충).
+    prev_monitored_codes = set(session.monitored.keys())
+
+    # 2) 자동 주도주 — is_auto flag 갱신
     changes = session.update_auto_leaders(leaders, now)
     for ch in changes:
         logger.info(f"[모니터링] {ch}")
-    new_auto_codes = {c for c, m in session.monitored.items() if m.source.value == "auto"}
-    for dropped in prev_auto_codes - new_auto_codes:
-        _delete_monitor_message(token, chat_id, dropped, message_ids)
 
     snap_by_code = {str(r["code"]): r.to_dict() for _, r in snapshot.iterrows()}
 
     # /buy CODE (가격 인자 생략) UX 를 위해 최근 시세를 세션에 노출 (round 20).
-    # telegram_bot._apply_buy 가 다른 thread 에서 읽음.
     for code, row in snap_by_code.items():
         price = row.get("price")
         if price is not None and price == price and price > 0:
             session.last_prices[code] = float(price)
 
-    # 2b) 부상 후보 Stage 2~4 funnel (round 21) — 모멘텀 → VP → R14 풀스코어.
-    # tick_cache 는 funnel 통과 종목의 fetch 결과를 보관해 카드 렌더에서 재사용.
+    # 2b) 부상 후보 Stage 2~4 funnel — is_rising flag 갱신
     tick_cache: dict[str, dict[str, Any]] = {}
     rising_scored = _evaluate_rising_funnel(
         rising_stage1, client, snap_by_code, tick_cache,
         daily_ohlcv=daily_ohlcv,
         limit_up_hit_times=session.limit_up_hit_times,
     )
-    prev_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
     rising_changes = session.update_rising_candidates(rising_scored, now)
     for ch in rising_changes:
         logger.info(f"[부상] {ch}")
-    new_rising_codes = {c for c, m in session.monitored.items() if m.source.value == "rising"}
-    for dropped in prev_rising_codes - new_rising_codes:
+
+    # 2c) 보유 종목 surface — holdings.json 의 모든 code 가 monitored 에 있어야 카드 표시.
+    # _apply_buy 도 이걸 호출하지만, 데몬 재시작 / external holdings 변경 대비.
+    for h_code in holdings.keys():
+        if h_code not in session.monitored:
+            h_name = snap_by_code.get(h_code, {}).get("name") or h_code
+            session.ensure_held_stock(h_code, h_name, now)
+
+    # 2d) prune — flag 없고 보유도 아닌 종목 제거 + message 삭제
+    holding_codes_set = set(holdings.keys())
+    pruned = session.prune_empty(holding_codes_set)
+    for msg in pruned:
+        logger.info(f"[모니터링] {msg}")
+    new_monitored_codes = set(session.monitored.keys())
+    for dropped in prev_monitored_codes - new_monitored_codes:
         _delete_monitor_message(token, chat_id, dropped, message_ids)
 
     # 카드 헤더에 TRANSITION 부상 후보 정보를 통합 표시하기 위해 a1 → a2 매핑 구성.

@@ -201,59 +201,73 @@ def _apply_buy(
     session: MonitoringSession,
     now: datetime,
 ) -> str:
-    """보유 모드 진입.
+    """보유 모드 진입 (round 35 — multi-flag 모델).
 
-    감시 모드에 없는 종목이면 자동으로 수동 추가까지 함께 진행.
-    price 가 None 이면 `session.last_prices` (worker tick 이 매 사이클 채움) 에서
-    최근 시세를 매수가로 사용 (round 20 — UX 단순화). 모니터링 안 하던 종목이거나
-    아직 첫 tick 전이라 시세가 없으면 명시 입력 요구.
+    monitored 에 없는 종목이면 entry 만 surface (is_manual 등 flag X — 보유는
+    holdings 기반 derived). price 가 None 이면 last_prices → last_payloads.current
+    순으로 fallback. 둘 다 없어도 entry_price=0 으로 등록 (사용자 정책: "그냥 보유
+    처리"). R15 트리거는 entry_price <= 0 일 때 평가 skip 으로 안전 처리됨.
+    사용자가 나중에 `/buy CODE PRICE` 로 가격 갱신 가능.
     """
-    if code not in session.monitored:
-        ok, add_msg = session.add_manual(code, now)
-        if not ok:
-            return add_msg  # 슬롯 가득 등
-
-    if price is None:
-        price = session.last_prices.get(code)
-        if price is None or price <= 0:
-            # M7 wiring (PWA): 카드 페이로드의 current price 도 fallback.
-            # 데모 환경 / 워밍업 중 / 종목이 모니터링 풀에 갓 들어와 last_prices
-            # 가 비어 있어도 보유 등록 가능.
+    # 시세 fallback
+    resolved_price: float | None = price
+    autofilled = False
+    if resolved_price is None:
+        v = session.last_prices.get(code)
+        if v is not None and v > 0:
+            resolved_price = float(v)
+            autofilled = True
+        else:
             payload = session.last_payloads.get(code)
             if payload:
                 cur = (payload.get("price") or {}).get("current")
                 if cur and cur > 0:
-                    price = float(cur)
-        if price is None or price <= 0:
-            return (
-                f"⚠ {code} — 최근 시세 미확보. "
-                f"`/buy {code} PRICE` 로 매수가를 명시해 주세요."
-            )
+                    resolved_price = float(cur)
+                    autofilled = True
+
+    # 사용자 정책: 시세 미확보여도 등록 진행. entry_price=0 → R15 트리거 skip.
+    final_price = float(resolved_price) if (resolved_price and resolved_price > 0) else 0.0
+
+    # monitored 에 surface — flag 는 안 켜고 entry 만. 보유 카드는 worker prune 이
+    # holdings_codes 기반으로 유지 결정.
+    name = code
+    if code in session.monitored:
+        name = session.monitored[code].name
+    else:
+        session.ensure_held_stock(code, name=code, now=now)
 
     holdings = load_holdings()
     minutes = time_stop_minutes or TIME_STOP_MINUTES_DEFAULT
     holding = Holding(
         code=code,
-        entry_price=price,
+        entry_price=final_price,
         entry_time=now,
         time_stop_minutes=minutes,
     )
     holdings[code] = holding
     save_holdings(holdings)
 
-    name = session.monitored[code].name if code in session.monitored else code
-    sl = holding.stop_loss_price
-    tp1 = holding.take_profit_1_price
-    tp2 = holding.take_profit_2_price
-    # 장 시간 외 안내 — 등록은 진행하되 R15 트리거가 다음 정규장부터 의미를 가짐.
     off_hours = not _is_regular_session(now)
     off_hours_note = (
         "\n⏸ 장 시간 외 — 다음 정규장(평일 09:00~15:30) 부터 시그널 평가 시작"
         if off_hours else ""
     )
+
+    if final_price <= 0:
+        return (
+            f"🟡 {code} {name} — 보유 모드 진입 (매수가 미입력)\n"
+            f"진입 {now.strftime('%H:%M:%S')}\n"
+            f"※ R15 손절/익절 트리거는 평가 X — `/buy {code} PRICE` 로 매수가 갱신 권장"
+            f"{off_hours_note}"
+        )
+
+    sl = holding.stop_loss_price
+    tp1 = holding.take_profit_1_price
+    tp2 = holding.take_profit_2_price
+    autofill_note = " (시세 자동 보충)" if autofilled else ""
     return (
         f"🟡 {code} {name} — 보유 모드 진입\n"
-        f"매수가 {int(price):,}  진입 {now.strftime('%H:%M:%S')}\n"
+        f"매수가 {int(final_price):,}{autofill_note}  진입 {now.strftime('%H:%M:%S')}\n"
         f"손절선 {int(sl):,} (-1.5%)\n"
         f"익절 1차 {int(tp1):,} (+2.0%) / 2차 {int(tp2):,} (+3.5%)\n"
         f"시간 손절 {minutes}분 후 +0.5% 미달 시 알림"
@@ -262,11 +276,7 @@ def _apply_buy(
 
 
 def _is_regular_session(now: datetime) -> bool:
-    """KRX 정규장 (평일 09:00~15:30) 여부.
-
-    M7 PWA / 텔레그램 /buy 명령에서 장 시간 외 안내용. NXT 프리장은 v0 미지원
-    (CLAUDE.md). 휴장일 정밀 캘린더(`calendar_kr.is_business_day`) 사용.
-    """
+    """KRX 정규장 (평일 09:00~15:30) 여부."""
     from src.calendar_kr import is_business_day
 
     if not is_business_day(now.date()):
@@ -276,9 +286,10 @@ def _is_regular_session(now: datetime) -> bool:
 
 
 def _apply_sell(code: str, session: MonitoringSession) -> str:
-    """보유 모드 해제 → 감시 모드 복귀.
+    """청산 — holdings 제거 + 수동 핀(is_manual)도 함께 clear (round 35).
 
-    감시 모드 자체 토글은 X (사용자가 6자리 코드 다시 입력해서 해제).
+    사용자 정책: 청산 후 수동 pin 유지 X. 자동/후보 풀에 있으면 다음 tick 에 그
+    flag 로 카드 유지, 없으면 worker prune 으로 카드 사라짐.
     """
     holdings = load_holdings()
     if code not in holdings:
@@ -286,4 +297,6 @@ def _apply_sell(code: str, session: MonitoringSession) -> str:
     holdings.pop(code)
     save_holdings(holdings)
     name = session.monitored[code].name if code in session.monitored else code
-    return f"⚪ {code} {name} — 감시 모드 복귀 (보유 해제)"
+    cleared_manual = session.clear_manual_flag(code)
+    pin_note = " + 수동 핀 해제" if cleared_manual else ""
+    return f"⚪ {code} {name} — 청산 처리{pin_note}"

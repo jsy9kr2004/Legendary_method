@@ -1,17 +1,28 @@
 """실시간 모니터링 상태 머신 (M6).
 
 핵심 책임:
-    - 모니터링 대상 종목 set 관리 (자동/수동/부상 후보 출처)
-    - 주도주 교체 상태 머신: NORMAL → TRANSITION → GRACE → NORMAL (카드 헤더에 통합 표시)
-    - 5분 GRACE 유예기 카운트다운 (실제 교체 후 a1, a2 함께 표시)
+    - 모니터링 대상 종목 set 관리 — multi-flag 모델 (round 35)
+    - 주도주 교체 상태 머신: NORMAL → TRANSITION → GRACE → NORMAL (카드 헤더에 통합)
+    - 5분 GRACE 유예기 카운트다운
     - 사용자 명령 처리 (/pause, /list, /clear, 6자리 코드 토글)
-    - 장 시간 외 입력 안내
+
+데이터 모델 (round 35):
+    `MonitoredStock` 은 한 종목에 대한 카드. 4 상태 flag 가 동시에 켜질 수 있다:
+        - is_auto: 시스템 — 주도섹터 회전율 1위. 매 tick 갱신
+        - is_rising: 시스템 — R14 score 통과 부상 후보. 매 tick 갱신
+        - is_manual: 사용자 핀 — 자동/후보 풀에서 빠져도 카드 유지
+        - HOLD: holdings.json 에서 derived (state 에 저장 X — worker 가 매 tick 결정)
+
+    모든 flag 가 false 이고 보유도 아니면 monitored 에서 제거 (worker 가 prune).
+
+    이전 (single source: Source enum) 의 "AUTO 가 +29% 도달 시 manual 잠금" 같은
+    승격 동작은 더 이상 자동으로 일어나지 않는다. 사용자가 명시적으로 [→ 수동]
+    버튼 (또는 6자리 코드 토글) 으로 is_manual 을 켜야 자동 풀에서 빠져도 유지.
 
 I/O 분리:
     본 모듈은 pure — 시각(now)을 인자로 받고 상태만 갱신.
     실제 텔레그램 발송/분봉 fetch 는 worker (`src/dashboard/worker.py`).
-    정정 round 19 이후: 카드 외 별도 푸시는 모두 폐기. step_tracker 등은 상태만
-    갱신하며 alert 객체를 만들지 않는다.
+    holdings.json 접근도 worker — state.py 는 holdings 모름.
 """
 from __future__ import annotations
 
@@ -36,11 +47,15 @@ from src.jongbae.config_thresholds import (
 
 
 class Source(str, Enum):
-    AUTO = "auto"      # 주도주 (주도섹터 결정 + 회전율 1위)
-    MANUAL = "manual"  # 사용자 6자리 코드 입력
-    # 거래대금 급증 후보. 시간 만료 없음 — 후보 풀에서 빠지면 즉시 카드 제거
-    # (정정 round 19). 매매 결정 시 사용자가 /add 또는 6자리 토글로 MANUAL 승격.
+    """Backward-compat enum. 카드 좌측 보더 색상 결정 시 derive 용으로만 사용.
+
+    multi-flag 모델 (round 35) 이후엔 MonitoredStock 에 저장하지 않는다.
+    `MonitoredStock.primary_source(is_held)` 로 우선순위 derive.
+    """
+    AUTO = "auto"
+    MANUAL = "manual"
     RISING = "rising"
+    HOLD = "hold"
 
 
 class LeaderState(str, Enum):
@@ -51,35 +66,54 @@ class LeaderState(str, Enum):
 
 @dataclass
 class MonitoredStock:
+    """한 종목의 모니터링 카드. 4 상태 flag 동시 ON 가능 (round 35).
+
+    - is_auto / is_rising: 시스템이 매 tick 갱신.
+    - is_manual: 사용자 명시 핀.
+    - HOLD: holdings.json 기반 derived — 본 dataclass 에는 없음.
+      worker 가 build_payload 시 외부 인자로 전달.
+    """
     code: str
     name: str
-    source: Source
     added_at: datetime
-    message_id: int | None = None    # Telegram message id (편집용)
+    is_auto: bool = False
+    is_rising: bool = False
+    is_manual: bool = False
+    message_id: int | None = None
     themes: list[str] = field(default_factory=list)
-    # round 21: R14 매수 점수 + 등급. worker tick 이 Stage 4 통과 종목에 한해 채움.
-    # 카드 헤더 표시에 사용. RISING 종목은 등록 시점에 score 가 있어야 카드 surface 됨.
     buy_score: float | None = None
-    buy_grade: str | None = None   # "STRONG" / "WATCH" / "NEUTRAL" / "AVOID"
+    buy_grade: str | None = None
     buy_reasons: list[str] = field(default_factory=list)
+
+    def has_any_flag(self) -> bool:
+        """auto/rising/manual 중 하나라도 켜져 있는지. HOLD 는 별도."""
+        return self.is_auto or self.is_rising or self.is_manual
+
+    def primary_source(self, is_held: bool = False) -> Source:
+        """카드 좌측 보더 색상용 우선순위 — HOLD > MANUAL > AUTO > RISING."""
+        if is_held:
+            return Source.HOLD
+        if self.is_manual:
+            return Source.MANUAL
+        if self.is_auto:
+            return Source.AUTO
+        if self.is_rising:
+            return Source.RISING
+        # 어떤 flag 도 없으면 보유로 surface 된 케이스 — 호출자가 is_held=True 줘야
+        return Source.HOLD
 
 
 @dataclass
 class LeaderTracker:
-    """주도섹터 1개에 대한 a1/a2 + 상태 머신.
-
-    NORMAL: a1 만 모니터링.
-    TRANSITION: a1 + a2 함께. 후보 a2 부상 중.
-    GRACE: a1 + a2 함께 5분간. a2 가 a1 회전율 추월 후 유예기.
-    """
+    """주도섹터 1개에 대한 a1/a2 + 상태 머신."""
     sector: str
-    incumbent_code: str           # a1
+    incumbent_code: str
     incumbent_turnover: float = 0.0
-    candidate_code: str | None = None  # a2
+    candidate_code: str | None = None
     candidate_turnover: float = 0.0
     state: LeaderState = LeaderState.NORMAL
     state_entered_at: datetime | None = None
-    transition_weak_since: datetime | None = None  # 후보 약화 지속 시작
+    transition_weak_since: datetime | None = None
 
 
 def in_monitoring_window(now: datetime) -> bool:
@@ -95,169 +129,152 @@ def in_monitoring_window(now: datetime) -> bool:
 class MonitoringSession:
     """대시보드 한 세션의 전체 상태."""
     paused: bool = False
-    # 시간창(평일 09:00~10:30) 가드를 우회. /on 명령으로 강제 ON, /off 로 해제.
-    # 평일 자동 09:00~10:30 외에 사용자가 임의 시각(8시/11시 등)에 켜고 싶을 때.
     force_on: bool = False
     monitored: dict[str, MonitoredStock] = field(default_factory=dict)
-    trackers: dict[str, LeaderTracker] = field(default_factory=dict)  # sector -> tracker
-    # /off 시 카드 메시지 정리를 tick job 이 1회 수행하기 위한 플래그.
+    trackers: dict[str, LeaderTracker] = field(default_factory=dict)
     off_cleanup_pending: bool = False
-    # worker tick 이 매 사이클 채우는 code → 최근 현재가. `/buy CODE` 가 PRICE
-    # 인자 없이 들어와도 여기서 자동 보충 (round 20). 다른 thread (telegram_bot.
-    # _apply_buy) 가 읽으므로 단순 dict 로 두고 GIL 에 의존 (atomic dict 읽기/쓰기).
     last_prices: dict[str, float] = field(default_factory=dict)
-    # round 22: 종목별 체결강도(VP) 시계열. worker tick 에서 VP push, 카드/트리거에서
-    # ma_1/ma_5/ma_20 조회. memory-only, 데몬 재시작 시 워밍업 다시 시작 (5분 내 정상화).
-    vp_series: dict[str, Any] = field(default_factory=dict)  # code -> VPSeries
-    # round 32 (P1-1 wiring): 종목별 상한가 도달 시각. scheduler 의 상한가 감지
-    # 시점에 저장, worker funnel 에서 GraderSnapshot.limit_up_hit_time 으로 전달.
-    # R14c 가산점(9:30 이전 +1, 10:30 이전 +0.5). 데몬 재시작 시 비어있음 — 당일
-    # 재감지 시 채워짐.
+    vp_series: dict[str, Any] = field(default_factory=dict)
     limit_up_hit_times: dict[str, time] = field(default_factory=dict)
-    # M7 PWA 대시보드용 페이로드. worker tick 이 매 사이클 갱신, FastAPI WebSocket
-    # endpoint 가 polling 후 broadcast. 텔레그램 텍스트(message_ids) 와 별도 채널.
-    # 빠진 monitored 종목은 tick 끝에 정리. 데몬 재시작 시 비어있음.
     last_payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
     last_payload_ts: datetime | None = None
 
-    # ── 종목 추가/제거 ────────────────────────────────────────────────────────
+    # ── 종목 추가/제거 (사용자 토글) ──────────────────────────────────────────
 
     def add_manual(self, code: str, now: datetime) -> tuple[bool, str]:
-        """사용자가 6자리 코드 입력 — 토글.
+        """6자리 코드 토글 — is_manual flag 만 켜고/끄기.
 
-        Returns:
-            (changed, response_message)
+        (round 35) 자동/후보 → 수동 "승격" 개념 폐기. flag 가 공존이라 자동/후보
+        풀에 있는 종목에 manual 을 켜면 둘 다 표시. 끄면 manual 만 빠지고 자동/
+        후보 flag 가 살아있으면 카드 유지.
         """
         code = code.strip()
         if len(code) != 6 or not code.isdigit():
             return False, f"잘못된 종목코드: {code} (6자리 숫자 필요)"
 
         if code in self.monitored:
-            existing = self.monitored[code]
-            if existing.source == Source.RISING:
-                # 부상 후보 → 수동 승격.
-                existing.source = Source.MANUAL
-                existing.added_at = now
-                return True, f"🔵 {code} {existing.name} — 부상 후보 → 수동 승격"
-            if existing.source == Source.AUTO:
-                # 자동 주도주 → 수동 승격 (보유 잠금).
-                # 사용자가 매수 후 같은 코드 입력 시 AUTO 가 +29% 도달해도 monitored
-                # 에서 빠지지 않게 MANUAL 로 잠금. 다시 입력하면 해제(아래 MANUAL 분기).
-                existing.source = Source.MANUAL
-                existing.added_at = now
-                return True, f"🔵 {code} {existing.name} — 자동 → 수동 승격 (보유 잠금)"
-            # MANUAL 이면 토글 해제
-            self.monitored.pop(code)
-            return True, f"{code} {existing.name} — 모니터링 해제"
+            m = self.monitored[code]
+            if m.is_manual:
+                m.is_manual = False
+                if m.has_any_flag():
+                    return True, f"× {code} {m.name} — 수동 해제 (자동/후보 flag 유지)"
+                # flag 다 없음 — worker 가 holdings 확인 후 prune 결정
+                return True, f"× {code} {m.name} — 수동 해제"
+            else:
+                m.is_manual = True
+                m.added_at = now
+                return True, f"🔵 {code} {m.name} — 수동 핀 (자동/후보 풀 이탈해도 유지)"
 
-        # MONITORING_MAX_CODES 는 core(AUTO+MANUAL) 한도 — RISING 카운트 제외.
-        core_count = sum(
-            1 for m in self.monitored.values() if m.source != Source.RISING
-        )
-        if core_count >= MONITORING_MAX_CODES:
-            return False, f"⚠ 모니터링 종목 최대 {MONITORING_MAX_CODES}개 — 추가 거부 (해제 후 재시도)"
+        # 신규 종목 — manual 슬롯 한도 체크
+        manual_count = sum(1 for m in self.monitored.values() if m.is_manual)
+        if manual_count >= MONITORING_MAX_CODES:
+            return False, f"⚠ 수동 모니터링 최대 {MONITORING_MAX_CODES}개"
 
         self.monitored[code] = MonitoredStock(
-            code=code, name=code, source=Source.MANUAL, added_at=now,
+            code=code, name=code, added_at=now, is_manual=True,
         )
-        return True, f"🔵 {code} — 수동 모니터링 추가됨"
+        return True, f"🔵 {code} — 수동 모니터링 추가"
+
+    def clear_manual_flag(self, code: str) -> bool:
+        """특정 종목의 is_manual 만 끄기. 다른 flag 영향 X. 청산 시 호출.
+
+        Returns:
+            True 면 flag 가 켜져있다가 꺼졌음. False 면 변화 없음.
+        """
+        m = self.monitored.get(code)
+        if m is None or not m.is_manual:
+            return False
+        m.is_manual = False
+        return True
 
     def remove_manual_all(self) -> tuple[int, str]:
-        """/clear — 수동 추가분만 해제. 자동(주도주)는 유지."""
-        manual = [c for c, m in self.monitored.items() if m.source == Source.MANUAL]
-        for c in manual:
-            self.monitored.pop(c)
-        return len(manual), f"🧹 수동 추가분 {len(manual)}개 해제. 자동 주도주는 유지."
+        """/clear — 모든 종목의 is_manual flag clear.
+
+        다른 flag (자동/후보) 또는 보유 여부는 worker prune 이 판단해서 카드 유지.
+        """
+        cleared = 0
+        for m in self.monitored.values():
+            if m.is_manual:
+                m.is_manual = False
+                cleared += 1
+        return cleared, f"🧹 수동 핀 {cleared}개 해제. 자동/후보/보유는 유지."
 
     def list_monitored(self) -> str:
-        """/list — 현재 모니터링 종목."""
+        """/list — 현재 모니터링 종목. flag 조합으로 표시."""
         if not self.monitored:
             return "📋 모니터링 중인 종목 없음."
         lines = [f"📋 [현재 모니터링 — {len(self.monitored)}개]"]
-        auto = [m for m in self.monitored.values() if m.source == Source.AUTO]
-        manual = [m for m in self.monitored.values() if m.source == Source.MANUAL]
-        if auto:
-            lines.append("⭐ 자동")
-            for m in auto:
-                themes = " / ".join(m.themes) if m.themes else "?"
-                lines.append(f"  • {m.code} {m.name} ({themes})")
-        if manual:
-            lines.append("🔵 수동")
-            for m in manual:
-                lines.append(f"  • {m.code} {m.name}")
+        for m in self.monitored.values():
+            flags = []
+            if m.is_manual:
+                flags.append("🔵수동")
+            if m.is_auto:
+                flags.append("⭐자동")
+            if m.is_rising:
+                flags.append("⚡후보")
+            label = " / ".join(flags) if flags else "(no flag)"
+            themes = " / ".join(m.themes) if m.themes else "—"
+            lines.append(f"  • {m.code} {m.name} [{label}] ({themes})")
         return "\n".join(lines)
 
     def set_on(self) -> tuple[bool, str]:
-        """/on /start — 모니터링 ON (멱등). 이미 ON 이면 안내만."""
+        """/on /start — 모니터링 ON (멱등)."""
         if not self.paused:
             return False, "▶ 이미 모니터링 ON 상태"
         self.paused = False
         return True, "▶ 모니터링 ON — 카드 갱신 시작"
 
     def set_off(self) -> tuple[bool, str]:
-        """/off — 모니터링 OFF (멱등). 이미 OFF 이면 안내만.
-
-        카드 메시지 정리는 tick job 이 다음 사이클에 1회 수행 (off_cleanup_pending).
-        """
+        """/off — 모니터링 OFF (멱등)."""
         if self.paused:
             return False, "⏸ 이미 모니터링 OFF 상태"
         self.paused = True
         self.off_cleanup_pending = True
         return True, "⏸ 모니터링 OFF — /on 으로 재개 (다음 평일 09:00 자동 ON)"
 
-    # ── 자동 주도주 갱신 ──────────────────────────────────────────────────────
+    # ── 자동 주도주 (시스템) ──────────────────────────────────────────────────
 
     def update_auto_leaders(
         self,
         leaders: list[dict[str, Any]],
         now: datetime,
     ) -> list[str]:
-        """자동 주도주 (회전율 1위) 리스트로 monitored 갱신.
+        """주도주 풀로 is_auto flag 동기화.
 
-        leaders: identify_early_morning_leaders 결과.
-        반환: 변경 사항 한 줄 요약 리스트.
+        (round 35) 이전엔 source=AUTO 종목을 통째로 갈아엎었으나, 이제는 flag
+        만 set/clear. 사용자가 [→ 수동] 으로 is_manual 켜둔 종목이 자동 풀에서
+        빠져도 카드 유지.
         """
         changes: list[str] = []
-
         new_codes = {l["code"] for l in leaders}
-        # 자동분 제거
-        for code in list(self.monitored.keys()):
-            if code in new_codes:
-                continue
-            entry = self.monitored[code]
-            if entry.source == Source.AUTO:
-                self.monitored.pop(code)
-                changes.append(f"⭐→💤 {code} {entry.name} 자동 모니터링 종료")
 
-        # 자동분 추가/갱신. MONITORING_MAX_CODES 는 core(AUTO+MANUAL) 한도 —
-        # RISING(부상 후보)은 별도 카운트하므로 슬롯 계산에서 제외.
+        # 기존 is_auto 중 풀에서 빠진 것 — flag 만 off
+        for code, m in self.monitored.items():
+            if m.is_auto and code not in new_codes:
+                m.is_auto = False
+                changes.append(f"⭐→ {code} {m.name} 자동 풀 이탈")
+
+        # 새 leaders — is_auto flag set + 신규 종목이면 entry 추가
         for ld in leaders:
             code = ld["code"]
+            new_themes = list(ld.get("themes", []))
             if code in self.monitored:
-                # 이미 있으면 (수동이든 자동이든) 테마 합치기, source는 수동 우선
                 m = self.monitored[code]
-                m.themes = list(set(m.themes + ld.get("themes", [])))
-                continue
-            core_count = sum(
-                1 for m in self.monitored.values() if m.source != Source.RISING
-            )
-            if core_count >= MONITORING_MAX_CODES:
-                logger.warning(
-                    f"모니터링 슬롯 가득 ({MONITORING_MAX_CODES}) — 자동 주도주 {code} 추가 보류"
+                if not m.is_auto:
+                    changes.append(f"⭐ {ld.get('name', code)} ({code}) 자동 진입")
+                m.is_auto = True
+                if new_themes:
+                    m.themes = list(set(m.themes + new_themes))
+            else:
+                self.monitored[code] = MonitoredStock(
+                    code=code, name=ld.get("name", code),
+                    added_at=now, is_auto=True, themes=new_themes,
                 )
-                continue
-            self.monitored[code] = MonitoredStock(
-                code=code,
-                name=ld.get("name", code),
-                source=Source.AUTO,
-                added_at=now,
-                themes=list(ld.get("themes", [])),
-            )
-            changes.append(f"⭐ 자동 모니터링 추가: {ld.get('name', code)} ({code})")
+                changes.append(f"⭐ 자동 추가: {ld.get('name', code)} ({code})")
 
         return changes
 
-    # ── 부상 후보 (RISING) ────────────────────────────────────────────────────
+    # ── 부상 후보 (시스템) ────────────────────────────────────────────────────
 
     def update_rising_candidates(
         self,
@@ -265,83 +282,97 @@ class MonitoringSession:
         now: datetime,
         max_count: int = 5,
     ) -> list[str]:
-        """거래대금 급증 후보 풀로 RISING 종목 set 을 동기화.
+        """부상 후보 풀로 is_rising flag 동기화.
 
-        정책 (정정 round 19):
-            - 시간 만료(TTL) 폐지. 풀에서 안 보이는 RISING 은 즉시 제거.
-            - AUTO/MANUAL 이미 있으면 RISING 으로 덮어쓰지 않음(중복 방지).
-            - 풀 안에서 회전율 상위 max_count 까지만 RISING 카드 유지.
-
-        Args:
-            candidates: identify_rising_candidates 결과 (회전율 내림차순).
-            now: 현재 시각.
-            max_count: 동시 RISING 종목 한도.
-
-        Returns:
-            첫 진입 종목 변경 메시지 리스트 (로그용).
+        (round 35) 풀 상위 max_count 만 is_rising. 풀에서 빠진 종목은 flag off.
+        다른 flag (manual/auto/hold) 가 있으면 카드 유지.
         """
         changes: list[str] = []
-        pool_codes = [c["code"] for c in candidates]
-        pool_codes_set = set(pool_codes)
+        pool_codes_set = {c["code"] for c in candidates}
 
-        # 1) 풀에 없는 기존 RISING 종목 제거. AUTO/MANUAL 은 건드리지 않음.
-        for code in list(self.monitored.keys()):
-            m = self.monitored[code]
-            if m.source != Source.RISING:
-                continue
-            if code not in pool_codes_set:
-                self.monitored.pop(code)
-                changes.append(f"💤 {m.name} ({code}) 부상 후보 풀 이탈 — 카드 제거")
+        # 풀 이탈 — is_rising flag off
+        for code, m in self.monitored.items():
+            if m.is_rising and code not in pool_codes_set:
+                m.is_rising = False
+                changes.append(f"💤 {m.name} ({code}) 후보 풀 이탈")
 
-        # 2) 풀 상위에서 신규 RISING 추가 + 기존 RISING 점수 갱신.
+        # 풀 상위 max_count 까지 is_rising 켜기
+        added = 0
         for cand in candidates:
+            if added >= max_count and cand["code"] not in self.monitored:
+                continue
             code = cand["code"]
-            # round 21: candidates 에 buy_score/buy_grade/buy_reasons 가 있으면 반영.
             buy_score = cand.get("buy_score")
             buy_grade = cand.get("buy_grade")
             buy_reasons = cand.get("buy_reasons") or []
+            new_themes = list(cand.get("themes", []))
             if code in self.monitored:
                 m = self.monitored[code]
-                if m.source == Source.RISING:
-                    new_themes = cand.get("themes", [])
-                    if new_themes:
-                        m.themes = list(set(m.themes + new_themes))
-                    if buy_score is not None:
-                        m.buy_score = buy_score
-                        m.buy_grade = buy_grade
-                        m.buy_reasons = list(buy_reasons)
-                continue
-            rising_count = sum(
-                1 for m in self.monitored.values() if m.source == Source.RISING
-            )
-            if rising_count >= max_count:
-                continue
-            self.monitored[code] = MonitoredStock(
-                code=code,
-                name=cand.get("name", code),
-                source=Source.RISING,
-                added_at=now,
-                themes=list(cand.get("themes", [])),
-                buy_score=buy_score,
-                buy_grade=buy_grade,
-                buy_reasons=list(buy_reasons),
-            )
-            score_str = f" [{buy_grade} {buy_score:+.1f}]" if buy_score is not None else ""
-            changes.append(f"⚡ {cand.get('name', code)} ({code}) 부상 후보 신규{score_str}")
+                if not m.is_rising:
+                    score_str = f" [{buy_grade} {buy_score:+.1f}]" if buy_score is not None else ""
+                    changes.append(f"⚡ {m.name} ({code}) 후보 진입{score_str}")
+                m.is_rising = True
+                if new_themes:
+                    m.themes = list(set(m.themes + new_themes))
+                if buy_score is not None:
+                    m.buy_score = buy_score
+                    m.buy_grade = buy_grade
+                    m.buy_reasons = list(buy_reasons)
+            else:
+                self.monitored[code] = MonitoredStock(
+                    code=code, name=cand.get("name", code),
+                    added_at=now, is_rising=True, themes=new_themes,
+                    buy_score=buy_score, buy_grade=buy_grade,
+                    buy_reasons=list(buy_reasons),
+                )
+                score_str = f" [{buy_grade} {buy_score:+.1f}]" if buy_score is not None else ""
+                changes.append(f"⚡ {cand.get('name', code)} ({code}) 후보 신규{score_str}")
+                added += 1
         return changes
 
-    def promote_rising_to_manual(self, code: str, now: datetime) -> bool:
-        """RISING → MANUAL 승격 (사용자 매매 결정 시).
+    # ── HOLD surface (worker 가 holdings.json 기반 호출) ──────────────────────
+
+    def ensure_held_stock(
+        self,
+        code: str,
+        name: str,
+        now: datetime,
+    ) -> MonitoredStock:
+        """보유 종목이 monitored 에 없으면 entry 만 추가. flag 는 모두 false.
+
+        보유 종목 카드 유지는 worker prune 의 holding 인자로 결정 (`prune_empty`).
+        is_hold 같은 명시 flag 는 두지 않음 — derive 가 source of truth (holdings.json).
+        """
+        if code in self.monitored:
+            m = self.monitored[code]
+            if name and m.name == m.code:
+                m.name = name  # 더 나은 이름이 들어오면 갱신
+            return m
+        m = MonitoredStock(
+            code=code, name=name or code, added_at=now,
+        )
+        self.monitored[code] = m
+        return m
+
+    def prune_empty(self, holding_codes: set[str]) -> list[str]:
+        """flag 가 모두 false 이고 보유도 아닌 종목 제거.
+
+        Args:
+            holding_codes: holdings.json 의 종목 코드 set.
 
         Returns:
-            True 면 승격 성공. 종목이 없거나 RISING 이 아니면 False.
+            제거된 (code, name) 의 한 줄 메시지 list.
         """
-        m = self.monitored.get(code)
-        if m is None or m.source != Source.RISING:
-            return False
-        m.source = Source.MANUAL
-        m.added_at = now
-        return True
+        removed: list[str] = []
+        for code in list(self.monitored.keys()):
+            m = self.monitored[code]
+            if m.has_any_flag():
+                continue
+            if code in holding_codes:
+                continue
+            self.monitored.pop(code)
+            removed.append(f"💤 {m.name} ({code}) 카드 제거 (flag 없음 + 보유 아님)")
+        return removed
 
     # ── LeaderTracker 상태 머신 ──────────────────────────────────────────────
 
@@ -353,19 +384,7 @@ class MonitoringSession:
         candidate_passed_transition_check: bool,
         now: datetime,
     ) -> None:
-        """섹터별 상태 머신 한 스텝 진행.
-
-        정정 round 19: alert 객체 반환 폐지 — 모든 상태 전이는 카드 헤더에
-        통합 표시. 본 함수는 tracker 상태만 갱신한다.
-
-        Args:
-            sector: 주도섹터명.
-            incumbent: 현재 주도주 a1 (code, name, turnover).
-            candidate: 부상 후보 a2 (code, name, turnover) 또는 None.
-                후보 판정은 호출자가 미리 (회전율비 + 가속배율) 체크.
-            candidate_passed_transition_check: 후보가 TRANSITION 진입 조건 통과 여부.
-            now: 현재 시각.
-        """
+        """섹터별 상태 머신 한 스텝."""
         tracker = self.trackers.get(sector)
         if tracker is None:
             tracker = LeaderTracker(
@@ -377,7 +396,6 @@ class MonitoringSession:
             self.trackers[sector] = tracker
             return
 
-        # 주도주가 통째로 바뀐 경우 (a1 자체가 사라짐 등) — 트래커 리셋
         if tracker.incumbent_code != incumbent["code"] and tracker.state == LeaderState.NORMAL:
             tracker.incumbent_code = incumbent["code"]
             tracker.incumbent_turnover = float(incumbent.get("turnover", 0.0))
@@ -386,7 +404,6 @@ class MonitoringSession:
 
         tracker.incumbent_turnover = float(incumbent.get("turnover", 0.0))
 
-        # 상태별 처리
         if tracker.state == LeaderState.NORMAL:
             if candidate and candidate_passed_transition_check:
                 tracker.state = LeaderState.TRANSITION
@@ -398,7 +415,6 @@ class MonitoringSession:
 
         if tracker.state == LeaderState.TRANSITION:
             if candidate is None or candidate["code"] != tracker.candidate_code:
-                # 후보가 사라짐 → NORMAL 복귀
                 tracker.state = LeaderState.NORMAL
                 tracker.candidate_code = None
                 tracker.candidate_turnover = 0.0
@@ -407,14 +423,12 @@ class MonitoringSession:
 
             tracker.candidate_turnover = float(candidate.get("turnover", 0.0))
 
-            # a2 회전율이 a1 추월 → GRACE 진입
             if tracker.candidate_turnover > tracker.incumbent_turnover:
                 tracker.state = LeaderState.GRACE
                 tracker.state_entered_at = now
                 tracker.transition_weak_since = None
                 return
 
-            # a2 약화 (a2 회전율 < a1 × 0.4) 가 3분 지속 → 후보 탈락
             if (
                 tracker.incumbent_turnover > 0
                 and tracker.candidate_turnover
@@ -435,13 +449,11 @@ class MonitoringSession:
             assert tracker.state_entered_at is not None
             elapsed = (now - tracker.state_entered_at).total_seconds()
 
-            # GRACE 중 a1 이 다시 a2 추월하면 카운트다운 무효, NORMAL 복귀
             if (
                 candidate is None
                 or candidate["code"] != tracker.candidate_code
                 or float(candidate.get("turnover", 0.0)) < tracker.incumbent_turnover
             ):
-                # a1 이 우세 회복 → 교체 무효
                 tracker.state = LeaderState.NORMAL
                 tracker.candidate_code = None
                 tracker.candidate_turnover = 0.0
@@ -451,7 +463,6 @@ class MonitoringSession:
             tracker.candidate_turnover = float(candidate.get("turnover", 0.0))
 
             if elapsed >= GRACE_PERIOD_SECONDS:
-                # GRACE 종료 — incumbent 를 a2 로 교체
                 old_name = incumbent.get("name", tracker.incumbent_code)
                 tracker.incumbent_code = candidate["code"]
                 tracker.incumbent_turnover = tracker.candidate_turnover

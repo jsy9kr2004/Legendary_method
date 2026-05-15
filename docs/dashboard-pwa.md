@@ -322,3 +322,4 @@ sudo systemctl restart jongbae
 | 2026-05-14 | 초안 작성 | M6 카드를 텔레그램 + PWA 두 채널로 확장. KIS 주문 input 영구 X 정책 명시 |
 | 2026-05-14 | §7 결정 5항목 확정 | Tailscale / Tailscale only / sparkline→lightweight-charts / 모니터링 종목만 / 텔레그램 동시 운영 |
 | 2026-05-14 | 트랙 순서 확정 (#6) | M5.5/분봉 영속화와 분리. Phase 1 MVP 먼저 → 아이패드 dogfooding → 후속 트랙 |
+| 2026-05-15 | multi-flag 모델 (round 35) | source 단일 enum → 4 flag 조합 (is_auto/is_rising/is_manual + hold derived). 자동/후보가 풀에서 빠져도 manual 핀이나 보유면 카드 유지. 청산 시 manual 핀도 같이 해제. 시세 미확보 buy 도 entry_price=0 으로 등록 + R15 트리거 skip |

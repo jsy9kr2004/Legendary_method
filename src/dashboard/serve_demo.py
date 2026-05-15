@@ -1,15 +1,15 @@
-"""PWA 대시보드 로컬 데모 (M7 Phase 1).
+"""PWA 대시보드 로컬 데모 (M7 Phase 1, round 35 multi-flag).
 
-worker / KIS / 텔레그램 없이 FastAPI 만 띄워서 PWA UI 를 검증할 수 있는
-가벼운 entrypoint. mock session 에 데모 페이로드를 1초 간격으로 갱신하고,
-실제 worker 처럼 매 tick `load_holdings()` 호출해서 보유 종목이 hold 모드로
-전환되는 것까지 시뮬레이션.
+worker / KIS / 텔레그램 없이 FastAPI 만 띄워서 PWA UI 를 검증할 수 있는 entrypoint.
+운영 worker 와 동일한 흐름: session.update_auto_leaders / update_rising_candidates
+→ ensure_held_stock → prune_empty → monitored 기반 페이로드 빌드. 사용자가 PWA 에서
+[→ 수동] / [× 해제] / [+ 보유] / [✕ 청산] 누른 결과가 다음 tick 에 유지/반영됨.
 
 실행:
     python -m src.dashboard.serve_demo
     # → http://127.0.0.1:8000/
 
-운영용은 `python -m src.scheduler` + `DASHBOARD_PWA_ENABLED=1`.
+운영용은 `./go start` + DASHBOARD_PWA_ENABLED=1.
 """
 from __future__ import annotations
 
@@ -22,30 +22,36 @@ import uvicorn
 from src.config import now_kst
 from src.dashboard.api import create_app
 from src.dashboard.render import build_trigger_lines
-from src.dashboard.state import MonitoringSession
+from src.dashboard.state import MonitoredStock, MonitoringSession
 
 
-def _build_demo_payload(
-    code: str,
-    name: str,
-    source: str,
-    base_price: int,
-    *,
-    holding: Any = None,
-) -> dict:
-    """모니터링 카드 1개에 해당하는 데모 페이로드.
+# 데모 종목 풀 — 운영의 update_auto_leaders / update_rising_candidates 입력 흉내.
+DEMO_AUTO_LEADERS = [
+    {"code": "091340", "name": "대한광통신", "themes": ["AI데이터센터", "광케이블"]},
+    {"code": "075180", "name": "제룡전기", "themes": ["전기/전선"]},
+]
+DEMO_RISING_CANDIDATES = [
+    {"code": "012200", "name": "계양전기", "themes": ["AI"],
+     "buy_score": 3.5, "buy_grade": "WATCH",
+     "buy_reasons": ["+1 거래대금 50위내", "+2 가속 동반 (5m 5.0 / 1m 5.0)"]},
+]
+# 데모 종목별 base_price 사전 — 페이로드 가격 시뮬레이션
+BASE_PRICES = {
+    "091340": 91300, "075180": 91300, "012200": 8920,
+    # 사용자가 수동 추가할 만한 종목 fallback
+    "005930": 79000, "000660": 165000,
+}
 
-    holding 인자가 있으면 source 를 'hold' 로 override 하고 holding 블록 채움
-    — worker.dashboard_tick 의 보유 모드 처리와 동일한 출력 형태.
-    """
-    now = now_kst()
+
+def _build_demo_payload(monitored: MonitoredStock, holding: Any = None) -> dict:
+    """monitored entry 를 받아 데모 페이로드 빌드. 운영 build_monitor_payload 의 mock 버전."""
+    from src.dashboard.render import build_monitor_payload
+
+    code = monitored.code
+    base_price = BASE_PRICES.get(code, 50000)
     drift = random.uniform(-0.5, 0.5)
     price = int(base_price * (1.0 + drift / 100.0))
 
-    is_holding = holding is not None
-    effective_source = "hold" if is_holding else source
-
-    # 데모 trigger_states — 한 종목만 일부 발화시켜 UI 표시 검증
     vp_5ma_demo = round(random.uniform(80, 160), 0)
     vp_1ma_demo = round(random.uniform(80, 160), 0)
     accel_1m_demo = round(random.uniform(0.2, 4.0), 1)
@@ -55,113 +61,90 @@ def _build_demo_payload(
         "C3_vol_drain": accel_1m_demo < 0.5,
         "C4_bearish_candle": False,
     }
-    if is_holding:
+    if holding is not None:
         trigger_states["C5_vi_failure"] = False
-    trigger_lines = build_trigger_lines(
-        trigger_states=trigger_states,
-        is_holding=is_holding,
-        vp_5ma=vp_5ma_demo, vp_1ma=vp_1ma_demo,
-        accel_ratio_1m=accel_1m_demo, divergence=None,
-    )
 
-    holding_block: dict | None = None
-    if is_holding:
-        elapsed_sec = int((now - holding.entry_time).total_seconds())
-        pnl_pct = holding.pnl_pct(price) if price else None
-        holding_block = {
-            "entry_price": int(holding.entry_price),
-            "entry_time": holding.entry_time.isoformat(),
-            "elapsed_sec": elapsed_sec,
-            "pnl_pct": pnl_pct if pnl_pct == pnl_pct else None,
-            "stop_loss_price": int(holding.stop_loss_price),
-            "take_profit_1_price": int(holding.take_profit_1_price),
-            "take_profit_2_price": int(holding.take_profit_2_price),
-            "time_stop_minutes": holding.time_stop_minutes,
-            "triggers_fired": list(getattr(holding, "triggers_fired", [])),
-        }
-
-    return {
-        "code": code,
-        "name": name,
-        "source": effective_source,
-        "themes": ["AI데이터센터", "광케이블"] if source == "auto" else ["AI"],
-        "header": {
-            "grade": random.choice(["STRONG", "WATCH", "NEUTRAL"]),
-            "score": round(random.uniform(-1.0, 7.0), 1),
-            "reasons": [
-                "+1 거래대금 50위내",
-                f"+2 가속 동반 (5m {random.uniform(2,6):.1f} / 1m {random.uniform(2,6):.1f})",
-                "+2 장대양봉 (윗꼬리 9%)",
-            ],
-        },
-        "price": {
-            "current": price,
-            "change_pct": round(drift + 20, 2),
-            "is_limit_up": source == "auto",
-            "sell_29_pct": int(base_price * 1.29),
-        },
-        "volume": {
-            "rank": random.randint(1, 30),
-            "amount": random.randint(50, 1500) * 1_000_000_000,
-            "turnover_pct": round(random.uniform(5, 20), 1),
-        },
-        "accel_5m": {"ratio": round(random.uniform(0.5, 6.0), 1), "bar_value": 5_000_000_000},
-        "accel_1m": {"ratio": accel_1m_demo, "bar_value": 1_000_000_000},
-        "vp": {
-            "current": round(random.uniform(80, 160), 0),
-            "ma_5": vp_5ma_demo,
-            "ma_1": vp_1ma_demo,
-            "buy_ratio": round(random.uniform(-30, 60), 1),
-        },
-        "asking": {
-            "bid_total": random.randint(50_000, 500_000),
-            "ask_total": random.randint(50_000, 500_000),
-            "ratio": round(random.uniform(0.5, 7.0), 1),
-            "bid1_price": price - 100,
-            "bid1_volume": 850,
-            "ask1_price": price,
-            "ask1_volume": 120,
-        },
-        "divergence": None,
-        "holding": holding_block,
-        "transition": None,
-        "grace_remaining_sec": None,
-        "trigger_states": trigger_states,
-        "trigger_lines": trigger_lines,
-        "updated_at": now.isoformat(),
+    snapshot_row = {
+        "price": price,
+        "prev_close": base_price,
+        "daily_return": round(drift + (30.0 if monitored.is_auto else 15.0), 2),
+        "is_limit_up": monitored.is_auto,
+        "turnover": round(random.uniform(5, 20), 1),
+        "trading_value": random.randint(50, 1500) * 1_000_000_000,
+        "rank": random.randint(1, 30),
     }
+    ccnl = {
+        "ccnl_strength": round(random.uniform(80, 160), 0),
+        "buy_ratio": round(random.uniform(-30, 60), 1),
+    }
+    asking = {
+        "bid_total_volume": random.randint(50_000, 500_000),
+        "ask_total_volume": random.randint(50_000, 500_000),
+        "bid_ask_ratio": round(random.uniform(0.5, 7.0), 1),
+        "bid1_price": price - 100, "bid1_volume": 850,
+        "ask1_price": price, "ask1_volume": 120,
+    }
+
+    return build_monitor_payload(
+        monitored=monitored,
+        snapshot_row=snapshot_row,
+        accel_ratio=round(random.uniform(0.5, 6.0), 1),
+        recent_bar_value=5_000_000_000,
+        ccnl=ccnl,
+        asking=asking,
+        investor=None,
+        now=now_kst(),
+        accel_ratio_1m=accel_1m_demo,
+        last_bar_value=1_000_000_000,
+        vp_1ma=vp_1ma_demo,
+        vp_5ma=vp_5ma_demo,
+        holding=holding,
+        trigger_states=trigger_states,
+        divergence=None,
+    )
 
 
 async def _demo_tick_loop(session: MonitoringSession) -> None:
-    """1초마다 데모 페이로드 갱신 → WebSocket broadcast 자동 발화.
+    """1초마다 데모 페이로드 갱신. 운영 worker.dashboard_tick 흐름과 동일.
 
-    매 tick `load_holdings()` 호출 — worker 와 동일 패턴. 보유 종목이면 카드의
-    source 가 hold 로 전환되어 보유 컬럼으로 이동. `session.last_prices` 도 함께
-    갱신 — `/buy CODE` 가격 자동 보충용.
+    1) update_auto_leaders / update_rising_candidates — flag 갱신
+    2) holdings.json load → 보유 종목 surface
+    3) prune_empty — flag 없고 보유 없으면 monitored 제거
+    4) monitored 의 모든 종목 페이로드 빌드 → last_payloads 갱신
+    5) last_prices 동기화 (가격 자동 보충용)
     """
-    # 임포트는 함수 안 — load_holdings 가 settings 로드를 가질 수 있음
     from src.jongbae.exit_triggers import load_holdings
 
-    demo_stocks = [
-        ("091340", "대한광통신", "auto", 91300),
-        ("012200", "계양전기", "rising", 8920),
-        ("075180", "제룡전기", "auto", 91300),
-        ("005930", "삼성전자", "manual", 79000),
-    ]
     while True:
+        now = now_kst()
         try:
             holdings = load_holdings()
         except Exception:  # noqa: BLE001
             holdings = {}
-        for code, name, source, base in demo_stocks:
-            payload = _build_demo_payload(
-                code, name, source, base, holding=holdings.get(code),
-            )
+
+        # 운영 worker 흐름 흉내
+        session.update_auto_leaders(DEMO_AUTO_LEADERS, now)
+        session.update_rising_candidates(DEMO_RISING_CANDIDATES, now)
+        for h_code in holdings.keys():
+            if h_code not in session.monitored:
+                h_name = BASE_PRICES.get(h_code) and h_code  # name 알 수 없으면 code
+                session.ensure_held_stock(h_code, h_name or h_code, now)
+        session.prune_empty(set(holdings.keys()))
+
+        # 모든 monitored 종목 페이로드 빌드
+        for code, m in list(session.monitored.items()):
+            payload = _build_demo_payload(m, holding=holdings.get(code))
             session.last_payloads[code] = payload
             cur = (payload.get("price") or {}).get("current")
             if cur:
                 session.last_prices[code] = float(cur)
-        session.last_payload_ts = now_kst()
+
+        # last_payloads 정리 — monitored 에서 빠진 종목 페이로드도 제거
+        for stale in list(session.last_payloads.keys()):
+            if stale not in session.monitored:
+                session.last_payloads.pop(stale, None)
+
+        session.last_payload_ts = now
         await asyncio.sleep(1.0)
 
 

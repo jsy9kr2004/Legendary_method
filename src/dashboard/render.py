@@ -165,22 +165,20 @@ def render_monitor_message(
         transition_info: 이 종목이 a1 일 때 부상 후보 a2 정보 (state/candidate_code/
             candidate_turnover). 카드 헤더에 통합 표시 (round 19 정책).
     """
-    # 헤더 — 보유/감시 모드 분기 (round 22).
-    # 보유 모드 = holding 인자 있을 때. source emoji prefix 없이 [보유] 만 표시
-    # (CLAUDE.md 정책: source 라벨 중복 방지).
+    # 헤더 — multi-flag 라벨 조합 (round 35).
+    # 보유 / 수동 / 자동 / 후보 중 켜진 것 모두 표시. 예: "[💎 보유 / 🔵 수동]"
+    # is_holding 우선. flag 가 하나도 없으면 (보유만) "[💎 보유]" 단독.
     is_holding = holding is not None
+    flag_labels: list[str] = []
     if is_holding:
-        src_emoji = ""
-        header_kind = "보유"
-    elif monitored.source == Source.AUTO:
-        src_emoji = "⭐자동/주도주"
-        header_kind = "모니터링"
-    elif monitored.source == Source.RISING:
-        src_emoji = "⚡부상 후보"
-        header_kind = "부상"
-    else:
-        src_emoji = "🔵수동"
-        header_kind = "모니터링"
+        flag_labels.append("💎 보유")
+    if monitored.is_manual:
+        flag_labels.append("🔵 수동")
+    if monitored.is_auto:
+        flag_labels.append("⭐ 자동")
+    if monitored.is_rising:
+        flag_labels.append("⚡ 후보")
+    header_kind = " / ".join(flag_labels) if flag_labels else "모니터링"
     themes_str = " / ".join(monitored.themes) if monitored.themes else "—"
     name = monitored.name or monitored.code
 
@@ -198,9 +196,8 @@ def render_monitor_message(
         }.get(monitored.buy_grade, "")
         grade_label = f"  {grade_emoji} {monitored.buy_grade} {monitored.buy_score:+.1f}점"
 
-    src_part = f" {src_emoji}" if src_emoji else ""
     lines = [
-        f"[{header_kind}] {name} ({monitored.code}){src_part}{grace_label}{grade_label}",
+        f"[{header_kind}] {name} ({monitored.code}){grace_label}{grade_label}",
         f"테마: {themes_str}",
     ]
     if monitored.buy_reasons:
@@ -375,9 +372,10 @@ def render_monitor_message(
         divergence=divergence,
     ))
 
-    # RISING 한정: 사용자 명령 안내 — 바로 복사해서 수동 모니터링 승격 가능
-    if monitored.source == Source.RISING:
-        lines.append(f"매매 결정 시 → /add {monitored.code}")
+    # 부상/자동 카드에서 수동 핀 안내 — 자동/후보 풀에서 빠져도 카드 유지하려면
+    # /add 6자리 또는 [→ 수동] 버튼 (round 35).
+    if (monitored.is_rising or monitored.is_auto) and not monitored.is_manual and not is_holding:
+        lines.append(f"자동/후보 풀 이탈 후에도 유지하려면 → /add {monitored.code}")
 
     return "\n".join(lines)
 
@@ -420,7 +418,15 @@ def build_monitor_payload(
     스키마는 `docs/dashboard-pwa.md` §4 와 동기화. 변경 시 둘 다 갱신.
     """
     is_holding = holding is not None
-    source_val = "hold" if is_holding else monitored.source.value
+    # round 35: multi-flag 모델. source 는 카드 좌측 보더 색상용 (우선순위 derive).
+    # flags 는 헤더 라벨 조합용 (auto/rising/manual/hold 가 동시에 켜질 수 있음).
+    source_val = monitored.primary_source(is_held=is_holding).value
+    flags = {
+        "auto": monitored.is_auto,
+        "rising": monitored.is_rising,
+        "manual": monitored.is_manual,
+        "hold": is_holding,
+    }
 
     score = _clean(monitored.buy_score) if monitored.buy_score is not None else None
     header = {
@@ -542,6 +548,7 @@ def build_monitor_payload(
         "code": monitored.code,
         "name": monitored.name or monitored.code,
         "source": source_val,
+        "flags": flags,
         "themes": list(monitored.themes),
         "header": header,
         "price": price_block,

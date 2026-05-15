@@ -97,22 +97,29 @@ def test_apply_list():
 
 
 def test_apply_clear():
+    """round 35: clear 는 manual flag 만 끔. entry 는 prune 단계에서 결정."""
     s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
     s.add_manual("005930", now)
     s.add_manual("000660", now)
     msg = apply_command(parse_command("/clear"), s, now)
     assert "2개" in msg
+    # 둘 다 manual flag 끔 — entry 는 남아있지만 prune 대상
+    assert s.monitored["005930"].is_manual is False
+    assert s.monitored["000660"].is_manual is False
+    # prune 후엔 사라짐
+    s.prune_empty(set())
     assert "005930" not in s.monitored
+    assert "000660" not in s.monitored
 
 
 def test_apply_toggle_code_in_window():
     s = MonitoringSession()
-    now = datetime(2026, 5, 11, 9, 30)  # 평일 09:30
+    now = datetime(2026, 5, 11, 9, 30)
     msg = apply_command(parse_command("005930"), s, now)
     assert "005930" in msg
     assert "005930" in s.monitored
-    assert s.monitored["005930"].source == Source.MANUAL
+    assert s.monitored["005930"].is_manual is True
 
 
 def test_apply_toggle_code_24h_allowed():
@@ -306,8 +313,12 @@ def test_apply_buy_code_only_uses_last_prices(tmp_path, monkeypatch):
     assert holdings["091340"].entry_price == 91_400.0
 
 
-def test_apply_buy_code_only_without_last_price_errors(tmp_path, monkeypatch):
-    """last_prices 미보유 종목 + 가격 생략 → 안내 메시지 반환, 보유 모드 진입 X."""
+def test_apply_buy_code_only_without_last_price_registers_zero(tmp_path, monkeypatch):
+    """round 35 정책: last_prices/last_payloads 둘 다 비어도 보유 등록 진행.
+
+    entry_price=0 으로 등록 — R15 트리거는 평가 skip (안전). 사용자가
+    `/buy CODE PRICE` 로 매수가 갱신 가능.
+    """
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     import importlib
     import src.config
@@ -317,12 +328,14 @@ def test_apply_buy_code_only_without_last_price_errors(tmp_path, monkeypatch):
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
 
-    s = MonitoringSession()  # last_prices 비어있음
+    s = MonitoringSession()
     now = datetime(2026, 5, 11, 9, 30)
     msg = bot.apply_command(bot.parse_command("/buy 091340"), s, now)
-    assert "시세 미확보" in msg
+    assert "보유 모드 진입" in msg
+    assert "매수가 미입력" in msg
     holdings = et.load_holdings()
-    assert "091340" not in holdings
+    assert "091340" in holdings
+    assert holdings["091340"].entry_price == 0.0  # placeholder — 트리거 평가 skip
 
 
 def test_apply_buy_off_hours_note_appended(tmp_path, monkeypatch):
@@ -403,7 +416,7 @@ def test_apply_sell_removes_holding(tmp_path, monkeypatch):
     now = datetime(2026, 5, 11, 9, 30)
     bot.apply_command(bot.parse_command("/buy 091340 91300"), s, now)
     msg = bot.apply_command(bot.parse_command("/sell 091340"), s, now)
-    assert "감시 모드" in msg
+    assert "청산 처리" in msg
     assert "091340" not in et.load_holdings()
 
 

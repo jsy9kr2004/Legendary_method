@@ -242,6 +242,12 @@ def evaluate_triggers(
     """
     events: list[TriggerEvent] = []
 
+    # round 35: 매수가 미입력(entry_price <= 0) — R15 트리거 평가 skip.
+    # PWA/텔레그램 /buy 가 시세 못 가져온 채 등록한 경우. 손절선/익절선이 모두 0
+    # 이라 의미 없음. 사용자가 /buy CODE PRICE 로 갱신하면 정상 평가.
+    if holding.entry_price <= 0:
+        return events
+
     # 고점 갱신
     if current_price > holding.high_since_entry:
         holding.high_since_entry = current_price

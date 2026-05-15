@@ -81,22 +81,27 @@ def test_session_invalid_action(client):
 
 
 def test_watchlist_toggle_add(client, session):
-    """POST /api/watchlist toggle → session.monitored 갱신."""
+    """POST /api/watchlist toggle (round 35) → is_manual flag 토글."""
     r = client.post("/api/watchlist", json={"action": "toggle", "code": "005930"})
     assert r.status_code == 200
     assert "005930" in session.monitored
+    assert session.monitored["005930"].is_manual is True
 
-    # 한 번 더 토글 → 제거
+    # 한 번 더 토글 → is_manual 만 off (entry 는 prune 단계에서 결정)
     r = client.post("/api/watchlist", json={"action": "toggle", "code": "005930"})
     assert r.status_code == 200
-    assert "005930" not in session.monitored
+    assert session.monitored["005930"].is_manual is False
 
 
 def test_watchlist_clear(client, session):
+    """round 35: /clear 는 is_manual flag 만 clear. prune 후 entry 사라짐."""
     session.add_manual("005930", datetime(2026, 5, 11, 9, 30))
     session.add_manual("000660", datetime(2026, 5, 11, 9, 30))
     r = client.post("/api/watchlist", json={"action": "clear"})
     assert r.status_code == 200
+    assert session.monitored["005930"].is_manual is False
+    assert session.monitored["000660"].is_manual is False
+    session.prune_empty(set())
     assert "005930" not in session.monitored
     assert "000660" not in session.monitored
 
@@ -131,10 +136,10 @@ def test_holdings_buy_sell(client, session, tmp_path, monkeypatch):
     assert data["091340"]["entry_price"] == 91300.0
     assert data["091340"]["time_stop_minutes"] == 15
 
-    # sell
+    # sell (round 35: "청산 처리" 메시지)
     r = client.post("/api/holdings", json={"action": "sell", "code": "091340"})
     assert r.status_code == 200
-    assert "감시 모드" in r.json()["message"]
+    assert "청산 처리" in r.json()["message"]
     data = json.loads(holdings_path.read_text())
     assert "091340" not in data
 
@@ -181,21 +186,26 @@ def test_holdings_buy_price_fallback_to_payload(
     assert data["091340"]["entry_price"] == 91300.0
 
 
-def test_holdings_buy_price_missing_everywhere(
+def test_holdings_buy_price_missing_registers_zero(
     client, session, tmp_path, monkeypatch,
 ):
-    """last_prices / last_payloads 모두 비어 있으면 명시 안내. 위험한 0 등록은 X."""
+    """round 35: 시세 미확보여도 등록 진행. entry_price=0 → R15 트리거 skip.
+
+    사용자 정책: "그냥 보유 처리". 사용자가 나중에 `/buy CODE PRICE` 로 가격 갱신.
+    """
     holdings_path = tmp_path / "holdings.json"
     monkeypatch.setattr(
         "src.jongbae.exit_triggers._state_path", lambda: holdings_path,
     )
     session.add_manual("091340", datetime(2026, 5, 11, 9, 30))
-    # 둘 다 빈 상태
 
     r = client.post("/api/holdings", json={"action": "buy", "code": "091340"})
     assert r.status_code == 200
-    assert "최근 시세 미확보" in r.json()["message"]
-    assert not holdings_path.exists()
+    assert "보유 모드 진입" in r.json()["message"]
+    assert "매수가 미입력" in r.json()["message"]
+    assert holdings_path.exists()
+    data = json.loads(holdings_path.read_text())
+    assert data["091340"]["entry_price"] == 0.0
 
 
 def test_holdings_invalid_action(client):
