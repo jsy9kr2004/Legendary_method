@@ -132,6 +132,10 @@ def _evaluate_rising_funnel(
     if client is None or not stage1_candidates:
         return []
 
+    # 진단 로깅 — 사용자가 "30분 동안 후보 카드 한 개도 못 봄" 케이스에서 어느 단계에
+    # 서 drop 되는지 확인용 (round 33). 매 tick 출력은 시끄러우니 stage 별 통과 수만.
+    n_stage1 = len(stage1_candidates)
+
     # ── Stage 2: 모멘텀 (minute_bars + vol_accel + candle) ────────────────────
     stage2: list[dict[str, Any]] = []
     for cand in stage1_candidates:
@@ -159,17 +163,26 @@ def _evaluate_rising_funnel(
         return []
 
     # ── Stage 3: 체결강도 ────────────────────────────────────────────────────
+    # round 33 (정정): VP 데이터 부재(KIS cttr None/NaN)는 hard-fail 아닌 통과.
+    # 사용자 보고: KIS 응답 cttr 이 빈값으로 와서 funnel 의 모든 후보가 Stage 3 에서
+    # 죽어 RISING 카드가 0건. 데이터 없음과 "VP 명시적으로 낮음" 은 다른 신호 —
+    # NaN/None 은 Stage 4 R14 점수에서 가중치 0 으로 처리. 명시적으로 100 미만일
+    # 때만 매수 압력 약함으로 drop. 이렇게 하면 흥아해운류 회귀도 유지 (해당 케이스
+    # 는 vp_5ma 가 NaN 이어도 vol_accel/봉/이평 음수 합산으로 점수 부족 → Stage 4 drop).
     stage3: list[dict[str, Any]] = []
     for cand in stage2:
         code = cand["code"]
         ccnl = fetch_ccnl_strength(client, code)
-        if ccnl is None:
-            continue
-        vp = ccnl.get("ccnl_strength")
-        if vp is None or not (vp == vp) or vp < RISING_STAGE3_VP_MIN:
-            continue
+        vp_value: float = float("nan")
+        if ccnl is not None:
+            vp = ccnl.get("ccnl_strength")
+            if vp is not None and vp == vp:
+                vp_value = float(vp)
+                if vp_value < RISING_STAGE3_VP_MIN:
+                    continue  # 명시적으로 매도 우세 — drop
+            # else: NaN/None → pass through (데이터 부재)
         tick_cache[code]["ccnl"] = ccnl
-        tick_cache[code]["vp"] = float(vp)
+        tick_cache[code]["vp"] = vp_value
         stage3.append(cand)
 
     if not stage3:
@@ -246,6 +259,10 @@ def _evaluate_rising_funnel(
 
     # 점수 내림차순
     out.sort(key=lambda c: c["buy_score"], reverse=True)
+    logger.info(
+        f"[funnel] stage1={n_stage1} → stage2={len(stage2)} → stage3={len(stage3)} → "
+        f"통과={len(out)} (RISING_MIN_SCORE={RISING_MIN_SCORE})"
+    )
     return out
 
 
@@ -336,6 +353,12 @@ def dashboard_tick(
     )
     leader_codes_set = {l["code"] for l in leaders}
     rising_stage1 = [c for c in rising_stage1 if c["code"] not in leader_codes_set]
+    # 진단 — leaders/sectors 가 0건이면 사용자가 "주도주 모니터링 안 나옴" 으로 인지.
+    # 매 tick (3초) 마다 디버그 — DEBUG 레벨이라 운영 운영 시 INFO 만 보면 묻힘.
+    logger.debug(
+        f"[모니터링] snapshot={len(snapshot)}, sectors={len(sectors)}, "
+        f"leaders={len(leaders)}, rising_stage1={len(rising_stage1)}"
+    )
 
     # 2) 자동 모니터링 갱신 (주도주만) — 추가/제거 시 메시지 send/delete
     prev_auto_codes = {c for c, m in session.monitored.items() if m.source.value == "auto"}
@@ -544,6 +567,64 @@ def dashboard_tick(
                 candle=candle_for_trig,
                 holding=None,
             )
+
+        # round 33: 모든 모니터링 모드(AUTO/MANUAL/HOLD/RISING) 에 R14 매수 점수 계산.
+        # 이전엔 _evaluate_rising_funnel 안에서만 점수가 매겨져 RISING 카드에만 등급
+        # 라벨이 떴다 — 사용자가 "보유/주도주 카드에도 STRONG/WATCH 항상 보고 싶다".
+        # 입력은 매 tick fetch 한 값 재사용 — 추가 KIS 호출 없음.
+        if snap_row is not None:
+            bid_ask = float("nan")
+            if asking is not None:
+                v = asking.get("bid_ask_ratio")
+                if v is not None and v == v:
+                    bid_ask = float(v)
+            price_for_grade = float(snap_row.get("price") or 0)
+            high_for_grade = float(snap_row.get("intraday_high") or 0)
+            dist_high = (
+                (price_for_grade - high_for_grade) / high_for_grade * 100.0
+                if high_for_grade > 0 and price_for_grade > 0 else float("nan")
+            )
+            vwap_g = compute_vwap(bars) if not bars.empty else float("nan")
+            ma5_g = compute_minute_ma(bars, window_minutes=5) if not bars.empty else float("nan")
+            ma20_g = compute_minute_ma(bars, window_minutes=20) if not bars.empty else float("nan")
+            vwap_pct_g = (
+                price_vs_vwap_pct(price_for_grade, vwap_g)
+                if price_for_grade > 0 else float("nan")
+            )
+            ma5_pct_g = (
+                price_vs_ma_pct(price_for_grade, ma5_g)
+                if price_for_grade > 0 else float("nan")
+            )
+            ma20_pct_g = (
+                price_vs_ma_pct(price_for_grade, ma20_g)
+                if price_for_grade > 0 else float("nan")
+            )
+            today_volume_g = float(snap_row.get("volume") or 0)
+            prev_volume_g = _prev_day_volume(daily_ohlcv, code)
+            if today_volume_g > 0 and prev_volume_g == prev_volume_g and prev_volume_g > 0:
+                vol_ratio_g = today_volume_g / prev_volume_g
+            else:
+                vol_ratio_g = float("nan")
+            grade_snap = GraderSnapshot(
+                volume_turnover_rank=int(snap_row.get("rank") or 0) or None,
+                vol_accel_1m=accel_1m if accel_1m == accel_1m else float("nan"),
+                vol_accel_5m=accel if accel == accel else float("nan"),
+                candle=candle_for_trig,
+                vp=vp_now,
+                vp_5ma=vp_5ma if vp_5ma == vp_5ma else float("nan"),
+                divergence=divergence_state,
+                bid_ask_ratio=bid_ask,
+                dist_from_intraday_high_pct=dist_high,
+                price_vs_vwap_pct=vwap_pct_g,
+                price_vs_ma5_pct=ma5_pct_g,
+                price_vs_ma20_pct=ma20_pct_g,
+                volume_ratio_vs_prev_day=vol_ratio_g,
+                limit_up_hit_time=session.limit_up_hit_times.get(code),
+            )
+            sc = calculate_buy_score(grade_snap)
+            monitored.buy_score = sc.score
+            monitored.buy_grade = sc.grade
+            monitored.buy_reasons = list(sc.reasons)
 
         text = render_monitor_message(
             monitored=monitored,

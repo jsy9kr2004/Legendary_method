@@ -171,6 +171,7 @@
 - [x] **ritual 3 자동화: 통설 가중치 invariant** (round 32) — `test_grader.py::test_invariant_consensus_weights_dominate_positive/negative` + `_divergence_weight_capped_at_one` 3 케이스
 - [ ] **wiring: 14:50 결정 → paper_trade.record_decision** — 결정 레포트에서 STRONG/WATCH 자동 저장 (호출 한 줄)
 - [ ] **wiring: 09:30 모닝 → paper_trade.record_open_result** — 보유 종목 + 14:50 후보들 시초가/오전고가 추가 (호출 한 줄)
+- [x] **카드 일관성 + funnel 데이터 부재 복구** (round 33) — 사용자 보고: "체결강도 안 나옴 / 30분 동안 부상 후보 0건 / 보유 카드에 WATCH·STRONG 안 보임 / C3 ❌ 인데 0.0배라 혼동". fix: ①`render.py` 체결강도 라인 `if ccnl:` 가드 폐지 — 데이터 부재 시 `⚪ 체결강도: — (데이터 없음)` placeholder 라인 항상 출력. ②`worker.dashboard_tick` 종목 루프 안에 `GraderSnapshot` + `calculate_buy_score` 매 tick 호출 — AUTO/MANUAL/HOLD/RISING 전부에 buy_score/grade/reasons 채움. 카드 헤더 등급 라벨 일관성. 입력은 이미 fetch 한 값 재사용 — KIS 추가 호출 0. ③`_evaluate_rising_funnel` Stage 3 — KIS `cttr` 빈 응답(NaN/None) hard-fail 폐지. 명시적으로 100 미만일 때만 drop, NaN 은 Stage 4 풀스코어로 통과 (VP 가산점 0). ④`render.py` C3 라벨에 보유 모드 한정 `(2분 지속)` 명시 — 감시 모드는 instantaneous 라 기존 라벨. 발화 룰과 라벨 일치. ⑤funnel/leader 단계별 통과 종목 수 로깅 — 사용자가 "왜 안 나오는지" 진단 가능. tests: render 4 신규 + worker 2 신규, 기존 회귀 안전 (test_rising_funnel_filters_heunga_haewoon 유지). 764 pass.
 
 **완료 기준 (round 18):** 24h 봇 명령 polling 상시 가동. 사용자 `/on` 시점부터 `/off` 까지 주도주 1~2개 + 사용자 임의 종목 모니터링 + 보유 종목 손절/익절 카드 표시. 평일 09:00 자동 ON, 10:30 자동 OFF 폐지. 카드 외 별도 푸시 알림 X (round 17). 푸시는 M6 외부 이벤트(상한가 진입, 자동 주도주 첫 추가, 정기 레포트)만.
 
