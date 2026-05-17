@@ -59,6 +59,11 @@ def test_get_token_first_time_calls_api(tmp_path):
     assert "openapivts.koreainvestment.com" in called_url
 
 
+def _cache_filename(s: Settings) -> str:
+    cred = s.credentials()[0]
+    return f"kis_token_{s.kis_api_mode}_{cred.cache_id}.json"
+
+
 def test_get_token_uses_cache_on_second_call(tmp_path):
     s = _settings(tmp_path)
     with patch("httpx.post", return_value=_ok_response("TOK1")) as post_mock:
@@ -95,7 +100,7 @@ def test_expired_token_triggers_refresh(tmp_path):
         "expires_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
         "api_mode": "mock",
     }
-    cache_path = tmp_path / "meta" / "kis_token.json"
+    cache_path = tmp_path / "meta" / _cache_filename(s)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(expired))
 
@@ -149,8 +154,54 @@ def test_token_persisted_to_disk(tmp_path):
     s = _settings(tmp_path)
     with patch("httpx.post", return_value=_ok_response("PERSISTED")):
         auth.get_token(s)
-    cache_path = tmp_path / "meta" / "kis_token.json"
+    cache_path = tmp_path / "meta" / _cache_filename(s)
     assert cache_path.exists()
     data = json.loads(cache_path.read_text())
     assert data["access_token"] == "PERSISTED"
     assert data["api_mode"] == "mock"
+
+
+def test_multi_credential_tokens_cached_separately(tmp_path):
+    """credential 별 토큰 캐시 파일이 분리되는지."""
+    from src.config import KisCredential
+
+    cred_a = KisCredential("KEY_A", "SECRET_A", "11111111-01", "primary")
+    cred_b = KisCredential("KEY_B", "SECRET_B", "22222222-01", "wife")
+    s = Settings(
+        data_dir=tmp_path,
+        log_dir=tmp_path / "logs",
+        log_level="INFO",
+        dry_run=False,
+        kis_app_key="KEY_A",
+        kis_app_secret="SECRET_A",
+        kis_account_no="11111111-01",
+        kis_api_mode="mock",
+        telegram_bot_token="",
+        telegram_chat_id="",
+        gmail_user="",
+        gmail_app_password="",
+        gmail_to="",
+        kis_credentials=(cred_a, cred_b),
+    )
+
+    with patch(
+        "httpx.post",
+        side_effect=[_ok_response("TOK_A"), _ok_response("TOK_B")],
+    ) as post_mock:
+        ta = auth.get_token(s, credential=cred_a)
+        tb = auth.get_token(s, credential=cred_b)
+
+    assert ta.access_token == "TOK_A"
+    assert tb.access_token == "TOK_B"
+    assert post_mock.call_count == 2
+
+    # 두 캐시 파일이 별도로 존재해야 함
+    path_a = tmp_path / "meta" / f"kis_token_mock_{cred_a.cache_id}.json"
+    path_b = tmp_path / "meta" / f"kis_token_mock_{cred_b.cache_id}.json"
+    assert path_a.exists() and path_b.exists()
+    assert path_a != path_b
+
+    # 두 번째 호출은 각자 캐시에서 (httpx.post 추가 호출 X)
+    auth.get_token(s, credential=cred_a)
+    auth.get_token(s, credential=cred_b)
+    assert post_mock.call_count == 2
