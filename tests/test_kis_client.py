@@ -118,3 +118,98 @@ def test_response_without_rt_cd_returns_payload(tmp_path):
                 out = c.get("/uapi/foo", tr_id="TR0001")
 
     assert out == payload
+
+
+def _multi_settings(tmp_path) -> Settings:
+    from src.config import KisCredential
+
+    cred_a = KisCredential("KEY_A", "SECRET_A", "11111111-01", "primary")
+    cred_b = KisCredential("KEY_B", "SECRET_B", "22222222-01", "wife")
+    return Settings(
+        data_dir=tmp_path,
+        log_dir=tmp_path / "logs",
+        log_level="INFO",
+        dry_run=False,
+        kis_app_key="KEY_A",
+        kis_app_secret="SECRET_A",
+        kis_account_no="11111111-01",
+        kis_api_mode="mock",
+        telegram_bot_token="",
+        telegram_chat_id="",
+        gmail_user="",
+        gmail_app_password="",
+        gmail_to="",
+        kis_credentials=(cred_a, cred_b),
+    )
+
+
+def test_multi_credentials_round_robin(tmp_path):
+    """2개 credential 이면 호출이 번갈아 가며 각 키 사용."""
+    from src.kis.rate_limit import reset_default_limiter
+
+    reset_default_limiter()
+    s = _multi_settings(tmp_path)
+    payload = {"rt_cd": "0", "output": {}}
+
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(httpx.Client, "get", return_value=_ok_resp(payload)) as get_mock:
+            with client.KISClient(s) as c:
+                c.get("/uapi/foo", tr_id="TR0001")
+                c.get("/uapi/foo", tr_id="TR0001")
+                c.get("/uapi/foo", tr_id="TR0001")
+                c.get("/uapi/foo", tr_id="TR0001")
+
+    # 4번 호출 → A, B, A, B 순서
+    headers_list = [call.kwargs["headers"] for call in get_mock.call_args_list]
+    assert headers_list[0]["appkey"] == "KEY_A"
+    assert headers_list[1]["appkey"] == "KEY_B"
+    assert headers_list[2]["appkey"] == "KEY_A"
+    assert headers_list[3]["appkey"] == "KEY_B"
+
+    reset_default_limiter()
+
+
+def test_multi_credentials_have_independent_limiters(tmp_path):
+    """credential 마다 별도 limiter 인스턴스를 가져야 함."""
+    from src.kis.rate_limit import reset_default_limiter
+
+    reset_default_limiter()
+    s = _multi_settings(tmp_path)
+
+    with client.KISClient(s) as c:
+        assert len(c._slots) == 2
+        cred_a, lim_a = c._slots[0]
+        cred_b, lim_b = c._slots[1]
+        assert cred_a.label == "primary"
+        assert cred_b.label == "wife"
+        assert lim_a is not lim_b
+
+    reset_default_limiter()
+
+
+def test_token_fetched_per_credential(tmp_path):
+    """라운드 로빈 시 각 호출에 매칭되는 credential 로 토큰 요청."""
+    from src.config import KisCredential
+    from src.kis.rate_limit import reset_default_limiter
+
+    reset_default_limiter()
+    s = _multi_settings(tmp_path)
+    payload = {"rt_cd": "0"}
+
+    called_with: list[KisCredential] = []
+
+    def _capture_token(settings, credential=None, force_refresh=False):
+        called_with.append(credential)
+        return _fake_token()
+
+    with patch.object(auth, "get_token", side_effect=_capture_token):
+        with patch.object(httpx.Client, "get", return_value=_ok_resp(payload)):
+            with client.KISClient(s) as c:
+                c.get("/uapi/foo", tr_id="TR0001")
+                c.get("/uapi/foo", tr_id="TR0001")
+
+    assert len(called_with) == 2
+    assert called_with[0].app_key == "KEY_A"
+    assert called_with[1].app_key == "KEY_B"
+
+    reset_default_limiter()

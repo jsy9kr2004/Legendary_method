@@ -115,16 +115,23 @@ def build_trigger_lines(
 
     텔레그램 카드(`render_monitor_message`) 와 PWA 페이로드(`build_monitor_payload`)
     둘 다 동일 형식. 보유/감시 모드 분기 — 보유 모드는 C5 포함, 라벨에 "2분 지속".
+
+    마크 (round 36): 평시 `▢` / 발화 `🚧` (이전 ❌/✅ 는 의미 오해 — 매도 발화가
+    "성공/완료" 인상이라 위험). 🚧 는 노란 공사 표지로 "주의/매도 검토" 직관 +
+    카드의 다른 마크(동그라미·⚠) 와 모양 다름.
     """
     if trigger_states is None:
         return []
+
+    def _mk(fired: bool) -> str:
+        return "🚧" if fired else "▢"
 
     lines: list[str] = []
     section_label = "청산 시그널" if is_holding else "청산 시그널 (현재 시점)"
     lines.append(f"─ {section_label} ─")
 
     # C1: 체결강도 5MA 100 하향
-    c1_mark = "✅" if trigger_states.get("C1_vp_below_100") else "❌"
+    c1_mark = _mk(trigger_states.get("C1_vp_below_100", False))
     c1_detail_parts = []
     if vp_5ma is not None and vp_5ma == vp_5ma:
         c1_detail_parts.append(f"5MA {vp_5ma:.0f}")
@@ -134,7 +141,7 @@ def build_trigger_lines(
     lines.append(f"{c1_mark} 체결강도 5MA 100 하향 (현재 {c1_detail})")
 
     # C2: Bearish Divergence
-    c2_mark = "✅" if trigger_states.get("C2_bearish_divergence") else "❌"
+    c2_mark = _mk(trigger_states.get("C2_bearish_divergence", False))
     if divergence is not None:
         p = getattr(divergence, "price_change_pct", float("nan"))
         v = getattr(divergence, "vp_5ma_delta", float("nan"))
@@ -145,7 +152,7 @@ def build_trigger_lines(
         lines.append(f"{c2_mark} Bearish Divergence")
 
     # C3: 자금 고갈
-    c3_mark = "✅" if trigger_states.get("C3_vol_drain") else "❌"
+    c3_mark = _mk(trigger_states.get("C3_vol_drain", False))
     c3_detail = (
         f" — 현재 {accel_ratio_1m:.1f}배"
         if accel_ratio_1m is not None and accel_ratio_1m == accel_ratio_1m else ""
@@ -154,12 +161,12 @@ def build_trigger_lines(
     lines.append(f"{c3_mark} 자금 고갈 ({c3_rule}){c3_detail}")
 
     # C4: 윗꼬리 50%↑ 음봉 (1분봉)
-    c4_mark = "✅" if trigger_states.get("C4_bearish_candle") else "❌"
+    c4_mark = _mk(trigger_states.get("C4_bearish_candle", False))
     lines.append(f"{c4_mark} 윗꼬리 50%↑ 음봉 (1분봉 기준)")
 
     # C5: VI 발동 후 재상승 실패 — 보유 모드만
     if is_holding:
-        c5_mark = "✅" if trigger_states.get("C5_vi_failure") else "❌"
+        c5_mark = _mk(trigger_states.get("C5_vi_failure", False))
         lines.append(f"{c5_mark} VI 발동 후 5분 내 재상승 실패")
 
     return lines
