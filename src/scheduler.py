@@ -311,6 +311,25 @@ def _send_morning(settings: Settings, dispatcher: Dispatcher,
 
 
 @_business_day_only("지수 적재")
+def _compact_tick_logs_today() -> None:
+    """Phase 1 후속 cron — 오늘 tick_logs/trades jsonl → parquet 변환.
+
+    16:15 (사후 레포트 + 지수 일봉 갱신 후) 일자별 자동 변환. jsonl 은 보존
+    (delete_raw=False) — 안전망. 사용자가 disk 확보 위해 수동 삭제 또는
+    `python -m src.data.tick_log_compact --delete-raw` 직접 실행.
+    """
+    from datetime import date as _d
+
+    from src.data.tick_log_compact import compact_tick_logs, compact_trades
+
+    today = _d.today()
+    try:
+        compact_tick_logs(today, delete_raw=False)
+        compact_trades(today, delete_raw=False)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[tick_log_compact] 사후 변환 실패: {e}")
+
+
 def _update_index_daily_job(settings: Settings, dispatcher: Dispatcher,
                             client: KISClient | None = None) -> None:
     """16:10 KOSPI/KOSDAQ 일봉 incremental update.
@@ -778,6 +797,17 @@ def run() -> None:
         args=[settings, dispatcher, client],
         id="index_daily_update",
         name="지수 일봉 업데이트",
+        misfire_grace_time=3600,
+    )
+
+    # 16:15 tick_logs / trades jsonl → parquet 변환 (Phase 1 사후).
+    # jsonl 매 tick append 라 운영 중 손실 ≤ 1 tick. 사후 parquet 으로 압축
+    # → 분석은 parquet 으로 pandas/duckdb. delete_raw=False (안전망).
+    scheduler.add_job(
+        _compact_tick_logs_today,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=16, minute=15),
+        id="tick_log_compact",
+        name="tick_log jsonl→parquet",
         misfire_grace_time=3600,
     )
 

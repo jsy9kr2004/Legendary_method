@@ -47,6 +47,7 @@ logs/
 .go.child.pid
 .go.pid.*
 .go.child.pid.*
+.go.*.pid
 
 # 로컬 전용 ignore (개인 환경)
 .gitignore.local
@@ -59,6 +60,9 @@ data/decisions/
 data/errors/
 data/reports/
 data/state/
+data/tick_logs/
+data/trades/
+data/journal/
 !data/daily/.gitkeep
 !data/intraday/.gitkeep
 !data/meta/.gitkeep

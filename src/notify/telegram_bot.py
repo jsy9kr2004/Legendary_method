@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Literal
 
 from src.dashboard.state import MonitoringSession
+from src.data.tick_log import TradeEvent, append_trade_event
 from src.jongbae.config_thresholds import TIME_STOP_MINUTES_DEFAULT
 from src.jongbae.exit_triggers import (
     Holding,
@@ -247,6 +248,19 @@ def _apply_buy(
     holdings[code] = holding
     save_holdings(holdings)
 
+    # Phase 1: 매수 이벤트 jsonl 기록 — 사후 분석 시 tick_logs 와 timestamp join.
+    append_trade_event(
+        TradeEvent(
+            ts=now.isoformat(),
+            code=code,
+            name=name,
+            action="buy",
+            price=int(final_price) if final_price > 0 else None,
+            source="command",
+        ),
+        now,
+    )
+
     off_hours = not _is_regular_session(now)
     off_hours_note = (
         "\n⏸ 장 시간 외 — 다음 정규장(평일 09:00~15:30) 부터 시그널 평가 시작"
@@ -294,9 +308,39 @@ def _apply_sell(code: str, session: MonitoringSession) -> str:
     holdings = load_holdings()
     if code not in holdings:
         return f"⚠ {code} — 보유 모드 아님"
+
+    # Phase 1: pop 전에 R15 트리거 발화 사유 추출 — 사후 "어떤 트리거 발화 후
+    # 사용자가 매도했는지" 분석용.
+    holding_obj = holdings[code]
+    triggers_fired_str: str | None = None
+    try:
+        fired = list(getattr(holding_obj, "triggers_fired", []) or [])
+        if fired:
+            triggers_fired_str = ",".join(fired)
+    except (AttributeError, TypeError):
+        pass
+
     holdings.pop(code)
     save_holdings(holdings)
     name = session.monitored[code].name if code in session.monitored else code
+
+    # Phase 1: 매도 이벤트 jsonl 기록.
+    from datetime import datetime as _dt
+    now = _dt.now()
+    sell_price = session.last_prices.get(code)
+    append_trade_event(
+        TradeEvent(
+            ts=now.isoformat(),
+            code=code,
+            name=name,
+            action="sell",
+            price=int(sell_price) if sell_price else None,
+            source="command",
+            trigger_fired=triggers_fired_str,
+        ),
+        now,
+    )
+
     cleared_manual = session.clear_manual_flag(code)
     pin_note = " + 수동 핀 해제" if cleared_manual else ""
     return f"⚪ {code} {name} — 청산 처리{pin_note}"

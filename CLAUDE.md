@@ -228,4 +228,36 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 - 레포트 모듈 작성 시: `docs/report-spec.md`
 - 실시간 모니터링 카드/funnel/매수 점수/매도 시그널 설명 (초보자용): `docs/monitoring-guide.md`
 - PWA 대시보드 (M7) 작성 시: `docs/dashboard-pwa.md`
+- 매매일지 작성 / 매매 평가 요청 처리 시: `docs/trading-journal.md`
 - 전체 진행 상황: `docs/plan.md`
+
+## 매매일지 요청 처리 (round 40, Phase 2 운영)
+
+사용자가 다음과 같은 요청을 하면 — "매매일지 작성해줘", "YYYY-MM-DD 매매 평가", "오늘
+매매 분석", "이 차트로 매매일지" — **반드시 `docs/trading-journal.md` 먼저 읽고
+거기 워크플로우 / 형식 / 톤 가이드 따른다**. 단순 자동 레포트 생성이 아니라 사용자
+**감을 시스템화**하기 위한 사후 평가 + 다각도 튜닝 포인트 도출이 본질.
+
+입력:
+- 사용자 제공 — HTS 차트 이미지 (분봉/일봉/호가, multimodal), 일자, 메모 (선택)
+- 시스템 데이터 — `data/tick_logs/YYYY-MM-DD.parquet` (raw jsonl fallback), `data/
+  trades/YYYY-MM-DD.parquet`, 필요 시 `data/daily/ohlcv.parquet`
+- 분석 도구 — `python -m src.analysis.replay CODE DATE`, `python -m src.analysis.
+  regret DATE`. 더 세밀한 분석은 직접 pandas 쿼리.
+
+출력 — Markdown 매매일지:
+- 매매 개요 표 / 종목별 분석 (매수·매도 결정 시점 시그널 breakdown / 보유 중 R15
+  트리거 timeline / 청산 결정 평가)
+- 시스템 시그널 vs 사용자 감 일치도
+- 튜닝 포인트 (단기 이번 매매 / 장기 과거 누적, 운전수 가설 시그니처 후보)
+- 다음 행동 — 사용자가 다음 매매에서 검증할 가설
+
+⚠ 톤 원칙 (자세한 건 `docs/trading-journal.md` §5):
+- "잘 사셨네요" 같은 무비판 옹호 X — 결과 좋아도 결정 과정이 운이면 지적
+- 사용자 감의 한계 직시 — 우연히 성공한 패턴이 재현 가능한지 검증 가능한지 분석
+- 튜닝 후보는 항상 가설로 제시 — 1건으로 가중치 변경 X (과적합)
+- 차트 vs 시스템 데이터 불일치는 시스템 결함 우선 의심
+- "느낌상" 같은 표현 X. 모든 평가에 시각/숫자 첨부
+
+매매일지 저장 권고: `data/journal/YYYY-MM-DD.md` — 누적 시 Phase 3 종목별 파라미터
+DB / 운전수 가설 검증 데이터셋.
