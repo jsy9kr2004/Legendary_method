@@ -44,6 +44,44 @@ def _fmt_int_signed(v: int | None) -> str:
     return f"{sign}{v:,}"
 
 
+def _fmt_signed_billion(v: int | float | None) -> str:
+    """수급 라인용 — 부호 명시 + 억/만 단위 금액."""
+    if v is None or v == 0:
+        return "0"
+    sign = "+" if v > 0 else "-"
+    mag = abs(v)
+    if mag >= 1e8:
+        return f"{sign}{mag / 1e8:.0f}억"
+    if mag >= 1e4:
+        return f"{sign}{mag / 1e4:.0f}만"
+    return f"{sign}{int(mag):,}"
+
+
+def _fmt_signed_shares(v: int | float | None) -> str:
+    """수급 라인용 — 부호 명시 + 만주/주 단위 수량."""
+    if v is None or v == 0:
+        return "0"
+    sign = "+" if v > 0 else "-"
+    mag = abs(v)
+    if mag >= 1e4:
+        return f"{sign}{mag / 1e4:.0f}만주"
+    return f"{sign}{int(mag):,}주"
+
+
+def _fmt_elapsed_short(seconds: int | float | None) -> str:
+    """경과 시간 짧은 형식 — Δ 라인 헤더용. 47s / 2m13s / 1h05m."""
+    if seconds is None:
+        return "—"
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}s"
+    minutes, sec = divmod(s, 60)
+    if minutes < 60:
+        return f"{minutes}m{sec:02d}s" if sec else f"{minutes}m"
+    hours, mm = divmod(minutes, 60)
+    return f"{hours}h{mm:02d}m"
+
+
 def _krx_tick_size(price: int) -> int:
     """KRX 가격대별 호가 단위 (KOSPI/KOSDAQ 동일, 2023-01 이후 단순화 표).
 
@@ -146,6 +184,7 @@ def render_monitor_message(
     holding: Any = None,            # Holding 객체 (보유 모드일 때만)
     trigger_states: dict[str, bool] | None = None,  # R15 12개 트리거 발화 상태
     divergence: Any = None,         # DivergenceState
+    investor_delta: dict[str, Any] | None = None,  # round 36 후속: 누적값 변화 + elapsed
 ) -> str:
     """종목별 모니터링 카드 (editMessageText 갱신용).
 
@@ -359,8 +398,36 @@ def render_monitor_message(
                 f"매도 {ask1_p:,}원 ({ask1_v:,})"
             )
 
-    # 외국인 / 기관 / 프로그램 — round 22: 데이터 신뢰도 낮아 카드에서 제거.
-    # 단 investor 인자는 호환 위해 유지.
+    # 외인 / 기관 / 프로그램 순매수 — round 36 부활. round 22 정정의 명목 사유는
+    # "KIS 응답 신뢰도 낮음" 이었으나 round 33/34 체결강도 사건 분석 후 실제
+    # 원인은 fetcher 응답 list 첫 행 파싱 버그로 추정 (intraday_realtime round 36).
+    # R14 점수 합산은 round 29 ritual 통과 전엔 X — 카드 표시만 (참고 지표).
+    if investor:
+        foreign_v = investor.get("foreign_net_buy_value") or 0
+        inst_v = investor.get("institution_net_buy_value") or 0
+        program_q = investor.get("program_net_buy") or 0
+        if foreign_v or inst_v or program_q:
+            # round 36 후속: 누계 라인 안에 괄호 Δ — 한 줄로 통합. 헤더 옆 (Δ47s)
+            # 가 마지막 갱신 시점, 각 항목 옆 괄호가 그 항목의 변화량. 변화량 0
+            # 인 항목은 괄호 생략 (외인은 그대로 + 기관만 움직임 같은 케이스).
+            df_v = (investor_delta or {}).get("foreign_value") or 0
+            di_v = (investor_delta or {}).get("institution_value") or 0
+            dp_q = (investor_delta or {}).get("program_qty") or 0
+            has_delta = bool(investor_delta) and (df_v or di_v or dp_q)
+            elapsed_part = ""
+            if has_delta:
+                elapsed = investor_delta.get("elapsed_sec") or 0
+                elapsed_part = f"(Δ{_fmt_elapsed_short(elapsed)})"
+
+            def _paren(value: int, formatter) -> str:
+                return f" ({formatter(value)})" if value else ""
+
+            lines.append(
+                f"수급{elapsed_part}: "
+                f"외인 {_fmt_signed_billion(foreign_v)}{_paren(df_v, _fmt_signed_billion)} "
+                f"/ 기관 {_fmt_signed_billion(inst_v)}{_paren(di_v, _fmt_signed_billion)} "
+                f"/ 프로그램 {_fmt_signed_shares(program_q)}{_paren(dp_q, _fmt_signed_shares)}"
+            )
 
     # 청산 시그널 (R15 C 그룹) — build_trigger_lines 헬퍼 (텔레그램 / PWA 공용).
     lines.extend(build_trigger_lines(
@@ -409,6 +476,7 @@ def build_monitor_payload(
     holding: Any = None,
     trigger_states: dict[str, bool] | None = None,
     divergence: Any = None,
+    investor_delta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """PWA 대시보드용 구조화 페이로드 (`render_monitor_message` 와 동일 인자).
 
@@ -491,6 +559,42 @@ def build_monitor_payload(
             "ask1_volume": int(asking.get("ask1_volume") or 0),
         }
 
+    # round 36: 외인/기관/프로그램 순매수 (텔레그램 카드 수급 라인과 동일 데이터).
+    # 모두 0 이면 None — frontend 가 라인 자체 생략.
+    investor_block: dict[str, Any] | None = None
+    if investor:
+        foreign_v = int(investor.get("foreign_net_buy_value") or 0)
+        inst_v = int(investor.get("institution_net_buy_value") or 0)
+        foreign_q = int(investor.get("foreign_net_buy") or 0)
+        inst_q = int(investor.get("institution_net_buy") or 0)
+        indiv_q = int(investor.get("individual_net_buy") or 0)
+        program_q = int(investor.get("program_net_buy") or 0)
+        if foreign_v or inst_v or foreign_q or inst_q or indiv_q or program_q:
+            investor_block = {
+                "foreign_value": foreign_v,
+                "institution_value": inst_v,
+                "foreign_qty": foreign_q,
+                "institution_qty": inst_q,
+                "individual_qty": indiv_q,
+                "program_qty": program_q,
+            }
+
+    # round 36 후속: 수급 Δ — 마지막으로 누적값이 바뀐 시점부터의 변화량.
+    # 텔레그램 카드 Δ 라인과 동일 데이터. 모두 0 또는 None 이면 키 자체 None.
+    investor_delta_block: dict[str, Any] | None = None
+    if investor_delta:
+        df_v = int(investor_delta.get("foreign_value") or 0)
+        di_v = int(investor_delta.get("institution_value") or 0)
+        dp_q = int(investor_delta.get("program_qty") or 0)
+        elapsed = investor_delta.get("elapsed_sec")
+        if df_v or di_v or dp_q:
+            investor_delta_block = {
+                "foreign_value": df_v,
+                "institution_value": di_v,
+                "program_qty": dp_q,
+                "elapsed_sec": int(elapsed) if elapsed is not None else None,
+            }
+
     divergence_block: dict[str, Any] | None = None
     if divergence is not None:
         if getattr(divergence, "bearish", False):
@@ -557,6 +661,8 @@ def build_monitor_payload(
         "accel_1m": _accel_block(accel_ratio_1m, last_bar_value),
         "vp": vp_block,
         "asking": asking_block,
+        "investor": investor_block,
+        "investor_delta": investor_delta_block,
         "divergence": divergence_block,
         "holding": holding_block,
         "transition": transition_block,

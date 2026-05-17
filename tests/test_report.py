@@ -459,8 +459,9 @@ def test_decision_report_shows_intraday_signals():
     assert "[14:50 시그널]" in report
     assert "표시만 — 사이징 미반영" in report
     assert "체결강도 142" in report
-    assert "외국인 18.0억" in report
-    assert "기관 42.0억" in report
+    # round 36: 양수 순매수에 + 부호 명시.
+    assert "외국인 +18.0억" in report
+    assert "기관 +42.0억" in report
     assert "🟢 매수 우세" in report
 
 

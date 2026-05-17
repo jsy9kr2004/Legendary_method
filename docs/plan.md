@@ -119,7 +119,7 @@
 - [ ] **분봉 fetcher** — KIS API `FHKST03010200`. 5분봉/1분봉 OHLC + 거래대금 시계열. `src/data/intraday.py` `fetch_minute_bars()` (R11 가속 / R12 봉패턴 공용)
 - [ ] **체결강도 fetcher** — KIS API `inquire-ccnl`. 매수체결/매도체결 비율 → R10 VP. `fetch_ccnl_strength()`
 - [ ] **호가잔량 fetcher** — KIS API `inquire-asking-price-exp-ccn`. 매수/매도 호가 잔량 (R10 보조 강등). `fetch_asking_price()`
-- [ ] **투자자별 순매수 fetcher** — KIS API `inquire-investor`. 외국인/기관/프로그램 순매수. `fetch_investor_flow()`
+- [x] **투자자별 순매수 fetcher** — KIS API `inquire-investor`. 외국인/기관/프로그램 순매수. `fetch_investor_flow()`. round 22 정정으로 카드에서 제거 → round 36 응답 list 파싱 안전화 (`out[0]` → 시간 필드 max 행 채택) + 모두 0 응답 DEBUG 로그 + 카드/PWA/14:50 결정 레포트 라인 부활 (R14 점수 합산 X, 표시만). 진단 스크립트 `scripts/diag_investor_flow.py` 동봉. (2026-05-17)
 - [ ] **거래대금 가속배율 계산** — 현재 5분봉 거래대금 / 직전 30분 평균 (R3' 주도주 교체용). `src/jongbae/momentum.py`. 양수→치고 올라옴 / 음수→자금 이탈
 - [ ] **상태 머신** (M5.5와 공유) — 종목 추가/제거/유예기 카운트다운
 

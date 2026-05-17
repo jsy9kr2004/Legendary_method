@@ -84,6 +84,28 @@ def _build_demo_payload(monitored: MonitoredStock, holding: Any = None) -> dict:
         "bid1_price": price - 100, "bid1_volume": 850,
         "ask1_price": price, "ask1_volume": 120,
     }
+    # round 36: 수급 mock — KIS inquire-investor 의 시나리오. 외인/기관/프로그램
+    # 양수/음수 랜덤. 운영 fetcher 가 채우는 키 구조와 동일.
+    foreign_q = random.randint(-50_000, 100_000)
+    inst_q = random.randint(-30_000, 60_000)
+    program_q = random.randint(-20_000, 80_000)
+    investor = {
+        "foreign_net_buy": foreign_q,
+        "institution_net_buy": inst_q,
+        "individual_net_buy": -(foreign_q + inst_q),
+        "program_net_buy": program_q,
+        "foreign_net_buy_value": foreign_q * price,
+        "institution_net_buy_value": inst_q * price,
+    }
+    # round 36 후속: 수급 Δ mock — KIS 갱신 주기(추정 5분)를 흉내내기보다
+    # "라인 표시 검증" 목적이라 매 tick random 값. 실 운영에선 worker 가
+    # session.update_investor_delta 로 누적값 변화 추적 → 자연스러운 elapsed.
+    investor_delta = {
+        "foreign_value": random.randint(-300_000_000, 500_000_000),
+        "institution_value": random.randint(-200_000_000, 300_000_000),
+        "program_qty": random.randint(-20_000, 30_000),
+        "elapsed_sec": random.randint(15, 280),
+    }
 
     return build_monitor_payload(
         monitored=monitored,
@@ -92,7 +114,8 @@ def _build_demo_payload(monitored: MonitoredStock, holding: Any = None) -> dict:
         recent_bar_value=5_000_000_000,
         ccnl=ccnl,
         asking=asking,
-        investor=None,
+        investor=investor,
+        investor_delta=investor_delta,
         now=now_kst(),
         accel_ratio_1m=accel_1m_demo,
         last_bar_value=1_000_000_000,

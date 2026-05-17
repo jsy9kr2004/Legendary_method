@@ -138,6 +138,12 @@ class MonitoringSession:
     limit_up_hit_times: dict[str, time] = field(default_factory=dict)
     last_payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
     last_payload_ts: datetime | None = None
+    # round 36 후속: 외인/기관/프로그램 누적값이 마지막으로 바뀐 시점 추적.
+    # 윈도우 고정(1m/5m) 대신 KIS 갱신 주기에 자동 적응 — 응답값이 이전 호출과
+    # 다르면 그 시점에서 Δ 기록, 같으면 snapshot 갱신 X (카드 Δ 라인의 elapsed
+    # 가 늘어남). 종배 14:50 결정 레포트는 이 추적 안 함 (스냅샷 1회).
+    last_investor_snapshots: dict[str, tuple[datetime, dict[str, Any]]] = field(default_factory=dict)
+    last_investor_deltas: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # ── 종목 추가/제거 (사용자 토글) ──────────────────────────────────────────
 
@@ -373,6 +379,59 @@ class MonitoringSession:
             self.monitored.pop(code)
             removed.append(f"💤 {m.name} ({code}) 카드 제거 (flag 없음 + 보유 아님)")
         return removed
+
+    # ── 외인/기관/프로그램 수급 Δ 추적 (round 36 후속) ────────────────────────
+
+    _INVESTOR_DELTA_KEYS = (
+        "foreign_net_buy_value",
+        "institution_net_buy_value",
+        "program_net_buy",
+    )
+
+    def update_investor_delta(
+        self,
+        code: str,
+        investor: dict[str, Any] | None,
+        now: datetime,
+    ) -> dict[str, Any] | None:
+        """누적값이 마지막으로 바뀐 시점 추적 + Δ + elapsed_sec 반환.
+
+        윈도우 고정(1m/5m) 대신 응답값이 이전과 다른 순간을 잡음 — KIS 갱신
+        주기에 자동 적응. KIS 가 5분마다 바꾸든 1분마다 바꾸든 카드 Δ 라인의
+        elapsed 가 그대로 갱신 주기를 노출한다.
+
+        - investor=None 또는 첫 호출 (snapshot 없음): None 반환
+        - 이전 snapshot 과 동일: snapshot 갱신 X, 마지막 Δ + 늘어난 elapsed 반환
+        - 이전과 다름: 새 Δ 기록 + snapshot 갱신
+        """
+        if investor is not None:
+            prev = self.last_investor_snapshots.get(code)
+            if prev is None:
+                # 첫 호출 — 비교 대상 없으니 snapshot 만 박고 Δ 없음.
+                self.last_investor_snapshots[code] = (now, dict(investor))
+            else:
+                _, prev_val = prev
+                if any(investor.get(k) != prev_val.get(k) for k in self._INVESTOR_DELTA_KEYS):
+                    self.last_investor_deltas[code] = {
+                        "foreign_value": (investor.get("foreign_net_buy_value") or 0)
+                            - (prev_val.get("foreign_net_buy_value") or 0),
+                        "institution_value": (investor.get("institution_net_buy_value") or 0)
+                            - (prev_val.get("institution_net_buy_value") or 0),
+                        "program_qty": (investor.get("program_net_buy") or 0)
+                            - (prev_val.get("program_net_buy") or 0),
+                        "changed_at": now,
+                    }
+                    self.last_investor_snapshots[code] = (now, dict(investor))
+
+        last_delta = self.last_investor_deltas.get(code)
+        if last_delta is None:
+            return None
+        return {
+            "foreign_value": last_delta["foreign_value"],
+            "institution_value": last_delta["institution_value"],
+            "program_qty": last_delta["program_qty"],
+            "elapsed_sec": int((now - last_delta["changed_at"]).total_seconds()),
+        }
 
     # ── LeaderTracker 상태 머신 ──────────────────────────────────────────────
 

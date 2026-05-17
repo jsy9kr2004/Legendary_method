@@ -149,7 +149,27 @@ def _intraday_signal_lines(signals: dict[str, Any]) -> list[str]:
     if inv:
         fv = inv.get("foreign_net_buy_value", 0)
         iv = inv.get("institution_net_buy_value", 0)
-        out.append(f"  수급:  외국인 {fmt_billion(fv)} / 기관 {fmt_billion(iv)}")
+        pq = inv.get("program_net_buy", 0)
+
+        # round 36: 양수에 + 부호 명시 (음수는 fmt_billion 자체 처리). 프로그램은
+        # KIS 응답에 금액 필드가 없어 수량(만주) 단위로 표시.
+        def _signed_bil(v: int) -> str:
+            if v == 0:
+                return "0"
+            sign = "+" if v > 0 else ""
+            return f"{sign}{fmt_billion(v)}"
+
+        program_str = ""
+        if pq:
+            sign = "+" if pq > 0 else "-"
+            mag = abs(pq)
+            if mag >= 1e4:
+                program_str = f" / 프로그램 {sign}{mag / 1e4:,.0f}만주"
+            else:
+                program_str = f" / 프로그램 {sign}{int(mag):,}주"
+        out.append(
+            f"  수급:  외국인 {_signed_bil(fv)} / 기관 {_signed_bil(iv)}{program_str}"
+        )
 
     return out
 
