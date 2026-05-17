@@ -302,6 +302,23 @@
 
 ---
 
+## Phase 1 — tick-level 시그널 로깅 (round 38, 2026-05-18 시작)
+
+매직 넘버 튜닝 인프라의 1단계. 사용자(Zeta) 비전: "수익률·승률 높이는 매직 넘버를
+데이터로 찾는다, 당분간 과도하더라도 최대한 많이 남긴다". 자세한 정정 이력은
+`docs/jongbae-strategy.md` row 38.
+
+- [x] `src/data/tick_log.py` — TickLogRow dataclass (40+ 컬럼) + append jsonl + TradeEvent
+- [x] `src/data/tick_log_compact.py` — jsonl → parquet 변환 CLI
+- [x] `worker.dashboard_tick` 매 tick 호출 (monitored 풀 + Stage 0 통과 비-monitored 합집합)
+- [x] `notify/telegram_bot.py` /buy /sell 핸들러에 trade event append
+- [x] `.gitignore` data/tick_logs/ + data/trades/
+- [x] 테스트 12 신규 (`test_tick_log.py`)
+- [x] scheduler 16:15 자동 jsonl → parquet 변환 cron (`scheduler._compact_tick_logs_today`) — round 39
+- [x] Phase 2 분석 도구 — `python -m src.analysis.replay CODE DATE` / `python -m src.analysis.regret DATE` (round 39, `test_analysis.py` 7 신규)
+- [ ] Phase 2 확장: 항목별 가중치 sensitivity analysis (R14 가중치 변경 시 매수 결정 변동 backtest)
+- [ ] Phase 3: 종목별 파라미터 DB (운전수 가설, 1년+ 데이터 누적 후)
+
 ## 기술 부채 / TODO 메모
 
 코드 작성하면서 발견되는 것 누적:

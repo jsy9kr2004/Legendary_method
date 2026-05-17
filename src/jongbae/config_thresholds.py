@@ -68,12 +68,11 @@ CANDIDATE_POOL_TOP_N: int = 5
 # 통과 종목 중 회전율 상위 N 으로 좁힘. 비용 0 (snapshot fetch 결과만 사용).
 RISING_STAGE1_TURNOVER_TOP_N: int = 15
 
-# Stage 2: 모멘텀 컷오프 — fetch_minute_bars 후
-#   vol_accel_5m > 0.8 (자금 가속 죽지 않음) AND is_weak_candle 아님.
-RISING_STAGE2_VOL_ACCEL_MIN: float = 0.8
-
-# Stage 3: 체결강도 컷오프 — fetch_ccnl_strength 후 VP ≥ 100 (매도 우세 아님).
-RISING_STAGE3_VP_MIN: float = 100.0
+# Stage 2/3 hard-fail 임계 — round 37 폐지. R14 score 의 음수 가산 (R10 VP_WEAK /
+# R11 vol_accel weak / R12 약한 봉) 과 중복이라 hard cliff 가 깜빡임만 유발하고
+# false negative 도 만들었음. 상수는 외부 호환 위해 보존하되 사용 X.
+RISING_STAGE2_VOL_ACCEL_MIN: float = 0.8  # deprecated (round 37)
+RISING_STAGE3_VP_MIN: float = 100.0  # deprecated (round 37)
 
 # Stage 4: R14 매수 점수 컷오프 — 이 점수 이상이어야 RISING 카드로 surface.
 # 2.0 = WATCH 이상. STRONG 만 surface 하려면 5.0 으로 올리면 됨.

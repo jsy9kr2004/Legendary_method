@@ -33,6 +33,7 @@ from loguru import logger
 from src.dashboard.render import build_monitor_payload, render_monitor_message
 from src.dashboard.state import (
     LeaderState,
+    MonitoredStock,
     MonitoringSession,
 )
 from src.data.intraday import fetch_volume_rank
@@ -42,14 +43,17 @@ from src.data.intraday_realtime import (
     fetch_investor_flow,
     fetch_minute_bars,
 )
+from src.data.tick_log import (
+    TickLogRow,
+    append_tick_log,
+    build_tick_log_row,
+)
 from src.jongbae.candle import is_weak_candle, latest_completed_candle
 from src.jongbae.config_thresholds import (
     GRACE_PERIOD_SECONDS,
     LEADING_SECTOR_TOP_N,
     LEADING_STOCK_TOP_PER_SECTOR,
     RISING_MIN_SCORE,
-    RISING_STAGE2_VOL_ACCEL_MIN,
-    RISING_STAGE3_VP_MIN,
     TRANSITION_TURNOVER_RATIO,
 )
 from src.jongbae.divergence import compute_divergence
@@ -108,89 +112,69 @@ def _evaluate_rising_funnel(
     daily_ohlcv: pd.DataFrame | None = None,
     limit_up_hit_times: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """부상 후보 다단계 funnel — Stage 2~4 (round 21).
+    """부상 후보 funnel — round 37: Stage 2/3 hard-fail 폐지, R14 풀스코어 단일 컷.
 
-    Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N) 통과 후보를 받아 차례로:
-        Stage 2: minute_bars fetch → vol_accel_5m > 0.8 AND not is_weak_candle
-        Stage 3: ccnl fetch → VP ≥ 100
-        Stage 4: asking + investor fetch → R14 풀스코어 → score ≥ RISING_MIN_SCORE
+    Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N) 통과 후보를 받아 데이터 수집 후
+    R14 풀스코어 한 번만 평가 — score ≥ RISING_MIN_SCORE 면 카드.
 
-    각 단계에서 탈락한 종목은 다음 단계 fetch 비용을 발생시키지 않는다. 통과한
-    종목의 fetch 결과는 `tick_cache` 에 보존돼서 카드 렌더 단계에서 재사용.
+    round 21~33 까지는 Stage 2 (vol_accel_5m ≤ 0.8 / 약한 봉) 와 Stage 3 (VP < 100)
+    에서 hard-fail drop 했으나, **이 임계값들은 모두 R14 score 의 음수 가산 항목과
+    중복** (R11 vol_accel weak / R12 봉 패턴 / R10 VP_WEAK). hard cliff 가 진동 시
+    카드 깜빡임의 주범 + VP 90 + 다른 강한 시그널 가진 종목을 false negative 로
+    잘라냄. → 듀얼 키 인프라(2026-05-17 main) 로 호출 한도 여유가 생긴 시점에
+    hard-fail 폐지. 약한 종목은 R14 음수 합산으로 자연스럽게 RISING_MIN_SCORE 미달.
 
     Args:
         stage1_candidates: identify_rising_candidates 결과.
         client: KIS client (None 이면 모든 단계 스킵 — 빈 리스트 반환).
         snap_by_code: snapshot 의 code → row 매핑 (rank/가격/회전율 등).
         tick_cache: code → {"bars", "accel_5m", "accel_1m", "candle", "vp",
-            "ccnl", "asking", "investor"} — 본 함수가 통과 종목에 한해 채움.
+            "ccnl", "asking", "investor"} — 본 함수가 모든 후보에 채움.
 
     Returns:
-        Stage 4 통과 종목 dict 리스트 (원 cand dict + "buy_score" / "buy_grade" /
-        "buy_reasons" 키 추가). 점수 내림차순.
+        R14 score ≥ RISING_MIN_SCORE 통과 종목 dict 리스트 (원 cand dict +
+        "buy_score" / "buy_grade" / "buy_reasons" 키 추가). 점수 내림차순.
     """
     if client is None or not stage1_candidates:
         return []
 
-    # 진단 로깅 — 사용자가 "30분 동안 후보 카드 한 개도 못 봄" 케이스에서 어느 단계에
-    # 서 drop 되는지 확인용 (round 33). 매 tick 출력은 시끄러우니 stage 별 통과 수만.
     n_stage1 = len(stage1_candidates)
 
-    # ── Stage 2: 모멘텀 (minute_bars + vol_accel + candle) ────────────────────
-    stage2: list[dict[str, Any]] = []
+    # ── 데이터 수집 — Stage 1 통과 모든 후보 (hard-fail 없음) ────────────────
+    scored_candidates: list[dict[str, Any]] = []
     for cand in stage1_candidates:
         code = cand["code"]
         bars = fetch_minute_bars(client, code)
         if bars is None or bars.empty:
+            # 분봉 fetch 실패 시는 다음 단계 계산 자체 불가 → skip (hard-fail 아님,
+            # 데이터 자체 부재).
             continue
         accel_5m = compute_accel_ratio(bars)
-        if not (accel_5m == accel_5m) or accel_5m <= RISING_STAGE2_VOL_ACCEL_MIN:
-            continue
-        candle = latest_completed_candle(bars)
-        if candle is not None and is_weak_candle(candle):
-            continue
-        # 통과 — Stage 4 에서 쓰일 1분 가속도 미리 계산 (분봉 한 번 fetch 재활용)
         accel_1m = compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
+        candle = latest_completed_candle(bars)
         tick_cache[code] = {
             "bars": bars,
             "accel_5m": accel_5m,
             "accel_1m": accel_1m,
             "candle": candle,
         }
-        stage2.append(cand)
 
-    if not stage2:
-        return []
-
-    # ── Stage 3: 체결강도 ────────────────────────────────────────────────────
-    # round 33 (정정): VP 데이터 부재(KIS cttr None/NaN)는 hard-fail 아닌 통과.
-    # 사용자 보고: KIS 응답 cttr 이 빈값으로 와서 funnel 의 모든 후보가 Stage 3 에서
-    # 죽어 RISING 카드가 0건. 데이터 없음과 "VP 명시적으로 낮음" 은 다른 신호 —
-    # NaN/None 은 Stage 4 R14 점수에서 가중치 0 으로 처리. 명시적으로 100 미만일
-    # 때만 매수 압력 약함으로 drop. 이렇게 하면 흥아해운류 회귀도 유지 (해당 케이스
-    # 는 vp_5ma 가 NaN 이어도 vol_accel/봉/이평 음수 합산으로 점수 부족 → Stage 4 drop).
-    stage3: list[dict[str, Any]] = []
-    for cand in stage2:
-        code = cand["code"]
         ccnl = fetch_ccnl_strength(client, code)
         vp_value: float = float("nan")
         if ccnl is not None:
             vp = ccnl.get("ccnl_strength")
             if vp is not None and vp == vp:
                 vp_value = float(vp)
-                if vp_value < RISING_STAGE3_VP_MIN:
-                    continue  # 명시적으로 매도 우세 — drop
-            # else: NaN/None → pass through (데이터 부재)
         tick_cache[code]["ccnl"] = ccnl
         tick_cache[code]["vp"] = vp_value
-        stage3.append(cand)
+        scored_candidates.append(cand)
 
-    if not stage3:
+    if not scored_candidates:
         return []
 
-    # ── Stage 4: R14 풀스코어 ────────────────────────────────────────────────
+    # ── R14 풀스코어 평가 (호가 + 투자자 fetch + 종합 점수) ─────────────────
     out: list[dict[str, Any]] = []
-    for cand in stage3:
+    for cand in scored_candidates:
         code = cand["code"]
         asking = fetch_asking_price(client, code)
         investor = fetch_investor_flow(client, code)
@@ -260,7 +244,7 @@ def _evaluate_rising_funnel(
     # 점수 내림차순
     out.sort(key=lambda c: c["buy_score"], reverse=True)
     logger.info(
-        f"[funnel] stage1={n_stage1} → stage2={len(stage2)} → stage3={len(stage3)} → "
+        f"[funnel] stage1={n_stage1} → 풀스코어 평가={len(scored_candidates)} → "
         f"통과={len(out)} (RISING_MIN_SCORE={RISING_MIN_SCORE})"
     )
     return out
@@ -456,6 +440,10 @@ def dashboard_tick(
                 "candidate_code": tracker.candidate_code,
                 "candidate_turnover": tracker.candidate_turnover,
             }
+
+    # Phase 1: tick-level 시그널 로깅 (`src/data/tick_log.py`).
+    # monitored 종목 = 풀 시그널, Stage 0 통과 비-monitored 종목 = snap + cache 데이터.
+    tick_log_rows: list[TickLogRow] = []
 
     for code, monitored in list(session.monitored.items()):
         snap_row = snap_by_code.get(code)
@@ -695,6 +683,93 @@ def dashboard_tick(
             divergence=divergence_state,
             investor_delta=investor_delta,
         )
+
+        # Phase 1: tick-level 로깅 — monitored 종목 풀 시그널.
+        tick_log_rows.append(build_tick_log_row(
+            now=now,
+            code=code,
+            name=monitored.name or code,
+            monitored=monitored,
+            snap_row=snap_row,
+            bars_present=not bars.empty,
+            accel_5m=accel,
+            accel_1m=accel_1m,
+            recent_bar_value=recent_value,
+            last_bar_value=last_bar_value,
+            candle=candle_for_trig,
+            vp_now=vp_now,
+            vp_5ma=vp_5ma,
+            vp_1ma=vp_1ma,
+            ccnl=ccnl,
+            asking=asking,
+            investor=investor,
+            investor_delta=investor_delta,
+            vwap_pct=vwap_pct_g,
+            ma5_pct=ma5_pct_g,
+            ma20_pct=ma20_pct_g,
+            divergence=divergence_state,
+            volume_ratio=vol_ratio_g,
+            limit_up_hit_time=session.limit_up_hit_times.get(code),
+            trigger_states=trigger_states,
+            funnel_evaluated=(code in tick_cache),
+            holding=holding,
+        ))
+
+    # Phase 1: Stage 0 통과 중 monitored 아닌 종목 (funnel 평가 받았다 RISING 못
+    # 들어가거나, 그냥 거래대금 50위 안에 있는 종목) — 사후 분석에 "이 종목 왜
+    # 후보 안 떴지?" 확인용. tick_cache 에 있으면 분봉/체결강도/호가/투자자 cache
+    # 활용, 없으면 snap 만.
+    monitored_codes_set = set(session.monitored.keys())
+    for snap_code, snap_row_extra in snap_by_code.items():
+        if snap_code in monitored_codes_set:
+            continue  # 이미 monitored 루프에서 로깅됨
+        cached = tick_cache.get(snap_code, {})
+        cached_bars = cached.get("bars")
+        bars_present_x = cached_bars is not None and not cached_bars.empty
+        recent_value_x: int | None = None
+        last_bar_value_x: int | None = None
+        if bars_present_x:
+            try:
+                recent_value_x = int(cached_bars.tail(5)["trading_value"].sum())
+                last_bar_value_x = int(cached_bars.tail(1)["trading_value"].iloc[0])
+            except (KeyError, ValueError):
+                pass
+        fake_monitored = MonitoredStock(
+            code=snap_code,
+            name=snap_row_extra.get("name") or snap_code,
+            added_at=now,
+        )
+        tick_log_rows.append(build_tick_log_row(
+            now=now,
+            code=snap_code,
+            name=fake_monitored.name,
+            monitored=fake_monitored,
+            snap_row=snap_row_extra,
+            bars_present=bars_present_x,
+            accel_5m=cached.get("accel_5m", float("nan")),
+            accel_1m=cached.get("accel_1m", float("nan")),
+            recent_bar_value=recent_value_x,
+            last_bar_value=last_bar_value_x,
+            candle=cached.get("candle"),
+            vp_now=cached.get("vp", float("nan")),
+            vp_5ma=float("nan"),  # session.vp_series 는 monitored 만 누적
+            vp_1ma=float("nan"),
+            ccnl=cached.get("ccnl"),
+            asking=cached.get("asking"),
+            investor=cached.get("investor"),
+            investor_delta=None,
+            vwap_pct=float("nan"),  # 비-monitored 는 grader 계산 X
+            ma5_pct=float("nan"),
+            ma20_pct=float("nan"),
+            divergence=None,
+            volume_ratio=float("nan"),
+            limit_up_hit_time=session.limit_up_hit_times.get(snap_code),
+            trigger_states={},
+            funnel_evaluated=bool(cached),
+            holding=None,
+        ))
+
+    append_tick_log(tick_log_rows, now)
 
     # M7 PWA: monitored 에서 빠진 종목 페이로드 정리 (tick 끝)
     stale_codes = set(session.last_payloads.keys()) - set(session.monitored.keys())
