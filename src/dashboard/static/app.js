@@ -37,6 +37,38 @@
     return v.toLocaleString("ko-KR");
   }
 
+  // round 36: 수급 라인 — 부호 명시 + 억/만 단위 금액 (외인/기관용).
+  function fmtSignedBillion(v) {
+    if (v === null || v === undefined || v === 0) return "0";
+    const sign = v > 0 ? "+" : "-";
+    const a = Math.abs(v);
+    if (a >= 1e8) return `${sign}${Math.round(a / 1e8).toLocaleString("ko-KR")}억`;
+    if (a >= 1e4) return `${sign}${Math.round(a / 1e4).toLocaleString("ko-KR")}만`;
+    return `${sign}${a.toLocaleString("ko-KR")}`;
+  }
+
+  // round 36: 수급 라인 — 부호 명시 + 만주/주 단위 수량 (프로그램용).
+  function fmtSignedShares(v) {
+    if (v === null || v === undefined || v === 0) return "0";
+    const sign = v > 0 ? "+" : "-";
+    const a = Math.abs(v);
+    if (a >= 1e4) return `${sign}${Math.round(a / 1e4).toLocaleString("ko-KR")}만주`;
+    return `${sign}${a.toLocaleString("ko-KR")}주`;
+  }
+
+  // round 36 후속: 경과 시간 짧은 형식 — Δ 라인 헤더용. 47s / 2m13s / 1h05m.
+  function fmtElapsedShort(seconds) {
+    if (seconds === null || seconds === undefined) return "—";
+    const s = Math.max(0, Math.floor(seconds));
+    if (s < 60) return `${s}s`;
+    const minutes = Math.floor(s / 60);
+    const sec = s % 60;
+    if (minutes < 60) return sec ? `${minutes}m${String(sec).padStart(2, "0")}s` : `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const mm = minutes % 60;
+    return `${hours}h${String(mm).padStart(2, "0")}m`;
+  }
+
   function gradeClass(grade) {
     return grade ? `grade-${grade}` : "";
   }
@@ -118,6 +150,8 @@
     const a1 = payload.accel_1m || {};
     const vp = payload.vp || {};
     const ask = payload.asking || {};
+    const inv = payload.investor;  // round 36: null 또는 {foreign_value, institution_value, program_qty, ...}
+    const invDelta = payload.investor_delta;  // round 36 후속: 마지막 변화량 + elapsed_sec
     const holding = payload.holding;
     const triggers = payload.trigger_states || {};
     const triggerLines = payload.trigger_lines || [];
@@ -187,6 +221,27 @@
     const vp5 = vp.ma_5 !== null && vp.ma_5 !== undefined ? vp.ma_5.toFixed(0) : "—";
     const vp1 = vp.ma_1 !== null && vp.ma_1 !== undefined ? vp.ma_1.toFixed(0) : "—";
 
+    // round 36 후속: 수급 누계 + Δ 한 줄 통합. 헤더 옆 (Δ47s) 가 마지막 갱신 시점,
+    // 각 항목 옆 괄호가 그 항목의 변화량. 변화량 0 인 항목은 괄호 생략.
+    const investorLine = (() => {
+      if (!inv) return "";
+      const fv = inv.foreign_value || 0;
+      const iv = inv.institution_value || 0;
+      const pq = inv.program_qty || 0;
+      if (!fv && !iv && !pq) return "";
+
+      const dfv = (invDelta && invDelta.foreign_value) || 0;
+      const div_ = (invDelta && invDelta.institution_value) || 0;
+      const dpq = (invDelta && invDelta.program_qty) || 0;
+      const hasDelta = invDelta && (dfv || div_ || dpq);
+      const headerSuffix = hasDelta
+        ? `(Δ${fmtElapsedShort(invDelta.elapsed_sec)})`
+        : "";
+      const paren = (v, fn) => v ? ` (${fn(v)})` : "";
+
+      return `<div class="text-slate-400">수급${headerSuffix}: 외인 ${fmtSignedBillion(fv)}${paren(dfv, fmtSignedBillion)} / 기관 ${fmtSignedBillion(iv)}${paren(div_, fmtSignedBillion)} / 프로그램 ${fmtSignedShares(pq)}${paren(dpq, fmtSignedShares)}</div>`;
+    })();
+
     el.innerHTML = `
       <div class="flex items-center gap-2">
         <span class="font-bold text-slate-100">${escapeHtml(payload.name)}</span>
@@ -237,6 +292,7 @@
         <span class="text-slate-100 font-semibold">${fmtNum(ask.ask_total)}</span>
         <span class="text-slate-500">(${fmtRatio(ask.ratio)})</span>
       </div>
+      ${investorLine}
       ${triggerBlock}
     `;
     return el;

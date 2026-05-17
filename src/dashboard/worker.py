@@ -647,6 +647,10 @@ def dashboard_tick(
         monitored.buy_grade = sc.grade
         monitored.buy_reasons = list(sc.reasons)
 
+        # round 36 후속: 수급 Δ — KIS 갱신 주기 자동 추종 (윈도우 고정 X).
+        # 값이 이전과 다른 시점에만 새 Δ 기록, 같은 응답이면 기존 Δ + 늘어난 elapsed.
+        investor_delta = session.update_investor_delta(code, investor, now)
+
         text = render_monitor_message(
             monitored=monitored,
             snapshot_row=snap_row,
@@ -666,6 +670,7 @@ def dashboard_tick(
             holding=holding,
             trigger_states=trigger_states,
             divergence=divergence_state,
+            investor_delta=investor_delta,
         )
         _send_or_edit_monitor(token, chat_id, code, text, message_ids)
 
@@ -688,6 +693,7 @@ def dashboard_tick(
             holding=holding,
             trigger_states=trigger_states,
             divergence=divergence_state,
+            investor_delta=investor_delta,
         )
 
     # M7 PWA: monitored 에서 빠진 종목 페이로드 정리 (tick 끝)

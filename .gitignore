@@ -58,6 +58,7 @@ data/meta/*
 data/decisions/
 data/errors/
 data/reports/
+data/state/
 !data/daily/.gitkeep
 !data/intraday/.gitkeep
 !data/meta/.gitkeep

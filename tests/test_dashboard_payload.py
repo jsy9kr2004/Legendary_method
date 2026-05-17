@@ -350,3 +350,116 @@ def test_payload_missing_snapshot_row():
     assert payload["asking"] == {}
     assert payload["holding"] is None
     json.dumps(payload, ensure_ascii=False)
+
+
+def test_payload_includes_investor_block():
+    """round 36: PWA payload 에 investor 키 노출 — 텔레그램 카드와 동일 데이터."""
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={
+            "foreign_net_buy": 18000,
+            "institution_net_buy": -8000,
+            "individual_net_buy": 5000,
+            "program_net_buy": 30000,
+            "foreign_net_buy_value": 1_500_000_000,
+            "institution_net_buy_value": -800_000_000,
+        },
+        now=datetime(2026, 5, 11, 9, 32, 18),
+    )
+    inv = payload["investor"]
+    assert inv is not None
+    assert inv["foreign_value"] == 1_500_000_000
+    assert inv["institution_value"] == -800_000_000
+    assert inv["foreign_qty"] == 18000
+    assert inv["institution_qty"] == -8000
+    assert inv["individual_qty"] == 5000
+    assert inv["program_qty"] == 30000
+    json.dumps(payload, ensure_ascii=False)
+
+
+def test_payload_investor_none_when_all_zero():
+    """round 36: 수급 모두 0 이면 investor 키는 None — frontend 가 라인 자체 생략."""
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={
+            "foreign_net_buy": 0, "institution_net_buy": 0,
+            "individual_net_buy": 0, "program_net_buy": 0,
+            "foreign_net_buy_value": 0, "institution_net_buy_value": 0,
+        },
+        now=datetime(2026, 5, 11, 9, 32, 18),
+    )
+    assert payload["investor"] is None
+
+
+def test_payload_investor_none_when_input_none():
+    """investor=None 입력이면 payload["investor"] 도 None."""
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        now=datetime(2026, 5, 11, 9, 32, 18),
+    )
+    assert payload["investor"] is None
+
+
+def test_payload_includes_investor_delta_block():
+    """round 36 후속: investor_delta 키 — 변화량 + elapsed_sec."""
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={"foreign_net_buy_value": 1_500_000_000},
+        investor_delta={
+            "foreign_value": 300_000_000,
+            "institution_value": -100_000_000,
+            "program_qty": 2_500,
+            "elapsed_sec": 47,
+        },
+        now=datetime(2026, 5, 11, 9, 32, 18),
+    )
+    d = payload["investor_delta"]
+    assert d is not None
+    assert d["foreign_value"] == 300_000_000
+    assert d["institution_value"] == -100_000_000
+    assert d["program_qty"] == 2_500
+    assert d["elapsed_sec"] == 47
+    json.dumps(payload, ensure_ascii=False)
+
+
+def test_payload_investor_delta_none_when_all_zero():
+    """Δ 모두 0 이면 payload["investor_delta"] 는 None (frontend 라인 생략)."""
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={"foreign_net_buy_value": 1_500_000_000},
+        investor_delta={
+            "foreign_value": 0,
+            "institution_value": 0,
+            "program_qty": 0,
+            "elapsed_sec": 60,
+        },
+        now=datetime(2026, 5, 11, 9, 32, 18),
+    )
+    assert payload["investor_delta"] is None
+
+
+def test_payload_investor_delta_none_when_input_none():
+    """investor_delta 인자 미지정 → payload 키 None."""
+    payload = build_monitor_payload(
+        _stock(),
+        snapshot_row=None,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        now=datetime(2026, 5, 11, 9, 32, 18),
+    )
+    assert payload["investor_delta"] is None

@@ -33,7 +33,14 @@ def test_render_basic_fields():
         recent_bar_value=5_000_000_000,
         ccnl={"ccnl_strength": 142.0, "buy_ratio": 60.0},
         asking={"bid_total_volume": 320_000, "ask_total_volume": 45_000, "bid_ask_ratio": 7.1},
-        investor={"foreign_net_buy": 1800, "institution_net_buy": 4200, "program_net_buy": 2500},
+        investor={
+            "foreign_net_buy": 18000,
+            "institution_net_buy": -8000,
+            "individual_net_buy": -10000,
+            "program_net_buy": 30000,
+            "foreign_net_buy_value": 1_500_000_000,
+            "institution_net_buy_value": -800_000_000,
+        },
         sparkline="▁▂▃▅▇█",
         now=datetime(2026, 5, 11, 9, 32, 18),
     )
@@ -46,8 +53,12 @@ def test_render_basic_fields():
     assert "4.2배" in msg
     assert "체결강도" in msg
     assert "142" in msg
-    # 외국인/기관/프로그램 라인은 round 22 에서 제거 (데이터 신뢰도 낮음).
-    assert "외국인" not in msg
+    # 외인/기관/프로그램 수급 라인 round 36 부활 — round 22 에서 제거됐던 라인.
+    # R14 점수 합산은 round 29 ritual 통과 전엔 X, 카드 표시만.
+    assert "수급:" in msg
+    assert "외인" in msg
+    assert "기관" in msg
+    assert "프로그램" in msg
     # sparkline 라인은 사용자 요청으로 render 에서 제거 (2026-05-13).
     assert "▁▂▃▅▇█" not in msg
     # 시각 + 가격은 한 줄로 합쳐졌고 구분선(─) 제거됨.
@@ -189,6 +200,149 @@ def test_render_one_min_exit_mark():
     )
     assert "🔴⚠" in msg
     assert "1분봉 급감" in msg
+
+
+def test_render_skips_investor_line_when_all_zero():
+    """round 36: 수급 모두 0 이면 라인 자체 생략 (시각 노이즈 제거)."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 500_000_000},
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={
+            "foreign_net_buy": 0, "institution_net_buy": 0,
+            "individual_net_buy": 0, "program_net_buy": 0,
+            "foreign_net_buy_value": 0, "institution_net_buy_value": 0,
+        },
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "수급:" not in msg
+
+
+def test_render_investor_line_signs_and_units():
+    """round 36: 외인/기관 금액(억) 부호 명시, 프로그램 수량(만주) 부호 명시."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 500_000_000},
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={
+            "foreign_net_buy": 18000,
+            "institution_net_buy": -8000,
+            "individual_net_buy": 0,
+            "program_net_buy": 30000,
+            "foreign_net_buy_value": 1_500_000_000,
+            "institution_net_buy_value": -800_000_000,
+        },
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "수급:" in msg
+    assert "외인 +15억" in msg
+    assert "기관 -8억" in msg
+    assert "프로그램 +3만주" in msg
+
+
+def test_render_investor_delta_inline_with_signup():
+    """round 36 후속: 누계 라인 안에 괄호 Δ — 한 줄 통합."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 500_000_000},
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={
+            "foreign_net_buy_value": 1_500_000_000,
+            "institution_net_buy_value": -800_000_000,
+            "program_net_buy": 30000,
+        },
+        investor_delta={
+            "foreign_value": 300_000_000,
+            "institution_value": -500_000_000,
+            "program_qty": 2_500,
+            "elapsed_sec": 47,
+        },
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    # 헤더 옆 elapsed
+    assert "수급(Δ47s):" in msg
+    # 각 항목: 누계 (Δ변화)
+    assert "외인 +15억 (+3억)" in msg
+    assert "기관 -8억 (-5억)" in msg
+    assert "프로그램 +3만주 (+2,500주)" in msg
+    # 별도 Δ 라인 X — 한 줄 통합 확인
+    lines = msg.split("\n")
+    assert sum(1 for l in lines if "수급" in l) == 1
+
+
+def test_render_investor_delta_minutes_format():
+    """경과 시간 분 단위 — 헤더 (Δ2m13s)."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 500_000_000},
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={"foreign_net_buy_value": 1_500_000_000},
+        investor_delta={
+            "foreign_value": 100_000_000,
+            "institution_value": 0,
+            "program_qty": 0,
+            "elapsed_sec": 133,
+        },
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "(Δ2m13s)" in msg
+    # 외인은 Δ +1억 표시, 기관/프로그램은 변화 없으니 괄호 생략
+    assert "외인 +15억 (+1억)" in msg
+    # 기관 누계 0 인데 program도 0 → 그 항목 자체 표시 X (수급 라인 조건 통과는
+    # 외인만 있으면 됨). 다만 form: "기관 0" 식이라 괄호 없는지 확인.
+    assert "기관 0 (" not in msg
+    assert "프로그램 0 (" not in msg
+
+
+def test_render_skips_delta_line_when_all_zero():
+    """Δ 모두 0 이면 Δ 라인 자체 생략 (시각 노이즈)."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 500_000_000},
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={"foreign_net_buy_value": 1_500_000_000},
+        investor_delta={
+            "foreign_value": 0,
+            "institution_value": 0,
+            "program_qty": 0,
+            "elapsed_sec": 60,
+        },
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "수급:" in msg  # 수급 라인은 있음
+    assert "Δ" not in msg  # Δ 라인 없음
+
+
+def test_render_no_delta_line_without_delta_arg():
+    """investor_delta=None 이어도 수급 라인은 표시 (호환성)."""
+    msg = render_monitor_message(
+        _stock(),
+        snapshot_row={"price": 1000, "daily_return": 5.0, "is_limit_up": False,
+                      "turnover": 5.0, "trading_value": 500_000_000},
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None,
+        investor={"foreign_net_buy_value": 1_500_000_000},
+        # investor_delta 인자 자체 생략
+        sparkline="",
+        now=datetime(2026, 5, 11, 9, 0),
+    )
+    assert "수급:" in msg
+    assert "Δ" not in msg
 
 
 def test_render_holding_mode_basic():

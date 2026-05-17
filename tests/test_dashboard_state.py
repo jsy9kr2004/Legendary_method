@@ -385,3 +385,108 @@ def test_tracker_transition_weak_persistence_drops_candidate():
         now + timedelta(seconds=10 + TRANSITION_EXIT_PERSIST_SECONDS + 1),
     )
     assert s.trackers["전기/전선"].state == LeaderState.NORMAL
+
+
+# ── update_investor_delta — round 36 후속 ────────────────────────────────────
+
+def _investor(foreign_v=0, inst_v=0, program=0):
+    """fetch_investor_flow 결과 흉내 — 최소 키만."""
+    return {
+        "foreign_net_buy_value": foreign_v,
+        "institution_net_buy_value": inst_v,
+        "program_net_buy": program,
+        "foreign_net_buy": foreign_v // 100,
+        "institution_net_buy": inst_v // 100,
+        "individual_net_buy": 0,
+    }
+
+
+def test_investor_delta_none_when_input_none():
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    assert s.update_investor_delta("075180", None, now) is None
+
+
+def test_investor_delta_none_on_first_call():
+    """첫 호출은 비교 대상 없음 → snapshot 박히고 Δ 없음."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    result = s.update_investor_delta("075180", _investor(foreign_v=1_000_000_000), now)
+    assert result is None
+    assert "075180" in s.last_investor_snapshots
+
+
+def test_investor_delta_none_when_value_unchanged():
+    """두 번째 호출 값 그대로면 Δ 갱신 X, 이전 Δ 도 없으니 None."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 11, 9, 30)
+    t1 = datetime(2026, 5, 11, 9, 30, 15)
+    inv = _investor(foreign_v=1_000_000_000, inst_v=500_000_000, program=10_000)
+    s.update_investor_delta("075180", inv, t0)
+    result = s.update_investor_delta("075180", inv, t1)
+    assert result is None
+
+
+def test_investor_delta_recorded_on_change():
+    """값 바뀌면 Δ 기록 + elapsed=0 (changed_at=now)."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 11, 9, 30)
+    t1 = datetime(2026, 5, 11, 9, 35)
+    s.update_investor_delta(
+        "075180",
+        _investor(foreign_v=1_000_000_000, inst_v=500_000_000, program=10_000),
+        t0,
+    )
+    result = s.update_investor_delta(
+        "075180",
+        _investor(foreign_v=1_300_000_000, inst_v=400_000_000, program=12_500),
+        t1,
+    )
+    assert result is not None
+    assert result["foreign_value"] == 300_000_000
+    assert result["institution_value"] == -100_000_000
+    assert result["program_qty"] == 2_500
+    assert result["elapsed_sec"] == 0
+
+
+def test_investor_delta_elapsed_grows_when_value_persists():
+    """Δ 박힌 후 같은 값이 계속 와도 elapsed 가 늘어남 (KIS 5분 유지 시나리오)."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 11, 9, 30)
+    t1 = datetime(2026, 5, 11, 9, 31)
+    t2 = datetime(2026, 5, 11, 9, 33, 47)
+    inv1 = _investor(foreign_v=1_000_000_000)
+    inv2 = _investor(foreign_v=1_500_000_000)
+    s.update_investor_delta("075180", inv1, t0)
+    r1 = s.update_investor_delta("075180", inv2, t1)
+    assert r1["foreign_value"] == 500_000_000
+    assert r1["elapsed_sec"] == 0
+    r2 = s.update_investor_delta("075180", inv2, t2)
+    assert r2["foreign_value"] == 500_000_000
+    assert r2["elapsed_sec"] == int((t2 - t1).total_seconds())
+
+
+def test_investor_delta_new_change_resets_elapsed():
+    """또 다른 변화가 오면 Δ 갱신 + elapsed=0 reset."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 11, 9, 30)
+    t1 = datetime(2026, 5, 11, 9, 35)
+    t2 = datetime(2026, 5, 11, 9, 40)
+    s.update_investor_delta("075180", _investor(foreign_v=1_000_000_000), t0)
+    s.update_investor_delta("075180", _investor(foreign_v=1_500_000_000), t1)
+    r = s.update_investor_delta("075180", _investor(foreign_v=2_000_000_000), t2)
+    assert r["foreign_value"] == 500_000_000  # t1→t2 변화
+    assert r["elapsed_sec"] == 0
+
+
+def test_investor_delta_independent_per_code():
+    """종목별로 snapshot/delta 가 격리됨."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 11, 9, 30)
+    t1 = datetime(2026, 5, 11, 9, 35)
+    s.update_investor_delta("075180", _investor(foreign_v=1_000_000_000), t0)
+    s.update_investor_delta("091340", _investor(foreign_v=500_000_000), t0)
+    r1 = s.update_investor_delta("075180", _investor(foreign_v=1_200_000_000), t1)
+    r2 = s.update_investor_delta("091340", _investor(foreign_v=500_000_000), t1)
+    assert r1["foreign_value"] == 200_000_000
+    assert r2 is None  # 091340 은 변화 없음

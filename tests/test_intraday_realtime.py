@@ -214,19 +214,85 @@ def test_fetch_investor_basic():
     assert result["foreign_net_buy_value"] == 1_500_000_000
 
 
-def test_fetch_investor_list_response_uses_first_row():
-    """output 이 리스트면 첫 행 사용."""
+def test_fetch_investor_list_uses_latest_by_time():
+    """round 36: output 이 list 면 시간 필드(stck_cntg_hour) max 행을 채택.
+
+    round 22 까지는 `out[0]` (첫 행)을 잡아서 빈/0 인 행이 나오면 전부 0 으로
+    들어왔던 게 카드 라인 제거의 진짜 원인 (round 33/34 체결강도와 동일 패턴).
+    """
     payload = {
         "output": [
-            {"frgn_ntby_qty": "10000", "orgn_ntby_qty": "5000",
-             "prsn_ntby_qty": "-15000"},
-            {"frgn_ntby_qty": "1", "orgn_ntby_qty": "1", "prsn_ntby_qty": "1"},
+            {"stck_cntg_hour": "090100", "frgn_ntby_qty": "0",
+             "orgn_ntby_qty": "0", "prsn_ntby_qty": "0",
+             "pgtr_ntby_qty": "0"},
+            {"stck_cntg_hour": "143000", "frgn_ntby_qty": "10000",
+             "orgn_ntby_qty": "5000", "prsn_ntby_qty": "-15000",
+             "pgtr_ntby_qty": "3000"},
         ]
     }
     result = fetch_investor_flow(_client(payload), "005930")
     assert result is not None
+    # 143000 행이 채택돼야 함 (첫 행이 아니라)
     assert result["foreign_net_buy"] == 10000
+    assert result["institution_net_buy"] == 5000
+    assert result["individual_net_buy"] == -15000
+    assert result["program_net_buy"] == 3000
+
+
+def test_fetch_investor_list_no_time_field_uses_last_row():
+    """시간 필드 없는 list 면 마지막 행 채택 (KIS 가 보통 시간 오름차순 반환)."""
+    payload = {
+        "output": [
+            {"frgn_ntby_qty": "0"},
+            {"frgn_ntby_qty": "0"},
+            {"frgn_ntby_qty": "9999", "orgn_ntby_qty": "1111"},
+        ]
+    }
+    result = fetch_investor_flow(_client(payload), "005930")
+    assert result is not None
+    assert result["foreign_net_buy"] == 9999
+    assert result["institution_net_buy"] == 1111
+
+
+def test_fetch_investor_output1_fallback():
+    """output 키가 없고 output1 으로 오는 경우 — 다른 KIS TR 들과의 호환."""
+    payload = {
+        "output1": {
+            "frgn_ntby_qty": "7777",
+            "orgn_ntby_qty": "8888",
+            "prsn_ntby_qty": "0",
+            "pgtr_ntby_qty": "0",
+        }
+    }
+    result = fetch_investor_flow(_client(payload), "005930")
+    assert result is not None
+    assert result["foreign_net_buy"] == 7777
+    assert result["institution_net_buy"] == 8888
+
+
+def test_fetch_investor_all_zero_returns_zero_dict():
+    """모두 0 응답 — 장 시작 직후 정상 케이스라 None 이 아니라 zero dict 반환.
+
+    DEBUG 진단 로그는 찍히지만 호출자는 dict 형태로 정상 처리해야 함
+    (카드 렌더는 모두 0 이면 라인 자체 생략 — 별도 회귀 케이스 참고).
+    """
+    payload = {
+        "output": {
+            "frgn_ntby_qty": "0", "orgn_ntby_qty": "0",
+            "prsn_ntby_qty": "0", "pgtr_ntby_qty": "0",
+        }
+    }
+    result = fetch_investor_flow(_client(payload), "005930")
+    assert result is not None
+    assert result["foreign_net_buy"] == 0
+    assert result["institution_net_buy"] == 0
+    assert result["program_net_buy"] == 0
 
 
 def test_fetch_investor_empty_response():
     assert fetch_investor_flow(_client({}), "005930") is None
+
+
+def test_fetch_investor_empty_list_response():
+    """output 이 빈 list 면 None."""
+    assert fetch_investor_flow(_client({"output": []}), "005930") is None

@@ -298,14 +298,29 @@ def fetch_investor_flow(client: KISClient, code: str) -> dict[str, Any] | None:
             "individual_net_buy": int,   # 개인 순매수
             "program_net_buy": int,     # 프로그램 순매수 (있으면)
             "foreign_net_buy_value": int,  # 외국인 순매수 금액 (원, 있으면)
+            "institution_net_buy_value": int,  # 기관 순매수 금액
         }
+        실패/응답 비어있음 시 None.
 
-    참고 응답 필드 (output):
-        frgn_ntby_qty   외국인 순매수 수량
-        orgn_ntby_qty   기관 순매수 수량
-        prsn_ntby_qty   개인 순매수 수량
-        frgn_ntby_tr_pbmn 외국인 순매수 거래대금
-        orgn_ntby_tr_pbmn 기관 순매수 거래대금
+    응답 필드 (output, KIS 추정):
+        frgn_ntby_qty       외국인 순매수 수량
+        orgn_ntby_qty       기관 순매수 수량
+        prsn_ntby_qty       개인 순매수 수량
+        pgtr_ntby_qty       프로그램 순매수 수량
+        frgn_ntby_tr_pbmn   외국인 순매수 거래대금
+        orgn_ntby_tr_pbmn   기관 순매수 거래대금
+
+    정정 이력 (round 36):
+        round 22 정정으로 모니터링 카드에서 제거됐던 라인 — 명목 사유는
+        "KIS 응답 신뢰도 낮음". round 33/34 체결강도 사건 분석 결과 동일 패턴
+        가능성이 큼: 응답이 시간대별 list 일 때 첫 행(`out[0]`)을 잡으면
+        빈/0 인 행이 와서 모든 값이 0으로 떨어짐. round 34 `fetch_ccnl_strength`
+        패턴 따라 최신 행 선택 (시간 필드 max, 없으면 list 마지막) + 모두 0 응답
+        DEBUG 로그 추가. 실응답 구조 확인은 `scripts/diag_investor_flow.py` 로
+        1회 캡처.
+
+        R14 점수 합산은 round 29 ritual (3~5종목 × 5거래일 KRX 공시 비교)
+        완료 전엔 보류 — 카드 표시만.
     """
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
@@ -317,19 +332,56 @@ def fetch_investor_flow(client: KISClient, code: str) -> dict[str, Any] | None:
         logger.error(f"{code} 투자자 매매 조회 실패: {e}")
         return None
 
-    out = payload.get("output") or {}
-    if isinstance(out, list):
-        # 시간별 응답인 경우 최근 행 사용
-        out = out[0] if out else {}
-    if not out:
+    raw = payload.get("output") or payload.get("output1") or payload.get("output2")
+    if isinstance(raw, dict):
+        out = raw
+    elif isinstance(raw, list) and raw:
+        # 시간대별 list 응답 시 가장 최신 행 (round 34 패턴).
+        # 시간 필드 후보: stck_cntg_hour / bsop_hour / stck_bsop_date.
+        # 모두 비어있으면 list 마지막 행 (KIS 가 보통 시간 오름차순 반환).
+        def _ts_key(r: Any) -> str:
+            if not isinstance(r, dict):
+                return ""
+            for k in ("stck_cntg_hour", "bsop_hour", "stck_bsop_date"):
+                v = str(r.get(k, "") or "").strip()
+                if v:
+                    return v
+            return ""
+
+        keyed = [(_ts_key(r), r) for r in raw if isinstance(r, dict)]
+        if not keyed:
+            return None
+        if all(not k for k, _ in keyed):
+            out = keyed[-1][1]
+        else:
+            out = max(keyed, key=lambda x: x[0])[1]
+    else:
         return None
+
+    if not isinstance(out, dict) or not out:
+        return None
+
+    foreign = _to_int(out.get("frgn_ntby_qty"))
+    inst = _to_int(out.get("orgn_ntby_qty"))
+    indiv = _to_int(out.get("prsn_ntby_qty"))
+    program = _to_int(out.get("pgtr_ntby_qty"))
+    foreign_value = _to_int(out.get("frgn_ntby_tr_pbmn"))
+    inst_value = _to_int(out.get("orgn_ntby_tr_pbmn"))
+
+    # round 36: 모두 0 인 응답 시 진단 로그 — 응답 필드명 불일치 또는 시간대별
+    # list 의 잘못된 행 선택을 추적. 장 시작 직후엔 정상적으로도 0 가능하니 debug.
+    if foreign == 0 and inst == 0 and indiv == 0 and program == 0:
+        logger.debug(
+            f"{code} 투자자 순매수 모두 0 — 응답 필드명/행 선택 의심. "
+            f"output 키 일부: {list(out.keys())[:12]}"
+        )
 
     return {
         "code": code,
-        "foreign_net_buy": _to_int(out.get("frgn_ntby_qty")),
-        "institution_net_buy": _to_int(out.get("orgn_ntby_qty")),
-        "individual_net_buy": _to_int(out.get("prsn_ntby_qty")),
-        "program_net_buy": _to_int(out.get("pgtr_ntby_qty")),
-        "foreign_net_buy_value": _to_int(out.get("frgn_ntby_tr_pbmn")),
-        "institution_net_buy_value": _to_int(out.get("orgn_ntby_tr_pbmn")),
+        "foreign_net_buy": foreign,
+        "institution_net_buy": inst,
+        "individual_net_buy": indiv,
+        "program_net_buy": program,
+        "foreign_net_buy_value": foreign_value,
+        "institution_net_buy_value": inst_value,
     }
