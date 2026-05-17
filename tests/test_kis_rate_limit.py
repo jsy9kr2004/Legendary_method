@@ -48,3 +48,38 @@ def test_default_limiter_real_vs_mock_cps():
     mock = default_limiter("mock")
     assert mock.calls_per_sec == 2
     reset_default_limiter()
+
+
+def test_limiter_for_returns_per_credential_instance():
+    from src.config import KisCredential
+    from src.kis.rate_limit import limiter_for
+
+    reset_default_limiter()
+    cred_a = KisCredential("KEY_A", "SEC_A", "1", "primary")
+    cred_b = KisCredential("KEY_B", "SEC_B", "2", "wife")
+
+    lim_a1 = limiter_for(cred_a, "real")
+    lim_a2 = limiter_for(cred_a, "real")
+    lim_b = limiter_for(cred_b, "real")
+
+    assert lim_a1 is lim_a2  # 같은 credential = 같은 인스턴스
+    assert lim_a1 is not lim_b  # 다른 credential = 다른 인스턴스
+    assert lim_a1.calls_per_sec == 20
+    reset_default_limiter()
+
+
+def test_limiter_for_separates_real_vs_mock():
+    """같은 credential 도 mode 가 다르면 별도 limiter (CPS 다름)."""
+    from src.config import KisCredential
+    from src.kis.rate_limit import limiter_for
+
+    reset_default_limiter()
+    cred = KisCredential("KEY_A", "SEC_A", "1", "primary")
+
+    lim_real = limiter_for(cred, "real")
+    lim_mock = limiter_for(cred, "mock")
+
+    assert lim_real is not lim_mock
+    assert lim_real.calls_per_sec == 20
+    assert lim_mock.calls_per_sec == 2
+    reset_default_limiter()
