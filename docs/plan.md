@@ -316,8 +316,42 @@
 - [x] 테스트 12 신규 (`test_tick_log.py`)
 - [x] scheduler 16:15 자동 jsonl → parquet 변환 cron (`scheduler._compact_tick_logs_today`) — round 39
 - [x] Phase 2 분석 도구 — `python -m src.analysis.replay CODE DATE` / `python -m src.analysis.regret DATE` (round 39, `test_analysis.py` 7 신규)
-- [ ] Phase 2 확장: 항목별 가중치 sensitivity analysis (R14 가중치 변경 시 매수 결정 변동 backtest)
-- [ ] Phase 3: 종목별 파라미터 DB (운전수 가설, 1년+ 데이터 누적 후)
+
+## Phase 2 운영 — 매매일지 (round 40, 2026-05-18 시작)
+
+사용자(Zeta) 비전 (round 40): "매매일지를 Claude Code 새 세션에서 차트 + 시스템
+데이터로 받아보고 싶다. 단순 자동 레포트가 아니라 다각도 평가 + 튜닝 포인트까지".
+
+- [x] `docs/trading-journal.md` — 매매일지 작성 가이드 (입력 / 워크플로우 / 출력
+  형식 / 톤 / 단기·장기 튜닝 포인트 / 운전수 가설 시그니처 후보)
+- [x] `CLAUDE.md` "매매일지 요청 처리" 섹션 — 사용자 트리거 키워드 ("매매일지 작성
+  해줘", "오늘 매매 평가") → `docs/trading-journal.md` 자동 참조 워크플로우 박음
+- [ ] `data/journal/YYYY-MM-DD.md` 디렉토리 운영 — 매매일지 누적 (사용자가 Claude
+  출력 검토 + 보완 후 저장)
+- [ ] 매매일지 N건(20+) 누적 후 메타 분석 — 반복 등장하는 튜닝 후보 추출 → ritual
+  통과 시 R14 가중치 / R15 임계 정식 변경
+
+## Phase 2 확장 — sensitivity backtest (데이터 1~3개월 후)
+
+- [ ] R14 가중치 sensitivity — 기존 매매일지의 시그널을 다른 가중치로 재평가 시
+  매수 결정이 어떻게 달라지나? 그 결과는 어땠나?
+- [ ] R15 트리거 임계 sensitivity — 트리거 발화 시점을 가중치별로 시뮬레이션 →
+  사용자 매도 시점과 비교
+- [ ] funnel 통과 종목 vs 탈락 종목의 다음날 결과 분포 — Stage 0~4 컷오프 재검토
+
+## Phase 3 (장기) — 종목별 파라미터 DB
+
+운전수 가설 (`memory/project_long_term_vision.md`): 한국 증시는 종목마다 운전수
+운용법이 다름 (양봉 누적형 / 개미털기형 등). 종목별 R14 가중치 / R15 임계가 조금씩
+달라야 한다는 가설. 데이터 충분 (1년+) + Phase 2 메타 분석 통과 후 진입.
+
+- [ ] 운전수 가설 시그니처 정량화 — 종목별 (a) 갭상 빈도, (b) +30% 도달 시각 분포,
+  (c) 분봉 자기상관, (d) 거래대금 spike 후 회복 시간 등 marker 계산 + 군집화
+- [ ] 같은 시그니처 군집의 가중치 sensitivity — 군집별 글로벌 가중치 도입 (개별
+  종목 fitting 은 과적합 위험으로 보류)
+- [ ] `data/params/CODE.json` 종목별 R14 가중치 / R15 임계 override (1년+ 데이터
+  + 군집 패턴 안정화 후)
+- [ ] grader / exit_triggers 가 `params/CODE.json` fallback 로직 추가
 
 ## 기술 부채 / TODO 메모
 
