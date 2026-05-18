@@ -84,10 +84,12 @@ class Settings:
     smtp_port: int = 587
 
     # M6 모니터링 카드 텔레그램 발송 토글. False 면 dashboard_tick 의 카드 send/
-    # edit/delete 만 skip — PWA 페이로드 / KIS fetch / 명령 응답 / 14:50 결정
-    # 레포트 / 16:00 사후 / 상한가 이벤트는 모두 정상 동작. 사용자가 PWA 만
-    # 보면서 tick 시간 단축이 목적인 경우 (텔레그램 동기 HTTP POST 가 종목당
-    # 200-500ms 직렬이라 tick 시간 큰 비중).
+    # edit/delete 만 skip — PWA 페이로드 / KIS fetch / 명령 응답 / 09:30 모닝 /
+    # 11~14:00 periodic / 14:50 결정 / 16:00 사후 / 상한가 이벤트 / 09:01 시초
+    # 청산 권고는 모두 정상 동작 (Dispatcher 경유 발송은 본 토글과 무관 — 자세히는
+    # src/notify/dispatcher.py 참조). 사용자가 PWA 만 보면서 tick 시간 단축이
+    # 목적인 경우 (텔레그램 동기 HTTP POST 가 종목당 200-500ms 직렬이라 tick
+    # 시간 큰 비중).
     monitoring_telegram_cards_enabled: bool = True
 
     # KIS 멀티 계정. load_settings() 에서 채워짐. 직접 Settings() 생성한 경우

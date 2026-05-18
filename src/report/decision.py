@@ -21,6 +21,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from src.report.formatting import (
     code_block,
     fmt_billion,
@@ -292,7 +294,13 @@ def build_decision_report(
 
 
 def split_messages(report: str, max_len: int = TELEGRAM_MAX_LEN) -> list[str]:
-    """텔레그램 4096자 제한 대응 — 종목 블록 단위로 분할.
+    """텔레그램 4096자 제한 대응 — 종목 블록 + 사이징 블록 atomic split.
+
+    종목 블록(`▣` 시작)과 사이징 블록(`[사이징 제안]` 시작)은 메시지 중간에서
+    잘리지 않고 통째로 한 메시지로 유지된다. 동급 atomic 들이 합쳐서 max_len 을
+    넘으면 새 메시지로 분리. 단독 atomic 이 max_len 초과면 경고 로그 + 그대로
+    발송 (텔레그램이 거부할 수 있음 — 발생 시 _candidate_block 의 보조 지표
+    일부 생략으로 회피).
 
     Returns:
         보내야 할 메시지 리스트 (보통 1개, 종목 많으면 여러 개).
@@ -300,14 +308,31 @@ def split_messages(report: str, max_len: int = TELEGRAM_MAX_LEN) -> list[str]:
     if len(report) <= max_len:
         return [report]
 
-    parts = report.split("\n▣ ")
+    # 사이징 블록 atomic 분리 — "[사이징 제안]" 직전 separator 줄부터 끝까지
+    sizing_anchor = report.find("[사이징 제안]")
+    if sizing_anchor > 0:
+        sep_pos = report.rfind("\n", 0, sizing_anchor)
+        before_sizing = report[:sep_pos] if sep_pos > 0 else report
+        sizing_block = report[sep_pos:] if sep_pos > 0 else ""
+    else:
+        before_sizing = report
+        sizing_block = ""
+
+    parts = before_sizing.split("\n▣ ")
     header = parts[0]
     stock_blocks = ["\n▣ " + p for p in parts[1:]]
+    atomics = stock_blocks + ([sizing_block] if sizing_block else [])
 
-    messages = []
+    messages: list[str] = []
     current = header
-    for block in stock_blocks:
-        if len(current) + len(block) > max_len:
+    for block in atomics:
+        if len(block) > max_len:
+            logger.warning(
+                f"[split_messages] atomic block {len(block)}자 > max_len {max_len}자 — "
+                f"한 메시지로 발송 (텔레그램 거부 가능성). _candidate_block 보조 지표 "
+                f"축소 필요. prefix: {block[:80]!r}"
+            )
+        if current and len(current) + len(block) > max_len:
             messages.append(current)
             current = block
         else:

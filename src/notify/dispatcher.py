@@ -34,6 +34,11 @@ class Dispatcher:
         self._s = settings
 
     # ── 텔레그램 ────────────────────────────────────────────────────────────
+    # 본 Dispatcher 의 telegram() 및 모든 send_* 메서드는 MONITORING_TELEGRAM_
+    # CARDS_ENABLED 토글과 **무관** — 토글은 dashboard_tick 의 모니터링 카드
+    # send/edit/delete 만 제어한다. 결정/사후/모닝/periodic/상한가/시초청산
+    # 레포트는 dry_run=True 일 때만 skip, 그 외엔 항상 발송. 자세히는
+    # src/config.py 의 monitoring_telegram_cards_enabled 주석 참조.
 
     def telegram(
         self,

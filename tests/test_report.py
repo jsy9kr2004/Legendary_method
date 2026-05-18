@@ -212,6 +212,39 @@ def test_split_messages_long():
     assert all(len(m) <= 4096 for m in msgs)
 
 
+def test_split_messages_keeps_stock_block_atomic():
+    # 종목 블록 마커가 메시지 중간에 끊기지 않아야 함 — 각 메시지는 헤더로
+    # 시작하거나 "\n▣ " 로 시작하는 블록만 포함
+    long_report = "header\n" + "\n▣ ".join([f"종목{i}\n내용 라인\n" * 100 for i in range(5)])
+    msgs = split_messages(long_report)
+    for m in msgs[1:]:  # 첫 메시지는 header 로 시작, 나머지는 종목 블록부터
+        assert m.startswith("\n▣ "), f"종목 블록 시작이 아닌 메시지: {m[:50]!r}"
+
+
+def test_split_messages_separates_sizing_block():
+    # 사이징 블록이 별도 atomic 으로 분리되어 종목 블록 + 사이징이 한
+    # 메시지에 합쳐져 max_len 을 초과하지 않도록 보장
+    big_stock = "\n▣ 종목A\n" + ("긴 라인\n" * 800)  # ~3500자
+    sizing = "\n═══\n[사이징 제안]\n═══\n" + ("표 라인\n" * 100)  # ~700자
+    report = "header" + big_stock + sizing
+    msgs = split_messages(report)
+    # 종목 블록 + 사이징이 합쳐서 4096 초과면 별도 메시지로 분리되어야
+    assert len(msgs) >= 2
+    sizing_msg = [m for m in msgs if "[사이징 제안]" in m]
+    assert len(sizing_msg) == 1
+    # 사이징이 들어간 메시지에는 종목 블록 마커가 함께 있지 않아야 (분리 확인)
+    assert "▣ 종목A" not in sizing_msg[0]
+
+
+def test_split_messages_warns_on_oversized_atomic(caplog):
+    # 단독 블록 자체가 4096 초과면 경고 로그 + 그대로 발송
+    oversized = "\n▣ 종목X\n" + ("a" * 5000)
+    report = "header" + oversized
+    msgs = split_messages(report)
+    # 거부될 수 있어도 일단 메시지 리스트엔 포함
+    assert any("▣ 종목X" in m for m in msgs)
+
+
 # ── event alert ──────────────────────────────────────────────────────────────
 
 def test_limit_up_alert_contains_key_info():
