@@ -1,6 +1,6 @@
 """tick-level 시그널 로깅 (Phase 1).
 
-매 3초 tick 마다 Stage 0 통과 50종목 + monitored 풀(auto/rising/manual/hold) 합집합에
+매 2초 tick 마다 Stage 0 통과 50종목 + monitored 풀(auto/rising/manual/hold) 합집합에
 대해 모든 raw 시그널 + funnel 통과/탈락 + R14 점수 breakdown 을 jsonl 한 줄로 append.
 
 운영 흐름:

@@ -1,6 +1,6 @@
 """실시간 모니터링 워커 (M6).
 
-스케줄러가 3초 간격으로 `dashboard_tick()` 호출 → 한 사이클 처리:
+스케줄러가 2초 간격으로 `dashboard_tick()` 호출 → 한 사이클 처리:
     1) 거래대금 50위 fetch + 주도섹터/주도주 식별 (v1)
     2) 주도주 자동 갱신 → 모니터링 종목 업데이트 (메시지 send/delete)
     3) 각 monitored 종목별 4지표 fetch + 가속배율 계산
@@ -298,7 +298,7 @@ def dashboard_tick(
 ) -> None:
     """한 사이클의 모니터링 처리.
 
-    호출 빈도: 3초 (스케줄러 IntervalTrigger, scheduler.py:741).
+    호출 빈도: 2초 (스케줄러 IntervalTrigger, scheduler.py).
 
     Args:
         session: 공유 세션 상태.
@@ -338,7 +338,7 @@ def dashboard_tick(
     leader_codes_set = {l["code"] for l in leaders}
     rising_stage1 = [c for c in rising_stage1 if c["code"] not in leader_codes_set]
     # 진단 — leaders/sectors 가 0건이면 사용자가 "주도주 모니터링 안 나옴" 으로 인지.
-    # 매 tick (3초) 마다 디버그 — DEBUG 레벨이라 운영 운영 시 INFO 만 보면 묻힘.
+    # 매 tick (2초) 마다 디버그 — DEBUG 레벨이라 운영 운영 시 INFO 만 보면 묻힘.
     logger.debug(
         f"[모니터링] snapshot={len(snapshot)}, sectors={len(sectors)}, "
         f"leaders={len(leaders)}, rising_stage1={len(rising_stage1)}"
