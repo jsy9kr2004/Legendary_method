@@ -383,10 +383,39 @@ def dashboard_tick(
 
     # 2c) 보유 종목 surface — holdings.json 의 모든 code 가 monitored 에 있어야 카드 표시.
     # _apply_buy 도 이걸 호출하지만, 데몬 재시작 / external holdings 변경 대비.
+    # name 해상도: snap (거래대금 50위) → master_df (KRX 전종목) → code.
+    master_name_by_code: dict[str, str] = {}
+    if (
+        master_df is not None
+        and not master_df.empty
+        and "code" in master_df.columns
+        and "name" in master_df.columns
+    ):
+        master_name_by_code = dict(zip(
+            master_df["code"].astype(str),
+            master_df["name"].astype(str),
+        ))
     for h_code in holdings.keys():
         if h_code not in session.monitored:
-            h_name = snap_by_code.get(h_code, {}).get("name") or h_code
+            h_name = (
+                snap_by_code.get(h_code, {}).get("name")
+                or master_name_by_code.get(h_code)
+                or h_code
+            )
             session.ensure_held_stock(h_code, h_name, now)
+
+    # 수동 등록 종목 name 보완 — add_manual 이 name=code 로 박은 entry 들을 매 tick
+    # snap → master_df fallback 으로 갱신. ensure_held_stock 의 `m.name == m.code 시
+    # 갱신` 패턴을 monitored 풀 전체로 확장. 거래대금 50위 밖 중소형주를 수동 등록
+    # 한 경우 "[🔵 수동] 123456 (123456)" 으로 종목명 누락되던 버그 해결.
+    for mcode, m in session.monitored.items():
+        if m.name == mcode:
+            resolved = (
+                snap_by_code.get(mcode, {}).get("name")
+                or master_name_by_code.get(mcode)
+            )
+            if resolved:
+                m.name = resolved
 
     # 2d) prune — flag 없고 보유도 아닌 종목 제거 + message 삭제
     holding_codes_set = set(holdings.keys())

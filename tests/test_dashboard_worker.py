@@ -609,3 +609,128 @@ def test_command_poll_loop_stops_on_event():
         stop.set()
         th.join(timeout=2.0)
     assert not th.is_alive()
+
+
+# ── 수동 모니터링 종목 name 해상 회귀 ────────────────────────────────────────
+# 사용자 보고 (2026-05-18): 수동 등록 종목의 종목명이 카드에 안 뜨고 코드 그대로
+# 표시됨. add_manual() 가 name=code 로 박은 후 갱신 경로가 없었음.
+# fix: 매 tick monitored 루프 전 snap_by_code → master_df fallback 으로 보완.
+
+def _stub_fetches():
+    return (
+        patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()),
+        patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None),
+        patch("src.dashboard.worker.fetch_asking_price", return_value=None),
+        patch("src.dashboard.worker.fetch_investor_flow", return_value=None),
+        patch("src.dashboard.worker.send_message_single",
+              return_value={"ok": True, "result": {"message_id": 1}}),
+        patch("src.dashboard.worker.edit_message"),
+    )
+
+
+def test_manual_name_resolved_from_snapshot():
+    """수동 등록 종목이 거래대금 50위 안에 있으면 snap 에서 name 끌어옴."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("005930", now)
+    assert s.monitored["005930"].name == "005930"  # add_manual 직후엔 code
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+
+    mb, cc, ap, iv, sm, em = _stub_fetches()
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         mb, cc, ap, iv, sm, em:
+        dashboard_tick(
+            session=s, message_ids={}, client=MagicMock(),
+            master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c", now=now,
+        )
+
+    assert s.monitored["005930"].name == "삼성전자"
+
+
+def test_manual_name_resolved_from_master_df_when_outside_top50():
+    """수동 등록 종목이 거래대금 50위 밖이라 snap 에 없어도, master_df 에서 name 끌어옴.
+
+    중소형주 수동 모니터링 시나리오 — snap_by_code 미스 → master_df 의 KRX
+    전종목 마스터에서 name 해상. add_manual 의 name=code 가 그대로 표시되던 버그
+    회귀 방지.
+    """
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("123456", now)
+
+    # snap 에는 다른 종목만 (50위 안에 등록 종목 없음)
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+    # master_df 에 수동 등록 종목 row 있음
+    master = pd.DataFrame([
+        {"code": "123456", "name": "테스트종목", "market": "KOSDAQ",
+         "group_code": "S", "market_cap": 1000, "listed_at": "20200101"},
+        {"code": "005930", "name": "삼성전자", "market": "KOSPI",
+         "group_code": "S", "market_cap": 4_800_000, "listed_at": "19750101"},
+    ])
+
+    mb, cc, ap, iv, sm, em = _stub_fetches()
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         mb, cc, ap, iv, sm, em:
+        dashboard_tick(
+            session=s, message_ids={}, client=MagicMock(),
+            master_df=master,
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c", now=now,
+        )
+
+    assert s.monitored["123456"].name == "테스트종목"
+
+
+def test_manual_name_keeps_code_when_unknown_everywhere():
+    """snap / master 모두 모르는 종목코드 → code 그대로 (fail-safe)."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("999999", now)
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+    master = pd.DataFrame([
+        {"code": "005930", "name": "삼성전자", "market": "KOSPI",
+         "group_code": "S", "market_cap": 4_800_000, "listed_at": "19750101"},
+    ])
+
+    mb, cc, ap, iv, sm, em = _stub_fetches()
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         mb, cc, ap, iv, sm, em:
+        dashboard_tick(
+            session=s, message_ids={}, client=MagicMock(),
+            master_df=master,
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c", now=now,
+        )
+
+    assert s.monitored["999999"].name == "999999"
