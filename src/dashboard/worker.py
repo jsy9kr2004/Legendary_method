@@ -378,6 +378,7 @@ def dashboard_tick(
     token: str,
     chat_id: str,
     now: datetime,
+    send_telegram_cards: bool = True,
 ) -> None:
     """한 사이클의 모니터링 처리.
 
@@ -392,6 +393,10 @@ def dashboard_tick(
         daily_ohlcv: 신고가 판정용 long format. None 가능.
         token: Telegram 봇 토큰.
         chat_id: 채팅 ID.
+        send_telegram_cards: False 면 카드 send/edit/delete 모두 skip. PWA
+            payload / KIS fetch / tick_log / 명령 응답은 그대로. 사용자가 PWA
+            만 보면서 tick 시간 단축이 목적인 경우. settings.monitoring_
+            telegram_cards_enabled (env MONITORING_TELEGRAM_CARDS_ENABLED) 와 매핑.
         now: 현재 시각 (KST).
     """
     if session.paused:
@@ -533,8 +538,9 @@ def dashboard_tick(
     for msg in pruned:
         logger.info(f"[모니터링] {msg}")
     new_monitored_codes = set(session.monitored.keys())
-    for dropped in prev_monitored_codes - new_monitored_codes:
-        _delete_monitor_message(token, chat_id, dropped, message_ids)
+    if send_telegram_cards:
+        for dropped in prev_monitored_codes - new_monitored_codes:
+            _delete_monitor_message(token, chat_id, dropped, message_ids)
 
     # 카드 헤더에 TRANSITION 부상 후보 정보를 통합 표시하기 위해 a1 → a2 매핑 구성.
     # step_tracker 가 갱신한 후 카드를 렌더해야 정확한 상태를 표시할 수 있으므로
@@ -823,7 +829,8 @@ def dashboard_tick(
             divergence=divergence_state,
             investor_delta=investor_delta,
         )
-        _send_or_edit_monitor(token, chat_id, code, text, message_ids)
+        if send_telegram_cards:
+            _send_or_edit_monitor(token, chat_id, code, text, message_ids)
 
         # M7 PWA 페이로드 — 텔레그램 텍스트와 동일 데이터 소스. WebSocket broadcast 용.
         session.last_payloads[code] = build_monitor_payload(

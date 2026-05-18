@@ -702,6 +702,85 @@ def test_manual_name_resolved_from_master_df_when_outside_top50():
     assert s.monitored["123456"].name == "테스트종목"
 
 
+# ── send_telegram_cards 토글 회귀 (2026-05-18) ───────────────────────────────
+# 사용자가 PWA 만 보는 동안 텔레그램 카드 발송 비활성화. tick 시간 단축이 목적.
+# KIS fetch / PWA payload / tick_log / 명령 응답은 영향 X.
+
+def test_send_telegram_cards_false_skips_send_and_edit():
+    """send_telegram_cards=False 시 send_message_single / edit_message / delete_message
+    모두 호출되지 않음.
+    """
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("005930", now)
+    msg_ids: dict = {}
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+
+    mb, cc, ap, iv, sm, em = _stub_fetches()
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         mb, cc, ap, iv, sm, em, \
+         patch("src.dashboard.worker.delete_message") as dm:
+        dashboard_tick(
+            session=s, message_ids=msg_ids, client=MagicMock(),
+            master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c", now=now,
+            send_telegram_cards=False,
+        )
+
+    # _stub_fetches() 의 sm = patch("send_message_single"), em = patch("edit_message")
+    # 둘 다 mock 이 들어가니 context 객체로는 직접 검증 불가 — 대신 message_ids 가
+    # 비어있는 상태 유지(=send 결과 message_id 저장 안 됨) + monitored 풀에 종목 살아있음.
+    assert s.monitored.get("005930") is not None
+    assert msg_ids == {}, "send_telegram_cards=False 인데 message_id 가 저장됨"
+    # delete 도 호출 X
+    dm.assert_not_called()
+
+
+def test_send_telegram_cards_false_still_builds_pwa_payload():
+    """send_telegram_cards=False 라도 PWA payload (session.last_payloads) 는 채워짐."""
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("005930", now)
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+
+    mb, cc, ap, iv, sm, em = _stub_fetches()
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         mb, cc, ap, iv, sm, em:
+        dashboard_tick(
+            session=s, message_ids={}, client=MagicMock(),
+            master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c", now=now,
+            send_telegram_cards=False,
+        )
+
+    assert "005930" in s.last_payloads, "텔레그램 disable 상태에서 PWA payload 미생성"
+    assert s.last_payload_ts == now
+
+
 def test_manual_themes_resolved_from_theme_mapping_df():
     """수동 등록 종목의 테마가 theme_mapping_df 에서 채워짐 (auto/rising 아닌
     종목은 자체 themes 채울 데이터 소스 없으니 매 tick 이 기회).
