@@ -59,7 +59,7 @@ def create_app(
         session: worker 와 공유되는 모니터링 세션.
         static_dir: 정적 파일 디렉토리 (없으면 `src/dashboard/static`).
         broadcast_interval_sec: WebSocket 변경 감지 polling 주기. worker tick
-            은 3초라 1초 polling 이면 약간 lag 후 즉시 push (지터 ≤ 1s).
+            은 2초라 1초 polling 이면 약간 lag 후 즉시 push (지터 ≤ 1s).
     """
     app = FastAPI(title="Jongbae Dashboard", docs_url=None, redoc_url=None)
     app.state.session = session
@@ -151,7 +151,7 @@ def create_app(
     async def ws_monitor(ws: WebSocket) -> None:
         """모니터링 변경분을 push. 첫 메시지는 전체 snapshot.
 
-        worker tick (3초) 이 session.last_payload_ts 를 갱신할 때마다 1회 push.
+        worker tick (2초) 이 session.last_payload_ts 를 갱신할 때마다 1회 push.
         sleep 단위는 broadcast_interval_sec (기본 1초) — worker tick 직후 약간
         lag 후 broadcast 가 일관성 있게 동작.
         """

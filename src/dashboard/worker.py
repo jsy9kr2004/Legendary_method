@@ -1,6 +1,6 @@
 """실시간 모니터링 워커 (M6).
 
-스케줄러가 3초 간격으로 `dashboard_tick()` 호출 → 한 사이클 처리:
+스케줄러가 2초 간격으로 `dashboard_tick()` 호출 → 한 사이클 처리:
     1) 거래대금 50위 fetch + 주도섹터/주도주 식별 (v1)
     2) 주도주 자동 갱신 → 모니터링 종목 업데이트 (메시지 send/delete)
     3) 각 monitored 종목별 4지표 fetch + 가속배율 계산
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import threading
 from datetime import datetime
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
@@ -54,6 +55,7 @@ from src.jongbae.config_thresholds import (
     LEADING_SECTOR_TOP_N,
     LEADING_STOCK_TOP_PER_SECTOR,
     RISING_MIN_SCORE,
+    TICK_DURATION_WARN_SEC,
     TRANSITION_TURNOVER_RATIO,
 )
 from src.jongbae.divergence import compute_divergence
@@ -298,7 +300,7 @@ def dashboard_tick(
 ) -> None:
     """한 사이클의 모니터링 처리.
 
-    호출 빈도: 3초 (스케줄러 IntervalTrigger, scheduler.py:741).
+    호출 빈도: 2초 (스케줄러 IntervalTrigger, scheduler.py).
 
     Args:
         session: 공유 세션 상태.
@@ -317,6 +319,11 @@ def dashboard_tick(
     # 수 있음. 평일/주말, 정규장 외 시간이어도 KIS 시세를 받아 카드 표시.
     # force_on 은 명시적으로 사용자가 /on 한 상태를 추적할 뿐 가드는 아님.
 
+    # tick 계측 — 사용자 인지 지연 = tick 소요시간 (스케줄러 max_instances=1 +
+    # coalesce=True 라 tick 이 interval 보다 길면 다음 trigger 는 병합·드롭됨).
+    # 4구간으로 쪼개 보틀넥 파악: snapshot / funnel / monitored 루프 / 비-monitored 로깅.
+    t_start = perf_counter()
+
     # round 22: 보유 종목 메타데이터 로드 (R15 트리거 평가용).
     # /buy /sell 가 holdings.json 을 갱신하므로 매 tick 디스크 로드. 종목 수는
     # 단타 운영상 한 자릿수라 비용 무시 가능.
@@ -326,6 +333,7 @@ def dashboard_tick(
     snapshot = fetch_volume_rank(client, top_n=LEADING_SECTOR_TOP_N, master_df=master_df)
     if snapshot.empty:
         return
+    t_snapshot = perf_counter()
 
     sectors = score_leading_sectors(snapshot, theme_mapping_df)
     leaders = identify_early_morning_leaders(
@@ -338,7 +346,7 @@ def dashboard_tick(
     leader_codes_set = {l["code"] for l in leaders}
     rising_stage1 = [c for c in rising_stage1 if c["code"] not in leader_codes_set]
     # 진단 — leaders/sectors 가 0건이면 사용자가 "주도주 모니터링 안 나옴" 으로 인지.
-    # 매 tick (3초) 마다 디버그 — DEBUG 레벨이라 운영 운영 시 INFO 만 보면 묻힘.
+    # 매 tick (2초) 마다 디버그 — DEBUG 레벨이라 운영 운영 시 INFO 만 보면 묻힘.
     logger.debug(
         f"[모니터링] snapshot={len(snapshot)}, sectors={len(sectors)}, "
         f"leaders={len(leaders)}, rising_stage1={len(rising_stage1)}"
@@ -371,6 +379,7 @@ def dashboard_tick(
     rising_changes = session.update_rising_candidates(rising_scored, now)
     for ch in rising_changes:
         logger.info(f"[부상] {ch}")
+    t_funnel = perf_counter()
 
     # 2c) 보유 종목 surface — holdings.json 의 모든 code 가 monitored 에 있어야 카드 표시.
     # _apply_buy 도 이걸 호출하지만, 데몬 재시작 / external holdings 변경 대비.
@@ -715,6 +724,9 @@ def dashboard_tick(
             holding=holding,
         ))
 
+    t_monitored = perf_counter()
+    monitored_count = len(session.monitored)
+
     # Phase 1: Stage 0 통과 중 monitored 아닌 종목 (funnel 평가 받았다 RISING 못
     # 들어가거나, 그냥 거래대금 50위 안에 있는 종목) — 사후 분석에 "이 종목 왜
     # 후보 안 떴지?" 확인용. tick_cache 에 있으면 분봉/체결강도/호가/투자자 cache
@@ -776,6 +788,26 @@ def dashboard_tick(
     for stale in stale_codes:
         session.last_payloads.pop(stale, None)
     session.last_payload_ts = now
+
+    # tick 계측 종합 — INFO 로 매 tick 출력. 1 tick > 2초 (interval) 면 warning —
+    # 다음 trigger 가 coalesce 되어 실효 갱신 주기가 길어진다는 신호.
+    t_end = perf_counter()
+    tick_total = t_end - t_start
+    dt_snapshot = t_snapshot - t_start
+    dt_funnel = t_funnel - t_snapshot
+    dt_monitored = t_monitored - t_funnel
+    dt_log = t_end - t_monitored
+    per_card = (dt_monitored / monitored_count) if monitored_count else 0.0
+    msg = (
+        f"[tick] total={tick_total*1000:.0f}ms "
+        f"snap={dt_snapshot*1000:.0f}ms funnel={dt_funnel*1000:.0f}ms "
+        f"monitored={dt_monitored*1000:.0f}ms ({monitored_count}종목, "
+        f"종목당 {per_card*1000:.0f}ms) log={dt_log*1000:.0f}ms"
+    )
+    if tick_total > TICK_DURATION_WARN_SEC:
+        logger.warning(f"{msg} — interval(2초) 초과, 다음 trigger coalesce 위험")
+    else:
+        logger.info(msg)
 
 
 def cleanup_messages(

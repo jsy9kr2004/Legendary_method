@@ -836,14 +836,15 @@ def run() -> None:
         name="모니터링 자동 시작",
         misfire_grace_time=120,
     )
-    # tick: 5초 간격. session.paused / 캐시 / 텔레그램 설정 가드는 job 안에서.
+    # tick: 2초 간격 (CLAUDE.md 스펙 "1~2초 갱신"). session.paused / 캐시 / 텔레그램
+    # 설정 가드는 job 안에서.
     scheduler.add_job(
         _dashboard_tick_job,
-        trigger=IntervalTrigger(seconds=3),
+        trigger=IntervalTrigger(seconds=2),
         args=[client, settings],
         id="dashboard_tick",
-        name="모니터링 tick (3s)",
-        misfire_grace_time=6,
+        name="모니터링 tick (2s)",
+        misfire_grace_time=4,
         max_instances=1,
         coalesce=True,
     )
