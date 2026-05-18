@@ -261,3 +261,9 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 
 매매일지 저장 권고: `data/journal/YYYY-MM-DD.md` — 누적 시 Phase 3 종목별 파라미터
 DB / 운전수 가설 검증 데이터셋.
+
+**후속 토론도 같은 파일에 박는다 (round 40 후속, 사용자 명시):** 일지 작성 후
+사용자 ↔ Claude 대화 (what-if 시뮬, 가설 제시, 사용자 직관 검증) 까지 같은 파일
+끝에 "## 후속 토론 / 피드백" 섹션으로 추가. 틀린 가설도 그대로 보존 — 다음 일지에
+같은 가설 재제시 회피 + 누적 패턴 추출용. 형식 / 톤 가이드는 `docs/trading-journal.md`
+§1 step 7 + §4 후속 토론 섹션 + §5 톤 원칙 참조.

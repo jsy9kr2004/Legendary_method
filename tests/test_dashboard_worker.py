@@ -28,6 +28,68 @@ def _empty_snapshot():
     ])
 
 
+def _patch_bundles(
+    bars: pd.DataFrame | None = None,
+    ccnl: dict | None = None,
+    asking: dict | None = None,
+    investor: dict | None = None,
+):
+    """worker.fetch_bundles_parallel 을 patch — 호출된 모든 code 에 동일 bundle 반환.
+
+    round 40 이후 dashboard_tick 의 KIS fetch 는 fetch_bundles_parallel 한 곳으로
+    통합됨. 기존 4개 fetch_* 개별 patch 대신 본 헬퍼 1회로 같은 효과.
+    """
+    from src.dashboard.parallel_fetch import StockBundle
+
+    def _fake(client, codes, max_workers=12):
+        result: dict[str, StockBundle] = {}
+        for c in dict.fromkeys(str(x) for x in codes):
+            result[c] = StockBundle(
+                code=c,
+                bars=bars if bars is not None else pd.DataFrame(),
+                ccnl=ccnl, asking=asking, investor=investor,
+            )
+        return result
+
+    return patch("src.dashboard.worker.fetch_bundles_parallel", side_effect=_fake)
+
+
+def _build_cache_entry(
+    bars: pd.DataFrame,
+    ccnl: dict | None,
+    asking: dict | None,
+    investor: dict | None,
+) -> dict:
+    """funnel 입력 tick_cache 한 entry 생성 — round 40 이후 funnel 은 cache 만 읽음.
+
+    dashboard_tick 의 bundle → tick_cache 채움 로직과 동일.
+    """
+    from src.jongbae.candle import latest_completed_candle
+    from src.jongbae.momentum import compute_accel_ratio
+
+    accel_5m = compute_accel_ratio(bars) if not bars.empty else float("nan")
+    accel_1m = (
+        compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
+        if not bars.empty else float("nan")
+    )
+    candle = latest_completed_candle(bars) if not bars.empty else None
+    vp_value = float("nan")
+    if ccnl is not None:
+        v = ccnl.get("ccnl_strength")
+        if v is not None and v == v:
+            vp_value = float(v)
+    return {
+        "bars": bars,
+        "accel_5m": accel_5m,
+        "accel_1m": accel_1m,
+        "candle": candle,
+        "ccnl": ccnl,
+        "vp": vp_value,
+        "asking": asking,
+        "investor": investor,
+    }
+
+
 def test_dashboard_tick_skips_when_paused():
     s = MonitoringSession()
     s.paused = True
@@ -103,10 +165,7 @@ def test_dashboard_tick_sends_new_monitor_message():
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=sectors), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=leaders), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
-         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single", return_value=fake_resp) as send, \
          patch("src.dashboard.worker.edit_message") as edit:
         dashboard_tick(
@@ -143,10 +202,7 @@ def test_dashboard_tick_edits_existing_message():
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
-         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single") as send, \
          patch("src.dashboard.worker.edit_message") as edit:
         dashboard_tick(
@@ -178,10 +234,7 @@ def test_dashboard_tick_updates_last_prices():
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
-         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single"), \
          patch("src.dashboard.worker.edit_message"):
         dashboard_tick(
@@ -226,15 +279,13 @@ def test_rising_funnel_filters_heunga_haewoon():
         *[{"open": 2900, "high": 2950, "low": 2820, "close": 2825,
            "trading_value": 500_000_000} for _ in range(5)],
     ])
-    tick_cache: dict = {}
-    with patch("src.dashboard.worker.fetch_minute_bars", return_value=weak_bars), \
-         patch("src.dashboard.worker.fetch_ccnl_strength",
-               return_value={"ccnl_strength": 95.0}), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None):
-        result = _evaluate_rising_funnel(stage1, MagicMock(), snap_by_code, tick_cache)
-    # Stage 2 에서 vol_accel_5m ≈ 0.1 (500M / 5G 평균) → 임계 0.8 미달 → drop
-    # 또는 윗꼬리 큰 음봉 → is_weak_candle drop. 어떤 단계든 통과 불가.
+    tick_cache: dict = {
+        "003280": _build_cache_entry(
+            weak_bars, {"ccnl_strength": 95.0}, None, None,
+        ),
+    }
+    result = _evaluate_rising_funnel(stage1, snap_by_code, tick_cache)
+    # 약한 vol_accel + 음봉 윗꼬리 + VP_WEAK → R14 음수 합산으로 RISING_MIN_SCORE 미달
     assert result == [], f"흥아해운이 funnel 통과해서 RISING 후보로 잡힘: {result}"
 
 
@@ -261,17 +312,15 @@ def test_rising_funnel_passes_strong_candidate():
         *[{"open": 90500, "high": 91500, "low": 90400, "close": 91300,
            "trading_value": 5_000_000_000} for _ in range(5)],
     ])
-    tick_cache: dict = {}
-    with patch("src.dashboard.worker.fetch_minute_bars", return_value=strong_bars), \
-         patch("src.dashboard.worker.fetch_ccnl_strength",
-               return_value={"ccnl_strength": 142.0, "buy_ratio": 60.0}), \
-         patch("src.dashboard.worker.fetch_asking_price",
-               return_value={"bid_ask_ratio": 2.5, "bid_total_volume": 0,
-                             "ask_total_volume": 0}), \
-         patch("src.dashboard.worker.fetch_investor_flow",
-               return_value={"foreign_net_buy": 1000, "institution_net_buy": 500,
-                             "program_net_buy": 300}):
-        result = _evaluate_rising_funnel(stage1, MagicMock(), snap_by_code, tick_cache)
+    tick_cache: dict = {
+        "091340": _build_cache_entry(
+            strong_bars,
+            {"ccnl_strength": 142.0, "buy_ratio": 60.0},
+            {"bid_ask_ratio": 2.5, "bid_total_volume": 0, "ask_total_volume": 0},
+            {"foreign_net_buy": 1000, "institution_net_buy": 500, "program_net_buy": 300},
+        ),
+    }
+    result = _evaluate_rising_funnel(stage1, snap_by_code, tick_cache)
     assert len(result) == 1
     assert result[0]["code"] == "091340"
     assert result[0]["buy_score"] >= 2.0  # WATCH 이상
@@ -299,10 +348,7 @@ def test_dashboard_tick_populates_last_payloads():
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
-         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single"), \
          patch("src.dashboard.worker.edit_message"):
         dashboard_tick(
@@ -354,10 +400,7 @@ def test_dashboard_tick_cleans_stale_payloads():
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()), \
-         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single"), \
          patch("src.dashboard.worker.edit_message"):
         dashboard_tick(
@@ -411,17 +454,17 @@ def test_rising_funnel_passes_when_vp_data_missing():
         *[{"open": 90500, "high": 91500, "low": 90400, "close": 91300,
            "trading_value": 5_000_000_000} for _ in range(5)],
     ])
-    tick_cache: dict = {}
     # ccnl 응답에 cttr 가 NaN — KIS 빈 응답 시뮬레이션
-    with patch("src.dashboard.worker.fetch_minute_bars", return_value=strong_bars), \
-         patch("src.dashboard.worker.fetch_ccnl_strength",
-               return_value={"ccnl_strength": float("nan")}), \
-         patch("src.dashboard.worker.fetch_asking_price",
-               return_value={"bid_ask_ratio": 2.5, "bid_total_volume": 0,
-                             "ask_total_volume": 0}), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None):
-        result = _evaluate_rising_funnel(stage1, MagicMock(), snap_by_code, tick_cache)
-    assert len(result) == 1, "VP NaN 종목이 Stage 3 에서 drop 됨 — fix 회귀"
+    tick_cache: dict = {
+        "091340": _build_cache_entry(
+            strong_bars,
+            {"ccnl_strength": float("nan")},
+            {"bid_ask_ratio": 2.5, "bid_total_volume": 0, "ask_total_volume": 0},
+            None,
+        ),
+    }
+    result = _evaluate_rising_funnel(stage1, snap_by_code, tick_cache)
+    assert len(result) == 1, "VP NaN 종목이 funnel 에서 drop 됨 — fix 회귀"
     assert result[0]["code"] == "091340"
 
 
@@ -451,15 +494,15 @@ def test_rising_funnel_low_vp_alone_no_longer_hard_drops():
         *[{"open": 90500, "high": 91500, "low": 90400, "close": 91300,
            "trading_value": 5_000_000_000} for _ in range(5)],
     ])
-    tick_cache: dict = {}
-    with patch("src.dashboard.worker.fetch_minute_bars", return_value=strong_bars), \
-         patch("src.dashboard.worker.fetch_ccnl_strength",
-               return_value={"ccnl_strength": 85.0}), \
-         patch("src.dashboard.worker.fetch_asking_price",
-               return_value={"bid_ask_ratio": 2.5, "bid_total_volume": 0,
-                             "ask_total_volume": 0}), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None):
-        result = _evaluate_rising_funnel(stage1, MagicMock(), snap_by_code, tick_cache)
+    tick_cache: dict = {
+        "091340": _build_cache_entry(
+            strong_bars,
+            {"ccnl_strength": 85.0},
+            {"bid_ask_ratio": 2.5, "bid_total_volume": 0, "ask_total_volume": 0},
+            None,
+        ),
+    }
+    result = _evaluate_rising_funnel(stage1, snap_by_code, tick_cache)
     # round 37: VP 85 만으로 hard-drop 안 함. 다른 강한 시그널이 양수 합산으로 통과.
     assert len(result) == 1, (
         f"VP 85 + 강한 다른 시그널 종목이 funnel 에서 drop 됨 — "
@@ -497,15 +540,14 @@ def test_grade_assigned_to_manual_stock_outside_top50():
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=strong_bars), \
-         patch("src.dashboard.worker.fetch_ccnl_strength",
-               return_value={"ccnl_strength": 135.0, "buy_ratio": float("nan")}), \
-         patch("src.dashboard.worker.fetch_asking_price",
-               return_value={"bid_ask_ratio": 1.2, "bid_total_volume": 0,
-                             "ask_total_volume": 0,
-                             "bid1_price": 5280, "ask1_price": 5290,
-                             "bid1_volume": 0, "ask1_volume": 0}), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(
+             bars=strong_bars,
+             ccnl={"ccnl_strength": 135.0, "buy_ratio": float("nan")},
+             asking={"bid_ask_ratio": 1.2, "bid_total_volume": 0,
+                     "ask_total_volume": 0,
+                     "bid1_price": 5280, "ask1_price": 5290,
+                     "bid1_volume": 0, "ask1_volume": 0},
+         ), \
          patch("src.dashboard.worker.send_message_single",
                return_value={"ok": True, "result": {"message_id": 1}}), \
          patch("src.dashboard.worker.edit_message"):
@@ -556,11 +598,10 @@ def test_grade_assigned_to_holding_stock_outside_top50():
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=bars), \
-         patch("src.dashboard.worker.fetch_ccnl_strength",
-               return_value={"ccnl_strength": 115.0, "buy_ratio": float("nan")}), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(
+             bars=bars,
+             ccnl={"ccnl_strength": 115.0, "buy_ratio": float("nan")},
+         ), \
          patch("src.dashboard.worker.load_holdings",
                return_value={"888000": holding}), \
          patch("src.dashboard.worker.send_message_single",
@@ -618,10 +659,7 @@ def test_command_poll_loop_stops_on_event():
 
 def _stub_fetches():
     return (
-        patch("src.dashboard.worker.fetch_minute_bars", return_value=pd.DataFrame()),
-        patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None),
-        patch("src.dashboard.worker.fetch_asking_price", return_value=None),
-        patch("src.dashboard.worker.fetch_investor_flow", return_value=None),
+        _patch_bundles(),
         patch("src.dashboard.worker.send_message_single",
               return_value={"ok": True, "result": {"message_id": 1}}),
         patch("src.dashboard.worker.edit_message"),
@@ -643,11 +681,11 @@ def test_manual_name_resolved_from_snapshot():
         "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
     }])
 
-    mb, cc, ap, iv, sm, em = _stub_fetches()
+    bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
-         mb, cc, ap, iv, sm, em:
+         bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),
             master_df=pd.DataFrame(),
@@ -686,11 +724,11 @@ def test_manual_name_resolved_from_master_df_when_outside_top50():
          "group_code": "S", "market_cap": 4_800_000, "listed_at": "19750101"},
     ])
 
-    mb, cc, ap, iv, sm, em = _stub_fetches()
+    bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
-         mb, cc, ap, iv, sm, em:
+         bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),
             master_df=master,
@@ -723,12 +761,12 @@ def test_send_telegram_cards_false_skips_send_and_edit():
         "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
     }])
 
-    mb, cc, ap, iv, sm, em = _stub_fetches()
+    bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         mb, cc, ap, iv, sm, em, \
+         bundles, sm, em, \
          patch("src.dashboard.worker.delete_message") as dm:
         dashboard_tick(
             session=s, message_ids=msg_ids, client=MagicMock(),
@@ -762,12 +800,12 @@ def test_send_telegram_cards_false_still_builds_pwa_payload():
         "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
     }])
 
-    mb, cc, ap, iv, sm, em = _stub_fetches()
+    bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         mb, cc, ap, iv, sm, em:
+         bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),
             master_df=pd.DataFrame(),
@@ -806,11 +844,11 @@ def test_manual_themes_resolved_from_theme_mapping_df():
         {"code": "123456", "theme": "원자력"},
     ])
 
-    mb, cc, ap, iv, sm, em = _stub_fetches()
+    bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
-         mb, cc, ap, iv, sm, em:
+         bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),
             master_df=master,
@@ -852,10 +890,7 @@ def test_manual_price_synthesized_from_bars_when_outside_top50():
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=fake_bars), \
-         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(bars=fake_bars), \
          patch("src.dashboard.worker.send_message_single", return_value=sm_resp) as sm, \
          patch("src.dashboard.worker.edit_message"):
         dashboard_tick(
@@ -902,10 +937,7 @@ def test_manual_turnover_computed_from_market_cap():
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
-         patch("src.dashboard.worker.fetch_minute_bars", return_value=fake_bars), \
-         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
-         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
-         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         _patch_bundles(bars=fake_bars), \
          patch("src.dashboard.worker.send_message_single", return_value=sm_resp) as sm, \
          patch("src.dashboard.worker.edit_message"):
         dashboard_tick(
@@ -940,11 +972,11 @@ def test_manual_name_keeps_code_when_unknown_everywhere():
          "group_code": "S", "market_cap": 4_800_000, "listed_at": "19750101"},
     ])
 
-    mb, cc, ap, iv, sm, em = _stub_fetches()
+    bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
          patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
-         mb, cc, ap, iv, sm, em:
+         bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),
             master_df=master,

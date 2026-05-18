@@ -31,6 +31,7 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
+from src.dashboard.parallel_fetch import StockBundle, fetch_bundles_parallel
 from src.dashboard.render import build_monitor_payload, render_monitor_message
 from src.dashboard.state import (
     LeaderState,
@@ -189,83 +190,59 @@ def _synthesize_snap_row(
 
 def _evaluate_rising_funnel(
     stage1_candidates: list[dict[str, Any]],
-    client: Any,
     snap_by_code: dict[str, dict[str, Any]],
     tick_cache: dict[str, dict[str, Any]],
     daily_ohlcv: pd.DataFrame | None = None,
     limit_up_hit_times: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """부상 후보 funnel — round 37: Stage 2/3 hard-fail 폐지, R14 풀스코어 단일 컷.
+    """부상 후보 R14 풀스코어 평가 — round 40 (병렬 fetch 분리 후).
 
-    Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N) 통과 후보를 받아 데이터 수집 후
-    R14 풀스코어 한 번만 평가 — score ≥ RISING_MIN_SCORE 면 카드.
+    Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N) 통과 후보 dict 리스트와, 호출자가
+    fetch_bundles_parallel 로 미리 채워둔 tick_cache 를 받아 R14 점수만 계산.
+    score ≥ RISING_MIN_SCORE 통과 종목 반환.
 
-    round 21~33 까지는 Stage 2 (vol_accel_5m ≤ 0.8 / 약한 봉) 와 Stage 3 (VP < 100)
-    에서 hard-fail drop 했으나, **이 임계값들은 모두 R14 score 의 음수 가산 항목과
-    중복** (R11 vol_accel weak / R12 봉 패턴 / R10 VP_WEAK). hard cliff 가 진동 시
-    카드 깜빡임의 주범 + VP 90 + 다른 강한 시그널 가진 종목을 false negative 로
-    잘라냄. → 듀얼 키 인프라(2026-05-17 main) 로 호출 한도 여유가 생긴 시점에
-    hard-fail 폐지. 약한 종목은 R14 음수 합산으로 자연스럽게 RISING_MIN_SCORE 미달.
+    round 37: Stage 2/3 hard-fail 폐지 — 모든 후보를 R14 풀스코어 단일 컷 통과.
+    round 40: KIS fetch 가 본 함수 밖 fetch_bundles_parallel 로 이동. 본 함수는 순수
+    CPU — score 계산만. tick_cache 가 bars/accel_5m/accel_1m/candle/ccnl/vp/asking/
+    investor 키를 미리 가지고 있다고 가정 (없으면 NaN-safe 로 처리).
 
     Args:
         stage1_candidates: identify_rising_candidates 결과.
-        client: KIS client (None 이면 모든 단계 스킵 — 빈 리스트 반환).
         snap_by_code: snapshot 의 code → row 매핑 (rank/가격/회전율 등).
-        tick_cache: code → {"bars", "accel_5m", "accel_1m", "candle", "vp",
-            "ccnl", "asking", "investor"} — 본 함수가 모든 후보에 채움.
+        tick_cache: code → bundle-derived dict (호출자가 prefill). bars/accel/candle/
+            ccnl/vp/asking/investor 부분 가능. 부재 시 가산점 0.
 
     Returns:
         R14 score ≥ RISING_MIN_SCORE 통과 종목 dict 리스트 (원 cand dict +
         "buy_score" / "buy_grade" / "buy_reasons" 키 추가). 점수 내림차순.
     """
-    if client is None or not stage1_candidates:
+    if not stage1_candidates:
         return []
 
     n_stage1 = len(stage1_candidates)
-
-    # ── 데이터 수집 — Stage 1 통과 모든 후보 (hard-fail 없음) ────────────────
     scored_candidates: list[dict[str, Any]] = []
     for cand in stage1_candidates:
         code = cand["code"]
-        bars = fetch_minute_bars(client, code)
-        if bars is None or bars.empty:
-            # 분봉 fetch 실패 시는 다음 단계 계산 자체 불가 → skip (hard-fail 아님,
-            # 데이터 자체 부재).
+        cache = tick_cache.get(code)
+        if cache is None:
+            # tick_cache 미존재 — fetch 실패했거나 합집합에서 빠진 경우. skip (예전
+            # "분봉 빈 응답" 과 같은 처리).
             continue
-        accel_5m = compute_accel_ratio(bars)
-        accel_1m = compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
-        candle = latest_completed_candle(bars)
-        tick_cache[code] = {
-            "bars": bars,
-            "accel_5m": accel_5m,
-            "accel_1m": accel_1m,
-            "candle": candle,
-        }
-
-        ccnl = fetch_ccnl_strength(client, code)
-        vp_value: float = float("nan")
-        if ccnl is not None:
-            vp = ccnl.get("ccnl_strength")
-            if vp is not None and vp == vp:
-                vp_value = float(vp)
-        tick_cache[code]["ccnl"] = ccnl
-        tick_cache[code]["vp"] = vp_value
+        bars = cache.get("bars")
+        if bars is None or bars.empty:
+            continue
         scored_candidates.append(cand)
 
     if not scored_candidates:
         return []
 
-    # ── R14 풀스코어 평가 (호가 + 투자자 fetch + 종합 점수) ─────────────────
+    # ── R14 풀스코어 평가 (호가 + 투자자 + 종합 점수) ───────────────────────
     out: list[dict[str, Any]] = []
     for cand in scored_candidates:
         code = cand["code"]
-        asking = fetch_asking_price(client, code)
-        investor = fetch_investor_flow(client, code)
-        tick_cache[code]["asking"] = asking
-        tick_cache[code]["investor"] = investor
-
         snap = snap_by_code.get(code, {})
         cache = tick_cache[code]
+        asking = cache.get("asking")
         bid_ask = float("nan")
         if asking is not None:
             v = asking.get("bid_ask_ratio")
@@ -295,12 +272,13 @@ def _evaluate_rising_funnel(
         else:
             vol_ratio = float("nan")
 
+        accel_1m_val = cache.get("accel_1m", float("nan"))
         gsnap = GraderSnapshot(
             volume_turnover_rank=int(snap.get("rank") or 0) or None,
-            vol_accel_1m=cache["accel_1m"] if cache["accel_1m"] == cache["accel_1m"] else float("nan"),
-            vol_accel_5m=cache["accel_5m"],
+            vol_accel_1m=accel_1m_val if accel_1m_val == accel_1m_val else float("nan"),
+            vol_accel_5m=cache.get("accel_5m", float("nan")),
             candle=cache.get("candle"),
-            vp=cache["vp"],
+            vp=cache.get("vp", float("nan")),
             # VP_5MA 시계열은 아직 미보유 (별도 round 에서 추가). 0 = strong/weak
             # 판정 시 NaN 처리 → 가산점 없이 진행.
             vp_5ma=float("nan"),
@@ -455,17 +433,50 @@ def dashboard_tick(
         if price is not None and price == price and price > 0:
             session.last_prices[code] = float(price)
 
-    # 2b) 부상 후보 Stage 2~4 funnel — is_rising flag 갱신
+    # 2a) round 40: KIS fetch 병렬화. funnel 후보 ∪ monitored ∪ holdings 합집합을
+    # ThreadPoolExecutor 로 동시 fetch — 4 API × N 종목 의 직렬 라운드를 제거.
+    # 듀얼 키 합산 ~40 req/s 한도 안에서 limiter 가 자연 throttle (rate_limit.py).
+    # tick_cache 는 본 tick 안에서만 살아있는 buffer (cache 아님 — fresh).
+    fetch_codes: set[str] = {c["code"] for c in rising_stage1}
+    fetch_codes.update(session.monitored.keys())
+    fetch_codes.update(holdings.keys())
+    bundles: dict[str, StockBundle] = fetch_bundles_parallel(client, fetch_codes)
     tick_cache: dict[str, dict[str, Any]] = {}
+    for code, bundle in bundles.items():
+        bars = bundle.bars
+        accel_5m = compute_accel_ratio(bars) if not bars.empty else float("nan")
+        accel_1m = (
+            compute_accel_ratio(bars, recent_minutes=1, baseline_minutes=10)
+            if not bars.empty else float("nan")
+        )
+        candle = latest_completed_candle(bars) if not bars.empty else None
+        vp_value: float = float("nan")
+        if bundle.ccnl is not None:
+            vp = bundle.ccnl.get("ccnl_strength")
+            if vp is not None and vp == vp:
+                vp_value = float(vp)
+        tick_cache[code] = {
+            "bars": bars,
+            "accel_5m": accel_5m,
+            "accel_1m": accel_1m,
+            "candle": candle,
+            "ccnl": bundle.ccnl,
+            "vp": vp_value,
+            "asking": bundle.asking,
+            "investor": bundle.investor,
+        }
+    t_fetch = perf_counter()
+
+    # 2b) 부상 후보 R14 풀스코어 — fetch 결과 tick_cache 만 읽음 (CPU only).
     rising_scored = _evaluate_rising_funnel(
-        rising_stage1, client, snap_by_code, tick_cache,
+        rising_stage1, snap_by_code, tick_cache,
         daily_ohlcv=daily_ohlcv,
         limit_up_hit_times=session.limit_up_hit_times,
     )
     rising_changes = session.update_rising_candidates(rising_scored, now)
     for ch in rising_changes:
         logger.info(f"[부상] {ch}")
-    t_funnel = perf_counter()
+    t_score = perf_counter()
 
     # 2c) 보유 종목 surface — holdings.json 의 모든 code 가 monitored 에 있어야 카드 표시.
     # _apply_buy 도 이걸 호출하지만, 데몬 재시작 / external holdings 변경 대비.
@@ -952,16 +963,24 @@ def dashboard_tick(
 
     # tick 계측 종합 — INFO 로 매 tick 출력. 1 tick > 2초 (interval) 면 warning —
     # 다음 trigger 가 coalesce 되어 실효 갱신 주기가 길어진다는 신호.
+    # round 40: funnel fetch 가 fetch_bundles_parallel 로 이동 → 라벨 재설계
+    # (snap / fetch / score / monitored / log). fetch = 합집합 4×N KIS 호출 (병렬),
+    # score = funnel R14 풀스코어 CPU only.
     t_end = perf_counter()
     tick_total = t_end - t_start
     dt_snapshot = t_snapshot - t_start
-    dt_funnel = t_funnel - t_snapshot
-    dt_monitored = t_monitored - t_funnel
+    dt_fetch = t_fetch - t_snapshot
+    dt_score = t_score - t_fetch
+    dt_monitored = t_monitored - t_score
     dt_log = t_end - t_monitored
     per_card = (dt_monitored / monitored_count) if monitored_count else 0.0
+    fetched_count = len(bundles)
+    per_fetch = (dt_fetch / fetched_count) if fetched_count else 0.0
     msg = (
         f"[tick] total={tick_total*1000:.0f}ms "
-        f"snap={dt_snapshot*1000:.0f}ms funnel={dt_funnel*1000:.0f}ms "
+        f"snap={dt_snapshot*1000:.0f}ms "
+        f"fetch={dt_fetch*1000:.0f}ms ({fetched_count}종목, 종목당 {per_fetch*1000:.0f}ms) "
+        f"score={dt_score*1000:.0f}ms "
         f"monitored={dt_monitored*1000:.0f}ms ({monitored_count}종목, "
         f"종목당 {per_card*1000:.0f}ms) log={dt_log*1000:.0f}ms"
     )

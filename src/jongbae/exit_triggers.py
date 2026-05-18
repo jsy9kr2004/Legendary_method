@@ -474,3 +474,99 @@ def save_holdings(holdings: dict[str, Holding]) -> None:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+
+
+# ── 일일 reset (round 40, 단타 정책) ─────────────────────────────────────────
+
+
+def _last_reset_path() -> Path:
+    """data/state/last_reset.txt — 마지막 holdings reset 일자 (YYYY-MM-DD)."""
+    return _state_path().parent / "last_reset.txt"
+
+
+def _holdings_archive_path(day) -> Path:  # day: datetime.date
+    """data/state/holdings.archive/YYYY-MM-DD.json — reset 직전 holdings 백업."""
+    return _state_path().parent / "holdings.archive" / f"{day.isoformat()}.json"
+
+
+def _read_last_reset():
+    """저장된 last_reset 일자 (date) 또는 None (파일 없음/파싱 실패)."""
+    path = _last_reset_path()
+    if not path.exists():
+        return None
+    try:
+        from datetime import date as _date
+        return _date.fromisoformat(path.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return None
+
+
+def _write_last_reset(day) -> None:
+    """atomic write (tmp + replace) — last_reset.txt."""
+    path = _last_reset_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".last_reset_", suffix=".txt", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(day.isoformat())
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def maybe_reset_holdings(now: datetime) -> bool:
+    """단타 정책 — 그날 첫 호출 시 holdings.json 을 빈 dict 로 초기화 (archive 백업).
+
+    idempotent: 같은 날 두 번째 호출은 skip. 휴장일/주말은 skip.
+
+    호출 시점:
+        1. scheduler.run() 시작 직후 — 데몬 첫 가동 시 보장.
+        2. 매일 08:30 CronTrigger — 24h 가동 데몬용 fallback.
+
+    Args:
+        now: 현재 시각 (Asia/Seoul, naive 또는 aware 모두 허용 — date 만 사용).
+
+    Returns:
+        실제로 reset 실행했으면 True, skip (이미 했거나 휴장일) 이면 False.
+
+    백업 위치:
+        data/state/holdings.archive/YYYY-MM-DD.json — reset 직전 holdings 원본.
+        archive 가 이미 있으면 덮어쓰기 (같은 날 외부 변경 흐름 보호).
+    """
+    # 휴장일/주말은 reset X (어제 잔여 보유가 다음 영업일까지 가져가는 흐름 안전).
+    # is_business_day 는 calendar_kr 에 있음 (휴장일 캘린더 큐레이션).
+    from src.calendar_kr import is_business_day
+
+    today = now.date()
+    if not is_business_day(today):
+        return False
+    last = _read_last_reset()
+    if last == today:
+        return False  # 오늘 이미 reset 함 — 장중 재기동 시 보유 안전
+
+    # 현재 holdings 백업 (비어있어도 archive 1줄 — 추적 가능성).
+    holdings = load_holdings()
+    if holdings:
+        archive_path = _holdings_archive_path(today)
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            code: {
+                "entry_price": h.entry_price,
+                "entry_time": h.entry_time.isoformat(),
+                "entry_bar_low": h.entry_bar_low,
+                "time_stop_minutes": h.time_stop_minutes,
+                "high_since_entry": h.high_since_entry,
+                "triggers_fired": sorted(h.triggers_fired),
+            }
+            for code, h in holdings.items()
+        }
+        archive_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    save_holdings({})
+    _write_last_reset(today)
+    return True

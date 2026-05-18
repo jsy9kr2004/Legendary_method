@@ -97,13 +97,20 @@ _dashboard_command_stop: Any = None
 
 
 def _reset_state() -> None:
-    """매일 장 시작 전 글로벌 상태 초기화."""
+    """매일 장 시작 전 글로벌 상태 초기화 + 단타 정책 holdings 일일 reset."""
     global _already_limit_up, _watch_codes, _prev_leading_themes, _prev_leading_stocks
     _already_limit_up = set()
     _watch_codes = []
     _prev_leading_themes = []
     _prev_leading_stocks = []
-    logger.info("[리셋] 일별 글로벌 상태 초기화 완료")
+    # 단타 정책: 매일 빈 상태로 시작 (round 40). idempotent — 데몬 첫 가동 시에도
+    # run() 에서 호출되므로 중복 안전.
+    from src.jongbae.exit_triggers import maybe_reset_holdings
+    did_reset = maybe_reset_holdings(now_kst())
+    if did_reset:
+        logger.info("[리셋] 일별 글로벌 상태 + holdings.json 초기화 완료 (archive 백업)")
+    else:
+        logger.info("[리셋] 일별 글로벌 상태 초기화 완료 (holdings 는 오늘 이미 처리됨)")
 
 
 # ── 휴장일 가드 데코레이터 ──────────────────────────────────────────────────
@@ -709,6 +716,13 @@ def run() -> None:
     logger.info(f"  DRY_RUN:  {settings.dry_run}")
     logger.info(f"  DATA_DIR: {settings.data_dir}")
     logger.info(f"  상한가 폴링 간격: {_POLL_INTERVAL_SEC}초")
+
+    # 데몬 첫 가동 시 holdings 일일 reset 보장 (round 40, 단타 정책).
+    # 08:30 cron 을 놓친 시각에 가동돼도 첫 가동 시 reset. idempotent — 장중
+    # 재기동 시에는 today == last_reset 으로 skip 되어 보유 상태 안전.
+    from src.jongbae.exit_triggers import maybe_reset_holdings
+    if maybe_reset_holdings(now_kst()):
+        logger.info("[리셋] 데몬 가동 시 holdings.json 초기화 완료 (archive 백업)")
 
     client = KISClient(settings)
     dispatcher = Dispatcher(settings)

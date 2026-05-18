@@ -76,6 +76,9 @@ data/journal/
 # Notebook
 .ipynb_checkpoints/
 
+# 로컬 스크린샷 / 차트 이미지 (매매일지 입력용)
+image/
+
 # SSH / 자격증명 (실수로 커밋 방지)
 jsy9kr2004
 jsy9kr2004.pub

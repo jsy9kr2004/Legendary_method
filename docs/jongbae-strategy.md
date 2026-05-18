@@ -612,6 +612,7 @@ entry_bar_low    = 진입 직전 1분봉 저점
 
 | Round | 잘못 알았던 것 | 정정 |
 |---|---|---|
+| 40 | tick 길어졌다는 사용자 인지 — 처음엔 캐시 + 주기 분리(funnel 5초 주기) 로 풀려고 했음. 사용자(Zeta) 정정: "체결강도/거래대금/거래량/봉형태 stale 되면 의미 없음 — 캐시 X, fetch 병렬화로 fresh 유지". 2026-05-18 실측: 3,807 tick 100% 가 2초 interval 초과 (정규장 평균 12.9초). funnel 보틀넥 = 4×N KIS 직렬 fetch (평균 7.3초). | round 40: ①`src/dashboard/parallel_fetch.py` 신설 — `fetch_stock_bundle` (한 종목 4 API 직렬 + API 별 예외 격리) + `fetch_bundles_parallel` (종목 N개 ThreadPoolExecutor fan-out, max_workers=12). ②`dashboard_tick` 흐름: snapshot → update_auto_leaders → **합집합 batch fetch (rising_stage1 ∪ monitored ∪ holdings)** → tick_cache prefill → funnel score (CPU) → update_rising_candidates → monitored 루프. ③`_evaluate_rising_funnel` 시그니처 client 인자 제거 — fetch 책임 외부 이동, 순수 CPU score 계산만. ④듀얼 키 합산 ~40 req/s 한도 안에서 `RateLimiter` lock 으로 동시 호출 자연 throttle. httpx.Client 도 thread-safe. ⑤계측 라벨 재설계 `[tick] total=X snap=Y fetch=Z (Nfetched종목) score=A monitored=B log=C` — fetch 분리 측정 가능. ⑥**캐시 정책**: tick 안 buffer 만, tick 간 cache X — 단타 시그널 fresh 유지. ⑦tests: `test_parallel_fetch.py` 7 신규 + `test_dashboard_worker.py` 회귀 (`_evaluate_rising_funnel` 새 시그니처, `_patch_bundles` 헬퍼 도입). 859 pass. **운영 검증 필요**: 데몬 재기동 후 정규장 1시간 [tick] 로그로 total 평균 ≤ 2,000ms 확인. **사용자 메모리**: `feedback_high_freq_no_stale` (~/.claude/.../memory/) — M6 tick 최적화에서 캐시+주기 분리 추천 X, fresh 우선. |
 | 1 | 8:30 시간외에서 갭 익절 가능 | KRX 시간외는 어제 종가 고정 → 9:00 단일가가 첫 갭 |
 | 2 | -20~30% = 일중 떡락폭 | +20~30% = 일봉 상승률 |
 | 3 | 종가에 매수 | 상한가 진입 순간이 best entry |

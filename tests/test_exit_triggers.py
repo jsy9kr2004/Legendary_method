@@ -537,3 +537,86 @@ def test_load_holdings_corrupt_file(tmp_path, monkeypatch):
     state_dir.mkdir()
     (state_dir / "holdings.json").write_text("not json", encoding="utf-8")
     assert et.load_holdings() == {}
+
+
+# ── 일일 reset (round 40) ────────────────────────────────────────────────────
+
+
+def _reload_exit_triggers(tmp_path, monkeypatch):
+    """tmp DATA_DIR 격리 + config + exit_triggers 모듈 reload."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    import importlib
+    import src.config
+    importlib.reload(src.config)
+    import src.jongbae.exit_triggers as et
+    importlib.reload(et)
+    return et
+
+
+def test_maybe_reset_holdings_first_call_archives_and_clears(tmp_path, monkeypatch):
+    """평일 첫 호출 — 기존 holdings 가 archive 로 백업 + holdings.json 비워짐 + last_reset 갱신."""
+    et = _reload_exit_triggers(tmp_path, monkeypatch)
+    # 평일 (2026-05-18 월). is_business_day 가 True 인 일자.
+    now = datetime(2026, 5, 18, 9, 0, 0)
+    et.save_holdings({"005930": et.Holding(
+        code="005930", entry_price=70000, entry_time=now,
+    )})
+    assert et.load_holdings()
+
+    did = et.maybe_reset_holdings(now)
+    assert did is True
+    assert et.load_holdings() == {}  # 비워짐
+    # archive 파일 존재 + 005930 데이터 보존
+    archive = tmp_path / "state" / "holdings.archive" / "2026-05-18.json"
+    assert archive.exists()
+    import json
+    archived = json.loads(archive.read_text(encoding="utf-8"))
+    assert "005930" in archived
+    assert archived["005930"]["entry_price"] == 70000
+    # last_reset 갱신
+    assert (tmp_path / "state" / "last_reset.txt").read_text().strip() == "2026-05-18"
+
+
+def test_maybe_reset_holdings_same_day_idempotent(tmp_path, monkeypatch):
+    """같은 날 두 번째 호출 — skip. 장중 재기동 시 보유 안전."""
+    et = _reload_exit_triggers(tmp_path, monkeypatch)
+    now = datetime(2026, 5, 18, 8, 30, 0)
+    assert et.maybe_reset_holdings(now) is True
+
+    # 사용자가 09:30 매수 → holdings 생김
+    later = datetime(2026, 5, 18, 9, 30, 0)
+    et.save_holdings({"091340": et.Holding(
+        code="091340", entry_price=91300, entry_time=later,
+    )})
+    # 13:00 사용자 코드 업데이트 후 재기동
+    restart = datetime(2026, 5, 18, 13, 0, 0)
+    did = et.maybe_reset_holdings(restart)
+    assert did is False  # 오늘 이미 reset
+    assert "091340" in et.load_holdings()  # 보유 안전
+
+
+def test_maybe_reset_holdings_skips_weekend_and_holiday(tmp_path, monkeypatch):
+    """주말 / 휴장일 호출 — skip. 어제 잔여 보유가 다음 영업일까지 안전 이월."""
+    et = _reload_exit_triggers(tmp_path, monkeypatch)
+    sat = datetime(2026, 5, 16, 9, 0, 0)  # 토요일
+    et.save_holdings({"005930": et.Holding(
+        code="005930", entry_price=70000, entry_time=sat,
+    )})
+    did = et.maybe_reset_holdings(sat)
+    assert did is False
+    assert "005930" in et.load_holdings()  # 그대로 유지
+    assert not (tmp_path / "state" / "last_reset.txt").exists()
+
+
+def test_maybe_reset_holdings_empty_holdings_still_marks_date(tmp_path, monkeypatch):
+    """holdings 이 비어있어도 last_reset 만 갱신 — 같은 날 재호출 skip 보장."""
+    et = _reload_exit_triggers(tmp_path, monkeypatch)
+    now = datetime(2026, 5, 18, 8, 30, 0)
+    assert et.load_holdings() == {}
+
+    did = et.maybe_reset_holdings(now)
+    assert did is True
+    # 비어있어서 archive 파일은 생성 X (불필요)
+    assert not (tmp_path / "state" / "holdings.archive" / "2026-05-18.json").exists()
+    # last_reset 은 갱신 — 두 번째 호출은 skip
+    assert et.maybe_reset_holdings(now) is False
