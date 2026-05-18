@@ -83,6 +83,13 @@ class Settings:
     smtp_host: str = "smtp." + "gmail" + ".com"
     smtp_port: int = 587
 
+    # M6 모니터링 카드 텔레그램 발송 토글. False 면 dashboard_tick 의 카드 send/
+    # edit/delete 만 skip — PWA 페이로드 / KIS fetch / 명령 응답 / 14:50 결정
+    # 레포트 / 16:00 사후 / 상한가 이벤트는 모두 정상 동작. 사용자가 PWA 만
+    # 보면서 tick 시간 단축이 목적인 경우 (텔레그램 동기 HTTP POST 가 종목당
+    # 200-500ms 직렬이라 tick 시간 큰 비중).
+    monitoring_telegram_cards_enabled: bool = True
+
     # KIS 멀티 계정. load_settings() 에서 채워짐. 직접 Settings() 생성한 경우
     # 비어 있으면 kis_app_key 단일로부터 합성된다 (KISClient/auth 에서 처리).
     kis_credentials: tuple[KisCredential, ...] = field(default_factory=tuple)
@@ -158,6 +165,9 @@ def load_settings() -> Settings:
         kis_api_mode=os.getenv("KIS_API_MODE", "mock"),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+        monitoring_telegram_cards_enabled=_bool_env(
+            "MONITORING_TELEGRAM_CARDS_ENABLED", default=True,
+        ),
         gmail_user=os.getenv("GMAIL_USER", ""),
         gmail_app_password=os.getenv("GMAIL_APP_PASSWORD", ""),
         gmail_to=os.getenv("GMAIL_TO", ""),

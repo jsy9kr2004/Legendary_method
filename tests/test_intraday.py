@@ -195,3 +195,140 @@ def test_fetch_quote_empty_output(tmp_path):
         with patch.object(client, "get", return_value=payload):
             q = fetch_quote(client, "075180")
     assert q is None
+
+
+# ── rank / turnover_rank 회귀 (2026-05-18) ──────────────────────────────────
+# 사용자 보고: 카드의 "(00위)" 가 HTS 와 다르다. 원인 — 이전엔 master 필터
+# (ETF/펀드/리츠/스팩/우선주 제외) 후 rank 를 1부터 재부여하여 사용자가 HTS
+# 거래대금 1위로 본 종목(예: KODEX200)이 빠지면 다음 보통주가 "1위" 로 표시됨.
+# fix: KIS data_rank 그대로 유지. turnover_rank 컬럼 신설.
+
+def test_fetch_volume_rank_preserves_kis_data_rank_with_master_filter(tmp_path):
+    """master 필터로 ETF 제외 후에도 보통주의 rank 는 KIS data_rank 그대로
+    유지. 빈 자리 메우는 재부여 X.
+    """
+    import pandas as pd
+    payload = {
+        "rt_cd": "0",
+        "output": [
+            # KIS 응답상 1위: ETF (master 에 없어서 제외)
+            {
+                "data_rank": "1",
+                "mksc_shrn_iscd": "069500",  # KODEX200
+                "hts_kor_isnm": "KODEX 200",
+                "stck_prpr": "35000",
+                "stck_prdy_clpr": "34800",
+                "prdy_ctrt": "0.57",
+                "stck_hgpr": "35100",
+                "acml_vol": "10000000",
+                "acml_tr_pbmn": "350000000000",
+                "tr_pbmn_tnrt": "5.0",
+            },
+            # KIS 응답상 2위: 삼성전자 (master 에 있음)
+            {
+                "data_rank": "2",
+                "mksc_shrn_iscd": "005930",
+                "hts_kor_isnm": "삼성전자",
+                "stck_prpr": "80000",
+                "stck_prdy_clpr": "79000",
+                "prdy_ctrt": "1.27",
+                "stck_hgpr": "81000",
+                "acml_vol": "20000000",
+                "acml_tr_pbmn": "1600000000000",
+                "tr_pbmn_tnrt": "0.3",
+            },
+            # KIS 응답상 3위: ETF 또 (제외)
+            {
+                "data_rank": "3",
+                "mksc_shrn_iscd": "229200",  # KODEX 코스닥150
+                "hts_kor_isnm": "KODEX 코스닥150",
+                "stck_prpr": "12000",
+                "stck_prdy_clpr": "11900",
+                "prdy_ctrt": "0.84",
+                "stck_hgpr": "12100",
+                "acml_vol": "8000000",
+                "acml_tr_pbmn": "96000000000",
+                "tr_pbmn_tnrt": "3.0",
+            },
+            # KIS 응답상 4위: 제룡전기
+            {
+                "data_rank": "4",
+                "mksc_shrn_iscd": "075180",
+                "hts_kor_isnm": "제룡전기",
+                "stck_prpr": "91300",
+                "stck_prdy_clpr": "70230",
+                "prdy_ctrt": "30.00",
+                "stck_hgpr": "91300",
+                "acml_vol": "5000000",
+                "acml_tr_pbmn": "400000000000",
+                "tr_pbmn_tnrt": "20.0",
+            },
+        ],
+    }
+    master = pd.DataFrame([
+        {"code": "005930", "market_cap": 4_800_000},
+        {"code": "075180", "market_cap": 2_000},
+        # ETF 2개는 master 에 없음
+    ])
+    client = _make_client(tmp_path)
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", return_value=payload):
+            df = fetch_volume_rank(client, top_n=30, master_df=master)
+
+    assert len(df) == 2  # ETF 2개 제외 후 보통주만
+    # 핵심: rank 가 1, 2 가 아니라 KIS data_rank (2, 4) 유지.
+    samsung = df[df["code"] == "005930"].iloc[0]
+    jeryong = df[df["code"] == "075180"].iloc[0]
+    assert samsung["rank"] == 2, f"삼성전자 rank 가 KIS 원본 2 위가 아님: {samsung['rank']}"
+    assert jeryong["rank"] == 4, f"제룡전기 rank 가 KIS 원본 4 위가 아님: {jeryong['rank']}"
+
+
+def test_fetch_volume_rank_assigns_turnover_rank(tmp_path):
+    """turnover_rank 컬럼이 master 필터 통과 종목들의 turnover 내림차순으로
+    부여됨. 회전율 1위가 turnover_rank=1, 2위가 2.
+    """
+    import pandas as pd
+    payload = {
+        "rt_cd": "0",
+        "output": [
+            {  # 삼성전자 — 회전율 낮음 (대형주)
+                "data_rank": "1", "mksc_shrn_iscd": "005930",
+                "hts_kor_isnm": "삼성전자",
+                "stck_prpr": "80000", "stck_prdy_clpr": "79000",
+                "prdy_ctrt": "1.27", "stck_hgpr": "81000",
+                "acml_vol": "20000000", "acml_tr_pbmn": "1600000000000",
+                "tr_pbmn_tnrt": "0.3",
+            },
+            {  # 제룡전기 — 회전율 1위 (단타 종목)
+                "data_rank": "2", "mksc_shrn_iscd": "075180",
+                "hts_kor_isnm": "제룡전기",
+                "stck_prpr": "91300", "stck_prdy_clpr": "70230",
+                "prdy_ctrt": "30.00", "stck_hgpr": "91300",
+                "acml_vol": "5000000", "acml_tr_pbmn": "400000000000",
+                "tr_pbmn_tnrt": "20.0",
+            },
+            {  # 중간 종목 — 회전율 5%
+                "data_rank": "3", "mksc_shrn_iscd": "091340",
+                "hts_kor_isnm": "대한광통신",
+                "stck_prpr": "5000", "stck_prdy_clpr": "4800",
+                "prdy_ctrt": "4.17", "stck_hgpr": "5100",
+                "acml_vol": "1000000", "acml_tr_pbmn": "5000000000",
+                "tr_pbmn_tnrt": "5.0",
+            },
+        ],
+    }
+    master = pd.DataFrame([
+        {"code": "005930", "market_cap": 4_800_000},
+        {"code": "075180", "market_cap": 2_000},
+        {"code": "091340", "market_cap": 1_000},
+    ])
+    client = _make_client(tmp_path)
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", return_value=payload):
+            df = fetch_volume_rank(client, top_n=30, master_df=master)
+
+    assert "turnover_rank" in df.columns
+    # 제룡전기(20%) > 대한광통신(5%) > 삼성전자(0.3%)
+    assert df[df["code"] == "075180"].iloc[0]["turnover_rank"] == 1
+    assert df[df["code"] == "091340"].iloc[0]["turnover_rank"] == 2
+    assert df[df["code"] == "005930"].iloc[0]["turnover_rank"] == 3

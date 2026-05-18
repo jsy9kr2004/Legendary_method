@@ -629,6 +629,11 @@ def _dashboard_start(client: KISClient, settings: Settings) -> None:
     from src.dashboard.worker import reset_daily
 
     logger.info("[M6] 모니터링 자동 시작 (평일 09:00)")
+    if not settings.monitoring_telegram_cards_enabled:
+        logger.info(
+            "[M6] 텔레그램 카드 발송 비활성 (MONITORING_TELEGRAM_CARDS_ENABLED=0). "
+            "PWA 대시보드만 갱신. 카드 send/edit/delete skip → tick 시간 단축."
+        )
     _load_dashboard_data(settings)
     reset_daily(_dashboard_session)
     _dashboard_message_ids.clear()
@@ -687,6 +692,7 @@ def _dashboard_tick_job(client: KISClient, settings: Settings) -> None:
         token=settings.telegram_bot_token,
         chat_id=settings.telegram_chat_id,
         now=now_kst(),
+        send_telegram_cards=settings.monitoring_telegram_cards_enabled,
     )
 
 
