@@ -134,6 +134,11 @@ def monitoring_interval_seconds(n_codes: int) -> int:
 
 MONITORING_MAX_CODES: int = 4   # 텔레그램 화면 한도 — 4개 넘으면 한 번에 안 보임
 
+# tick 1회 소요시간 경고 임계. scheduler IntervalTrigger(2초) + max_instances=1 +
+# coalesce=True 라 tick 이 이 값을 넘으면 다음 trigger 가 병합·드롭되어 실효
+# 갱신 주기가 길어진다. worker 가 매 tick 계측 후 임계 초과 시 warning.
+TICK_DURATION_WARN_SEC: float = 2.0
+
 # 분봉 가속배율 계산 윈도우.
 ACCEL_RECENT_BAR_MINUTES: int = 5    # 최근 5분봉 거래대금
 ACCEL_BASELINE_MINUTES: int = 30     # 직전 30분 평균

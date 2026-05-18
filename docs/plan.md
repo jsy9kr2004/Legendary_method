@@ -378,6 +378,7 @@
 - [x] ~~WICS 섹터 매핑 크롤러~~ — 완료 (M0 체크리스트 참조). 중분류(WI 28개)는 v1로 미룸.
 - [ ] **수정주가 일관성** — daily fetcher `adjusted=True` 일관 사용 검증
 - [ ] **종목 코드 변경(액면분할/합병) 처리** — historical 통계 단절 회피
+- [ ] **고주파 monitoring tick 실효 갱신 주기 측정·최적화** — `dashboard_tick()` 안의 60+ KIS 호출 + N개 Telegram editMessageText 가 모두 직렬 → 1 tick 5~10초 가능성. 스케줄러 `max_instances=1` + `coalesce=True` 라 `IntervalTrigger(seconds=2)` 보다 tick 이 길면 다음 trigger 가 병합·드롭되어 사용자 인지 갱신 주기가 길어짐. (a) 2026-05-18 tick 4구간 계측 (`t_snapshot` / `t_funnel` / `t_monitored` / `t_log`, `TICK_DURATION_WARN_SEC=2.0` 초과 시 warning) 추가. (b) 1시간 운영 로그로 실측 후 최적화 방향 결정 — fetch 병렬화(ThreadPool, KIS 듀얼 키 40 req/s 활용) / funnel 별도 스레드 / Telegram edit batch 등. (c) 이미 존재하지만 미사용인 `config_thresholds.monitoring_interval_seconds(n_codes)` (2→2s, 5→3s, 10→5s) 와의 일관성도 같이 검토 — scheduler 가 현재 종목 수 무관 고정 2초.
 - [ ] **테마 매핑 변경 시 historical 재계산** — 네이버 테마 월 1회 갱신 시 사례 변동 영향 분석
 - [x] **사후 레포트 채널: 이메일 → 텔레그램** — `Dispatcher.send_afterhours()` 추가, `_send_afterhours` 가 호출. (2026-05-12)
 - [x] **사후 레포트 candidates 비어있던 placeholder** — `save_decision_candidates` / `load_decision_candidates` (`{DATA_DIR}/decisions/YYYY-MM-DD.json`). 14:50 결정에서 저장 → 16:00 사후에서 재로딩. (2026-05-12)
