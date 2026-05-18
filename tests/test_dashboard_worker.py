@@ -702,6 +702,147 @@ def test_manual_name_resolved_from_master_df_when_outside_top50():
     assert s.monitored["123456"].name == "테스트종목"
 
 
+def test_manual_themes_resolved_from_theme_mapping_df():
+    """수동 등록 종목의 테마가 theme_mapping_df 에서 채워짐 (auto/rising 아닌
+    종목은 자체 themes 채울 데이터 소스 없으니 매 tick 이 기회).
+    """
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("123456", now)
+    assert s.monitored["123456"].themes == []
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+    master = pd.DataFrame([
+        {"code": "123456", "name": "테스트종목", "market": "KOSDAQ",
+         "group_code": "S", "market_cap": 1000, "listed_at": "20200101"},
+    ])
+    theme_map = pd.DataFrame([
+        {"code": "123456", "theme": "전기/전선"},
+        {"code": "123456", "theme": "원자력"},
+    ])
+
+    mb, cc, ap, iv, sm, em = _stub_fetches()
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         mb, cc, ap, iv, sm, em:
+        dashboard_tick(
+            session=s, message_ids={}, client=MagicMock(),
+            master_df=master,
+            theme_mapping_df=theme_map,
+            daily_ohlcv=None,
+            token="t", chat_id="c", now=now,
+        )
+
+    assert set(s.monitored["123456"].themes) == {"전기/전선", "원자력"}
+
+
+def test_manual_price_synthesized_from_bars_when_outside_top50():
+    """50위 밖 수동 종목: bars 마지막 close 로 합성된 snap_row 가 message 에 가격
+    표시되도록. render 가 snap_row 만 보므로 합성하지 않으면 "가격/회전율: —" 출력.
+    """
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("123456", now)
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+    master = pd.DataFrame([
+        {"code": "123456", "name": "테스트종목", "market": "KOSDAQ",
+         "group_code": "S", "market_cap": 1000, "listed_at": "20200101"},
+    ])
+    # 분봉 1개 — 5000원 + 거래대금 1억
+    fake_bars = pd.DataFrame([{
+        "time": "0930", "open": 4900, "high": 5100, "low": 4850,
+        "close": 5000, "volume": 20_000, "trading_value": 100_000_000,
+    }])
+
+    sm_resp = {"ok": True, "result": {"message_id": 999}}
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         patch("src.dashboard.worker.fetch_minute_bars", return_value=fake_bars), \
+         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         patch("src.dashboard.worker.send_message_single", return_value=sm_resp) as sm, \
+         patch("src.dashboard.worker.edit_message"):
+        dashboard_tick(
+            session=s, message_ids={}, client=MagicMock(),
+            master_df=master, theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c", now=now,
+        )
+
+    # send_message_single 호출 시 두 번째 위치 인자(text) 확인.
+    assert sm.call_count == 1
+    sent_text = sm.call_args.args[2] if len(sm.call_args.args) >= 3 else sm.call_args.kwargs.get("text", "")
+    assert "5,000원" in sent_text, f"합성 가격 누락: {sent_text}"
+    assert "가격/회전율: —" not in sent_text, f"합성 실패하여 fallback 라인 출력됨: {sent_text}"
+
+
+def test_manual_turnover_computed_from_market_cap():
+    """50위 밖 수동 종목: 회전율 = bars 일일 거래대금 / master_df market_cap.
+    회전율 계산식: (trading_value 원) / (market_cap 억원 × 1e8) × 100.
+    bars 합계 1억원 / 시총 1000억 = 0.1% 회전율.
+    """
+    s = MonitoringSession()
+    now = datetime(2026, 5, 11, 9, 30)
+    s.add_manual("123456", now)
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "005930", "name": "삼성전자",
+        "price": 79000, "prev_close": 78000, "daily_return": 1.28,
+        "intraday_high": 79100, "intraday_low": 78900,
+        "volume": 100_000, "trading_value": 50_000_000_000,
+        "is_limit_up": False, "market_cap": 4_800_000, "turnover": 0.1,
+    }])
+    master = pd.DataFrame([
+        {"code": "123456", "name": "테스트종목", "market": "KOSDAQ",
+         "group_code": "S", "market_cap": 1000, "listed_at": "20200101"},
+    ])
+    fake_bars = pd.DataFrame([{
+        "time": "0930", "open": 4900, "high": 5100, "low": 4850,
+        "close": 5000, "volume": 20_000, "trading_value": 100_000_000,
+    }])
+
+    sm_resp = {"ok": True, "result": {"message_id": 999}}
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
+         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
+         patch("src.dashboard.worker.fetch_minute_bars", return_value=fake_bars), \
+         patch("src.dashboard.worker.fetch_ccnl_strength", return_value=None), \
+         patch("src.dashboard.worker.fetch_asking_price", return_value=None), \
+         patch("src.dashboard.worker.fetch_investor_flow", return_value=None), \
+         patch("src.dashboard.worker.send_message_single", return_value=sm_resp) as sm, \
+         patch("src.dashboard.worker.edit_message"):
+        dashboard_tick(
+            session=s, message_ids={}, client=MagicMock(),
+            master_df=master, theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c", now=now,
+        )
+
+    sent_text = sm.call_args.args[2] if len(sm.call_args.args) >= 3 else sm.call_args.kwargs.get("text", "")
+    # 회전율 0.10% (= 1e8 / (1000 * 1e8) * 100)
+    assert "회전율" in sent_text and "0.1" in sent_text, f"회전율 누락: {sent_text}"
+    # 거래대금 1억 → 0.01억원 표시? _fmt_billion 동작 확인
+    assert "거래대금" in sent_text
+
+
 def test_manual_name_keeps_code_when_unknown_everywhere():
     """snap / master 모두 모르는 종목코드 → code 그대로 (fail-safe)."""
     s = MonitoringSession()

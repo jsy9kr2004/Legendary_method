@@ -37,7 +37,7 @@ from src.dashboard.state import (
     MonitoredStock,
     MonitoringSession,
 )
-from src.data.intraday import fetch_volume_rank
+from src.data.intraday import compute_turnover, fetch_volume_rank
 from src.data.intraday_realtime import (
     fetch_asking_price,
     fetch_ccnl_strength,
@@ -104,6 +104,87 @@ def _prev_day_volume(daily_ohlcv: pd.DataFrame | None, code: str) -> float:
     if v is None or v != v or float(v) <= 0:
         return float("nan")
     return float(v)
+
+
+def _prev_day_close(daily_ohlcv: pd.DataFrame | None, code: str) -> float:
+    """종목별 가장 최근 일봉 종가. daily_return 계산용. 없으면 NaN."""
+    if daily_ohlcv is None or daily_ohlcv.empty:
+        return float("nan")
+    df = daily_ohlcv[daily_ohlcv["code"].astype(str) == code]
+    if df.empty:
+        return float("nan")
+    df = df.sort_values("date")
+    v = df.iloc[-1].get("close")
+    if v is None or v != v or float(v) <= 0:
+        return float("nan")
+    return float(v)
+
+
+def _synthesize_snap_row(
+    code: str,
+    name: str,
+    bars: pd.DataFrame,
+    market_cap: float,
+    prev_close: float,
+) -> dict[str, Any] | None:
+    """거래대금 50위 밖 종목용 합성 snap_row.
+
+    수동/보유 종목이 50위 밖이면 fetch_volume_rank 의 snap_by_code 에 없어
+    render 가 "가격/회전율: —" 만 출력. 분봉(bars) + master_df(market_cap) +
+    daily_ohlcv(prev_close) 만으로 price/trading_value/turnover/daily_return
+    재구성. rank 는 None (50위 밖이라 순위 미표시).
+
+    bars 비어있거나 last close ≤ 0 이면 None 반환 → 호출자가 snap_row=None
+    유지하면 render 는 기존대로 "—" 처리.
+    """
+    if bars is None or bars.empty or "close" not in bars.columns:
+        return None
+    last_close_raw = bars.iloc[-1]["close"]
+    if last_close_raw is None or last_close_raw != last_close_raw or float(last_close_raw) <= 0:
+        return None
+    last_close = float(last_close_raw)
+
+    day_trading_value = 0
+    if "trading_value" in bars.columns:
+        s = bars["trading_value"].sum()
+        if s == s and s > 0:
+            day_trading_value = int(s)
+
+    high_val = last_close
+    low_val = last_close
+    if "high" in bars.columns:
+        h = bars["high"].max()
+        if h == h and h > 0:
+            high_val = float(h)
+    if "low" in bars.columns:
+        lo = bars["low"].min()
+        if lo == lo and lo > 0:
+            low_val = float(lo)
+
+    turnover_pct = compute_turnover(day_trading_value, int(market_cap)) if market_cap > 0 else float("nan")
+    daily_return_pct = (
+        (last_close / prev_close - 1.0) * 100.0
+        if prev_close == prev_close and prev_close > 0 else None
+    )
+
+    # int 캐스팅 — snap_by_code 원본 row 와 동일 dtype 유지 (render 의 `{price:,}원`
+    # 같은 포맷이 float 이면 "5,000.0원" 으로 출력되는 것 방지).
+    prev_close_int = int(prev_close) if prev_close == prev_close and prev_close > 0 else 0
+    return {
+        "rank": None,
+        "code": code,
+        "name": name,
+        "price": int(last_close),
+        "prev_close": prev_close_int,
+        "daily_return": daily_return_pct,
+        "intraday_high": int(high_val),
+        "intraday_low": int(low_val),
+        "volume": 0,
+        "trading_value": day_trading_value,
+        "is_limit_up": False,
+        "market_cap": int(market_cap) if market_cap > 0 else 0,
+        "turnover": turnover_pct if turnover_pct == turnover_pct else None,
+    }
 
 
 def _evaluate_rising_funnel(
@@ -384,17 +465,41 @@ def dashboard_tick(
     # 2c) 보유 종목 surface — holdings.json 의 모든 code 가 monitored 에 있어야 카드 표시.
     # _apply_buy 도 이걸 호출하지만, 데몬 재시작 / external holdings 변경 대비.
     # name 해상도: snap (거래대금 50위) → master_df (KRX 전종목) → code.
+    # master_meta_by_code 는 50위 밖 manual/hold 종목의 회전율 계산용 market_cap 도
+    # 동시에 노출 — 아래 monitored 루프 _synthesize_snap_row 가 사용.
     master_name_by_code: dict[str, str] = {}
+    master_market_cap_by_code: dict[str, float] = {}
     if (
         master_df is not None
         and not master_df.empty
         and "code" in master_df.columns
-        and "name" in master_df.columns
     ):
-        master_name_by_code = dict(zip(
-            master_df["code"].astype(str),
-            master_df["name"].astype(str),
-        ))
+        codes_str = master_df["code"].astype(str)
+        if "name" in master_df.columns:
+            master_name_by_code = dict(zip(codes_str, master_df["name"].astype(str)))
+        if "market_cap" in master_df.columns:
+            master_market_cap_by_code = dict(zip(
+                codes_str,
+                master_df["market_cap"].fillna(0).astype(float),
+            ))
+
+    # 테마 보완 dict — 한 종목이 여러 테마에 속할 수 있어 list[str]. monitored 풀의
+    # m.themes 가 비어있으면 (수동/보유 entry) 매 tick 채움. auto/rising 은 이미
+    # leaders/rising dict 의 themes 가 채워서 들어옴.
+    theme_map_by_code: dict[str, list[str]] = {}
+    if (
+        theme_mapping_df is not None
+        and not theme_mapping_df.empty
+        and "code" in theme_mapping_df.columns
+        and "theme" in theme_mapping_df.columns
+    ):
+        grouped = theme_mapping_df.groupby(
+            theme_mapping_df["code"].astype(str)
+        )["theme"].apply(list)
+        theme_map_by_code = {
+            c: [str(t) for t in themes] for c, themes in grouped.items()
+        }
+
     for h_code in holdings.keys():
         if h_code not in session.monitored:
             h_name = (
@@ -404,10 +509,11 @@ def dashboard_tick(
             )
             session.ensure_held_stock(h_code, h_name, now)
 
-    # 수동 등록 종목 name 보완 — add_manual 이 name=code 로 박은 entry 들을 매 tick
-    # snap → master_df fallback 으로 갱신. ensure_held_stock 의 `m.name == m.code 시
-    # 갱신` 패턴을 monitored 풀 전체로 확장. 거래대금 50위 밖 중소형주를 수동 등록
-    # 한 경우 "[🔵 수동] 123456 (123456)" 으로 종목명 누락되던 버그 해결.
+    # 수동 등록 종목 metadata 보완 — add_manual 이 name=code / themes=[] 로 박은
+    # entry 들을 매 tick snap → master_df / theme_mapping_df fallback 으로 갱신.
+    # 거래대금 50위 밖 중소형주를 수동 등록한 경우 "[🔵 수동] 123456 (123456)" /
+    # "테마: —" / "가격/회전율: —" 로 누락되던 버그 해결 (가격/회전율은 monitored
+    # 루프의 snap_row 합성에서 별도 처리).
     for mcode, m in session.monitored.items():
         if m.name == mcode:
             resolved = (
@@ -416,6 +522,10 @@ def dashboard_tick(
             )
             if resolved:
                 m.name = resolved
+        if not m.themes:
+            themes = theme_map_by_code.get(mcode)
+            if themes:
+                m.themes = themes
 
     # 2d) prune — flag 없고 보유도 아닌 종목 제거 + message 삭제
     holding_codes_set = set(holdings.keys())
@@ -505,6 +615,21 @@ def dashboard_tick(
         last_bar_value = (
             int(bars.tail(1)["trading_value"].iloc[0]) if not bars.empty else 0
         )
+        # 거래대금 50위 밖 수동/보유 종목: snap 에 없어 가격/거래대금/회전율이
+        # 카드에 "—" 로만 출력됨. bars + master_df(market_cap) + daily_ohlcv(prev_close)
+        # 로 합성. 합성 실패 (bars 비거나 close ≤ 0) 시 snap_row=None 유지 → render
+        # 기존 동작 ("가격/회전율: —").
+        if snap_row is None:
+            synth = _synthesize_snap_row(
+                code=code,
+                name=monitored.name or code,
+                bars=bars,
+                market_cap=master_market_cap_by_code.get(code, 0.0),
+                prev_close=_prev_day_close(daily_ohlcv, code),
+            )
+            if synth is not None:
+                snap_row = synth
+                snap_by_code[code] = synth  # 하단 grader / payload 도 동일 데이터 사용
         ccnl = cached.get("ccnl") if "ccnl" in cached else (
             fetch_ccnl_strength(client, code) if client else None
         )
