@@ -31,7 +31,14 @@ _INQUIRE_PRICE_ENDPOINT = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _INQUIRE_PRICE_TR_ID = "FHKST01010100"
 
 SNAPSHOT_COLUMNS = [
-    "rank",
+    "rank",          # KIS data_rank — 진짜 거래대금 순위 (ETF/펀드 포함 전체 시장 기준).
+                     # master 필터로 제외된 종목은 응답에서 빠지지만 보통주의 rank 는
+                     # KIS 원본 값 그대로 유지. 사용자가 HTS 거래대금 순위와 1:1 비교
+                     # 가능 (2026-05-18 정정 — 이전엔 master 필터 후 1부터 재부여하여
+                     # HTS 와 어긋남).
+    "turnover_rank", # master 필터 통과 종목들의 turnover 내림차순 순위 (1~top_n).
+                     # "거래대금 50위 안에서의 회전율 순위" — 절대 시장 순위 아님.
+                     # KIS API 가 회전율 순위는 별도 제공 X.
     "code",
     "name",
     "price",
@@ -143,6 +150,7 @@ def fetch_volume_rank(
         records.append(
             {
                 "rank": rank,
+                "turnover_rank": None,  # 아래에서 일괄 부여
                 "code": code,
                 "name": str(row.get("hts_kor_isnm", "")),
                 "price": price,
@@ -160,8 +168,13 @@ def fetch_volume_rank(
     if not records:
         return pd.DataFrame(columns=SNAPSHOT_COLUMNS)
     df = pd.DataFrame(records, columns=SNAPSHOT_COLUMNS).sort_values("rank").reset_index(drop=True)
-    # rank 재부여 — master 필터로 빠진 자리 메움
-    df["rank"] = range(1, len(df) + 1)
+    # 거래대금 rank 는 KIS data_rank 그대로 유지 (재부여 폐기, 2026-05-18 정정).
+    # 회전율 순위 부여 — master 필터 통과 종목 turnover desc. NaN 은 끝으로.
+    df["turnover_rank"] = (
+        df["turnover"]
+        .rank(method="min", ascending=False, na_option="bottom")
+        .astype("Int64")
+    )
     logger.debug(f"거래대금 순위 조회 완료: {len(df)}종목 (master 적용={master_df is not None})")
     return df
 

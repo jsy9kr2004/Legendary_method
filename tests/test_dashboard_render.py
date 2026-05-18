@@ -48,11 +48,15 @@ def test_render_basic_fields():
     assert "075180" in msg
     assert "⭐ 자동" in msg
     assert "🔴상한가" in msg
-    assert "+30.0%" in msg
-    assert "18.3%" in msg
+    # _fmt_pct 자릿수 통일 (2026-05-18) — 1자리 → 2자리 (report.fmt_pct 와 동일).
+    assert "+30.00%" in msg
+    assert "18.30%" in msg
     assert "4.2배" in msg
     assert "체결강도" in msg
     assert "142" in msg
+    # snap 에 rank / turnover_rank 안 넣어서 "(N위)" suffix 없어야 한다.
+    assert "거래대금: 1,247억  회전율: +18.30%" in msg
+    assert "(위)" not in msg
     # 외인/기관/프로그램 수급 라인 round 36 부활 — round 22 에서 제거됐던 라인.
     # R14 점수 합산은 round 29 ritual 통과 전엔 X, 카드 표시만.
     assert "수급:" in msg
@@ -151,7 +155,7 @@ def test_render_transition_candidate_in_header():
     )
     assert "🔥 부상 후보 a2" in msg
     assert "001440" in msg
-    assert "11.0%" in msg
+    assert "11.00%" in msg  # _fmt_pct 2자리 (2026-05-18 정정)
 
 
 def test_render_grace_candidate_in_header():
@@ -383,7 +387,7 @@ def test_render_holding_mode_basic():
     assert "(+1,200초)" in msg
     assert "92,500원" in msg
     assert "91,300" in msg
-    assert "(+1.3%)" in msg  # 손익률
+    assert "(+1.31%)" in msg  # 손익률 — _fmt_pct 2자리 (2026-05-18 정정)
     # 체결강도 5MA + 1MA
     assert "5MA 135" in msg
     assert "1MA 123" in msg
@@ -519,3 +523,51 @@ def test_render_themes_slash_join():
         now=datetime(2026, 5, 11, 9, 0),
     )
     assert "전기/전선 / 원자력 / AI데이터센터" in msg
+
+
+# ── rank / turnover_rank 표시 (2026-05-18) ──────────────────────────────────
+# 사용자 보고: "거래대금 순위가 카드에 표시되지만 KIS HTS 와 다르다 + 회전율
+# 순위는 안 보인다". 거래대금 rank 는 이제 KIS 원본 (data_rank), 회전율 옆에는
+# turnover_rank 표시.
+
+def test_render_shows_kis_data_rank_and_turnover_rank():
+    """snap_row 의 rank (KIS 원본) 가 거래대금 옆에, turnover_rank 가 회전율
+    옆에 표시.
+    """
+    snap = {
+        "rank": 4,                   # KIS 원본 거래대금 순위 (ETF 2개 빠진 사이)
+        "turnover_rank": 1,          # master 필터 통과 종목 중 회전율 1위
+        "price": 91300, "daily_return": 30.0, "is_limit_up": True,
+        "turnover": 18.3, "trading_value": 124_700_000_000,
+    }
+    msg = render_monitor_message(
+        _stock(),
+        snap,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        sparkline="", now=datetime(2026, 5, 11, 9, 32, 18),
+    )
+    # 거래대금: ...억 (4위)  회전율: +18.30% (1위)
+    assert "거래대금: 1,247억 (4위)  회전율: +18.30% (1위)" in msg, (
+        f"rank/turnover_rank 표시 누락: {msg}"
+    )
+
+
+def test_render_omits_turnover_rank_when_missing():
+    """50위 밖 종목(_synthesize_snap_row 가 만드는 합성 row) 처럼 rank /
+    turnover_rank 둘 다 None 이면 (위) suffix 자체 미출력.
+    """
+    snap = {
+        "rank": None, "turnover_rank": None,
+        "price": 5000, "daily_return": 4.17, "is_limit_up": False,
+        "turnover": 0.1, "trading_value": 100_000_000,
+    }
+    msg = render_monitor_message(
+        _stock(),
+        snap,
+        accel_ratio=None, recent_bar_value=None,
+        ccnl=None, asking=None, investor=None,
+        sparkline="", now=datetime(2026, 5, 11, 9, 32, 18),
+    )
+    assert "회전율: +0.10%" in msg
+    assert "(위)" not in msg, f"빈 rank 인데 (위) 출력됨: {msg}"

@@ -21,20 +21,34 @@ from src.jongbae.momentum import (
 
 
 def _fmt_pct(v: float | None) -> str:
+    """등락률/회전율 형식 — report.fmt_pct 와 동일 (자릿수/부호 정책 일치).
+
+    None/NaN 만 dashboard 관행대로 "—" 로 표시 (report 는 "N/A"). 사용자가
+    14:50 결정 레포트와 모니터링 카드를 한 채팅에서 비교할 때 같은 값이
+    같은 모양으로 보이도록 자릿수 통일 (2026-05-18 정정).
+    """
     if v is None or v != v:
         return "—"
     sign = "+" if v >= 0 else ""
-    return f"{sign}{v:.1f}%"
+    return f"{sign}{v:.2f}%"
 
 
 def _fmt_billion(v: int | float | None) -> str:
-    if v is None or v == 0:
+    """거래대금(원) → "{X.X}억" 형식. report.fmt_billion 과 동일 출력.
+
+    None/NaN 은 "—" 로 표시. 0 은 "0.0억" (값이 있는데 0 vs 데이터 없음 구분).
+    1000억 이상은 콤마 + 정수, 그 외는 소수 1자리. 사용자가 채널 간 형식
+    비일관성을 느끼던 문제 해결 (2026-05-18 정정).
+    """
+    if v is None or v != v:
         return "—"
-    if abs(v) >= 1e8:
-        return f"{v / 1e8:.0f}억"
-    if abs(v) >= 1e4:
-        return f"{v / 1e4:.0f}만"
-    return f"{v:,}"
+    try:
+        bil = v / 1e8
+    except (TypeError, ValueError):
+        return "—"
+    if abs(bil) >= 1000:
+        return f"{bil:,.0f}억"
+    return f"{bil:.1f}억"
 
 
 def _fmt_int_signed(v: int | None) -> str:
@@ -298,12 +312,22 @@ def render_monitor_message(
                 )
             else:
                 lines.append(f"+29% 매도가: {target_29:,}원")
-        # 거래대금 + 순위 (snapshot 의 rank) + 회전율
+        # 거래대금 + KIS 진짜 순위 / 회전율 + 거래대금 50위 안 회전율 순위.
+        # rank = KIS 시장 전체 거래대금 순위 (ETF 포함 — 보통주만 카드에 보여서
+        # "3위, 7위, 11위" 같이 sparse 할 수 있음. HTS 와 1:1 일치).
+        # turnover_rank = master 필터 통과 종목 중 회전율 desc 순위 (1~top_n).
         rank = snapshot_row.get("rank")
         rank_str = f" ({int(rank)}위)" if rank else ""
+        turnover_rank = snapshot_row.get("turnover_rank")
+        turnover_rank_str = (
+            f" ({int(turnover_rank)}위)"
+            if turnover_rank is not None and turnover_rank == turnover_rank
+            else ""
+        )
+        turnover_val_str = _fmt_pct(turnover) if turnover is not None else "—"
         lines.append(
-            f"거래대금: {_fmt_billion(trading_value)}{rank_str}  회전율: "
-            f"{_fmt_pct(turnover) if turnover is not None else '—'}"
+            f"거래대금: {_fmt_billion(trading_value)}{rank_str}  "
+            f"회전율: {turnover_val_str}{turnover_rank_str}"
         )
     else:
         lines.append(f"{now.strftime('%H:%M:%S')}  가격/회전율: —")
@@ -520,6 +544,7 @@ def build_monitor_payload(
         turnover = snapshot_row.get("turnover")
         trading_value = snapshot_row.get("trading_value")
         rank = snapshot_row.get("rank")
+        turnover_rank = snapshot_row.get("turnover_rank")
         sell_29_pct: int | None = None
         if prev_close > 0:
             target_29_raw = prev_close * 1.29
@@ -533,6 +558,7 @@ def build_monitor_payload(
         }
         volume_block = {
             "rank": int(rank) if rank else None,
+            "turnover_rank": int(turnover_rank) if turnover_rank is not None and turnover_rank == turnover_rank else None,
             "amount": _clean(trading_value),
             "turnover_pct": _clean(turnover),
         }
