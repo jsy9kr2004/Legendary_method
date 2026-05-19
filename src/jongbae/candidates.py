@@ -33,8 +33,9 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-MIN_DAILY_RETURN = 10.0   # R4 v2 (e) 하한 (round 41 이전: 20.0)
-MAX_DAILY_RETURN = 27.0   # R4 v2 (e) 상한 (round 41 신규)
+MIN_DAILY_RETURN = 10.0       # R4 v2 (e) 하한 (round 41 이전: 20.0)
+MAX_DAILY_RETURN = 27.0       # R4 v2 (e) 상한 (round 41 신규)
+MAX_DROP_FROM_HIGH_PCT = 10.0  # R4 v2 (c) 종가 고가-10% 이내
 INTRADAY_HIGH_THRESHOLD = 28.0
 HIGH_PULL_RANGE = (20.0, 25.0)
 
@@ -164,3 +165,65 @@ def accepted_candidates(candidates_df: pd.DataFrame) -> pd.DataFrame:
     if candidates_df.empty:
         return candidates_df
     return candidates_df[candidates_df["priority"] != PRIORITY_EXCLUDED].reset_index(drop=True)
+
+
+def apply_r4v2_post_filters(
+    candidate_dicts: list[dict[str, Any]],
+    daily_ohlcv: pd.DataFrame,
+    today: Any,
+) -> list[dict[str, Any]]:
+    """R4 v2 (c)(d) post-filter — fetch_quote 보강 후 OHLCV 가 있는 상태에서 적용.
+
+    (c) 종가 고가-10% 이내 — `(intraday_high - price) / intraday_high <= 10%`.
+        떡락 패턴 (긴 윗꼬리) 제외.
+    (d) 52주 신고가 — `intraday_high > max(past 250 daily close)`.
+        새 고가 돌파 종목만 채택. 데이터 부족 시 (lookback <60일) 통과.
+
+    Args:
+        candidate_dicts: accepted 후보 dict list. fetch_quote 보강 후 권장 (intraday_high
+            / price 가 0/NaN 이 아닌 상태). 0 이면 (c) skip.
+        daily_ohlcv: 전체 종목 일봉.
+        today: 기준 날짜 (`datetime.date`).
+
+    Returns:
+        통과 후보만 남긴 새 list. 각 dict 에 r4v2_check (dict) 추가 — 디버그/표시용:
+            {"close_within_10pct_high": bool|None, "is_52w_high": bool|None}.
+    """
+    from src.jongbae.historical import is_52w_high  # 순환 import 회피
+
+    survived: list[dict[str, Any]] = []
+    for c in candidate_dicts:
+        code = str(c.get("code", "")).zfill(6)
+        price = c.get("price") or 0
+        high = c.get("intraday_high") or 0
+        check: dict[str, Any] = {
+            "close_within_10pct_high": None,
+            "is_52w_high": None,
+        }
+
+        # (c) 종가 고가-10% 이내
+        if high > 0 and price > 0:
+            drop_pct = (high - price) / high * 100.0
+            check["close_within_10pct_high"] = bool(drop_pct <= MAX_DROP_FROM_HIGH_PCT)
+            if not check["close_within_10pct_high"]:
+                c["r4v2_check"] = check
+                c["exclusion_reason"] = (
+                    f"종가 고가 대비 -{drop_pct:.1f}% (R4 v2 (c) -10% 컷)"
+                )
+                c["priority"] = PRIORITY_EXCLUDED
+                continue
+
+        # (d) 52주 신고가
+        check["is_52w_high"] = is_52w_high(daily_ohlcv, code, today, high)
+        if check["is_52w_high"] is False:
+            c["r4v2_check"] = check
+            c["exclusion_reason"] = "52주 신고가 미달성 (R4 v2 (d) 컷)"
+            c["priority"] = PRIORITY_EXCLUDED
+            continue
+
+        c["r4v2_check"] = check
+        survived.append(c)
+
+    if not survived:
+        logger.info("[R4 v2] post-filter 후 후보 0개 — (c)(d) 컷 통과 종목 없음")
+    return survived

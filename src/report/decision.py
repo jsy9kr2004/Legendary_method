@@ -100,6 +100,31 @@ def _candidate_block(c: dict[str, Any]) -> str:
     if layer4_note:
         lines.append(f"  Layer 4: ⚠ {layer4_note}")
 
+    # R4 v2 보조 지표 — 1년 ret≥10 횟수 + 갭상 비율 (round 41 ④, 컷 X 표시만)
+    aux = c.get("historical_aux") or {}
+    n_ret10 = int(aux.get("n_ret10", 0) or 0)
+    if n_ret10 > 0:
+        n_gap = int(aux.get("n_gap_up", 0) or 0)
+        ratio = aux.get("ratio", float("nan"))
+        if ratio == ratio:  # not NaN
+            lines.append(
+                f"  📊 1년 ret≥10: {n_ret10}회 / 갭상 {n_gap}회 ({ratio*100:.0f}%)"
+            )
+        else:
+            lines.append(f"  📊 1년 ret≥10: {n_ret10}회 (갭상 데이터 없음)")
+
+    # R4 v2 (c)(d) 통과 표시
+    chk = c.get("r4v2_check") or {}
+    chk_parts: list[str] = []
+    if chk.get("close_within_10pct_high") is True:
+        chk_parts.append("✅ 종가 고가-10% 이내")
+    if chk.get("is_52w_high") is True:
+        chk_parts.append("✅ 52주 신고가")
+    elif chk.get("is_52w_high") is None and chk:
+        chk_parts.append("— 52주 신고가 (lookback 부족)")
+    if chk_parts:
+        lines.append(f"  R4 v2: {' / '.join(chk_parts)}")
+
     # 14:50 시그널 (표시만, 점수화 X)
     signals = c.get("intraday_signals") or {}
     signal_lines = _intraday_signal_lines(signals)
@@ -289,6 +314,8 @@ def build_decision_report(
         "",
         sep("─"),
         "• 본 레포트는 14:50 기준. 종가 직전 상황 변동 가능",
+        "• R4 v2 룰: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 "
+        "+ (d) 52주 신고가 + (e) 10≤ret≤27% + (f) Layer 표본≥5",
         "• NXT 청산 가능 여부: v1 예정",
     ]
 

@@ -566,8 +566,18 @@ def _send_decision_report(
     if client is not None and accepted_dicts:
         _enrich_candidates_with_quote(accepted_dicts, client)
 
-    candidates_with_stats: list[dict[str, Any]] = []
+    # R4 v2 (c) 종가 고가-10% 이내 + (d) 52주 신고가 post-filter (round 41).
+    # fetch_quote 보강 후 intraday_high / price 가 0 아닌 상태에서 적용.
     today = dt.date()
+    from src.jongbae.candidates import apply_r4v2_post_filters
+    if accepted_dicts and not daily_ohlcv.empty:
+        before = len(accepted_dicts)
+        accepted_dicts = apply_r4v2_post_filters(accepted_dicts, daily_ohlcv, today)
+        logger.info(
+            f"[결정] R4 v2 (c)(d) post-filter: {before}→{len(accepted_dicts)}종목"
+        )
+
+    candidates_with_stats: list[dict[str, Any]] = []
     for row in accepted_dicts:
         code = str(row.get("code", "")).zfill(6)
         close = int(row.get("price") or 0)
@@ -603,11 +613,16 @@ def _send_decision_report(
             if not theme_df.empty
             else []
         )
+        # R4 v2 보조 지표 — 1년 ret≥10% 횟수 + 갭상 비율 (round 41 ④)
+        from src.jongbae.historical import historical_ret10_gap_stats
+        ret10_aux = historical_ret10_gap_stats(daily_ohlcv, code, today)
+
         c: dict[str, Any] = dict(row)
         c["themes"] = themes
         c["layers"] = layers
         c["sizing_layer"] = sizing_layer_name
         c["sizing_stats"] = sizing_stats
+        c["historical_aux"] = ret10_aux
         candidates_with_stats.append(c)
 
     sizing_results = compute_sizing(candidates_with_stats)
