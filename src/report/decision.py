@@ -55,10 +55,12 @@ def _candidate_block(c: dict[str, Any]) -> str:
     layers = c.get("layers", {})
     sizing_layer = c.get("sizing_layer", "")
 
+    # R4 v2 (e) round 41 — normal 범위 10~27% (이전 20%↑). limit_up 은 27% 상한
+    # 컷에 자동 제외되므로 더는 후보로 안 나오나 backward-compat 위해 라벨 유지.
     priority_label = {
         "limit_up": "🔴 상한가",
         "high_pull": "🟡 고점풀백",
-        "normal": "🟢 +20%↑",
+        "normal": "🟢 +10~27%",
     }.get(priority, "")
 
     lines = [

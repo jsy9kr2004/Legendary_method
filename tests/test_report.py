@@ -385,6 +385,23 @@ def test_morning_report_empty_market_stats():
     assert "N/A" in report
 
 
+def test_morning_report_uses_change_rate_when_prev_close_missing():
+    """compute_market_stats 는 kospi_prev_close 를 안 채우고 kospi_change_rate 만
+    채움 (2026-05-19 발견). 모닝 레포트가 change_rate 를 직접 사용해야 KOSPI 줄이
+    'N/A' 가 아니라 정상 표시."""
+    report = build_morning_report(
+        market_stats={
+            "kospi_current": 2600.0, "kospi_change_rate": 0.78,
+            "kospi_60d_return": 5.2,
+        },
+        holdings=[],
+        report_dt=datetime(2026, 5, 6, 9, 30, tzinfo=KST),
+    )
+    assert "2,600.00" in report
+    # change_rate fallback 으로 +0.78% 표시 — N/A 아님
+    assert "KOSPI 시초:    N/A" not in report
+
+
 # ── afterhours report ────────────────────────────────────────────────────────
 
 def test_afterhours_report_contains_header():

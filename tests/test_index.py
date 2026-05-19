@@ -81,6 +81,31 @@ def test_fetch_index_quote_handles_list_output():
     assert q["current"] == 2600.0
 
 
+def test_compute_change_rate_fallback_uses_kis_value():
+    """KIS prdy_ctrt 가 정상이면 그대로 사용."""
+    from src.data.index import _compute_change_rate_fallback
+    assert _compute_change_rate_fallback({"change_rate": 1.25, "current": 7312.47, "prev_close": 7222.0}) == 1.25
+
+
+def test_compute_change_rate_fallback_computes_from_prev_close():
+    """KIS prdy_ctrt 비었으면 current/prev_close 로 계산. 2026-05-19 사용자 보고
+    회귀 — KOSPI 7312.47 (—) → 계산값으로 보강."""
+    from src.data.index import _compute_change_rate_fallback
+    cr = _compute_change_rate_fallback({
+        "change_rate": float("nan"),
+        "current": 7312.47,
+        "prev_close": 7200.0,
+    })
+    assert abs(cr - 1.5621) < 0.01  # (7312.47-7200)/7200 * 100
+
+
+def test_compute_change_rate_fallback_nan_when_no_data():
+    """current 도 prev_close 도 비면 NaN."""
+    from src.data.index import _compute_change_rate_fallback
+    cr = _compute_change_rate_fallback({"change_rate": float("nan")})
+    assert cr != cr  # NaN
+
+
 # ── fetch_index_daily ────────────────────────────────────────────────────────
 
 

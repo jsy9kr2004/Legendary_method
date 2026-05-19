@@ -322,6 +322,27 @@ def update_index_daily(
     return result
 
 
+def _compute_change_rate_fallback(quote: dict[str, Any]) -> float:
+    """fetch_index_quote 결과에서 change_rate (등락률 %) 를 안전하게 추출.
+
+    1순위 — KIS 응답의 `prdy_ctrt` (이미 % 단위, change_rate 필드).
+    2순위 — current / prev_close 로 직접 계산.
+    둘 다 못 구하면 NaN.
+
+    KIS `inquire-index-price` 가 일부 응답에서 prdy_ctrt 를 비워 주는 회귀 대응
+    (2026-05-19). fetch_quote OHLCV 보강과 같은 패턴.
+    """
+    cr = quote.get("change_rate", float("nan"))
+    if isinstance(cr, (int, float)) and cr == cr:  # not NaN
+        return float(cr)
+    current = quote.get("current", float("nan"))
+    prev = quote.get("prev_close", float("nan"))
+    if (isinstance(current, (int, float)) and current == current and current != 0
+            and isinstance(prev, (int, float)) and prev == prev and prev != 0):
+        return (current - prev) / prev * 100.0
+    return float("nan")
+
+
 def compute_market_stats(
     client: KISClient,
     daily_lookback_days: int = 252,
@@ -344,17 +365,20 @@ def compute_market_stats(
     """
     stats: dict[str, Any] = {}
 
-    # KOSPI 현재
+    # KOSPI 현재 — KIS 가 prdy_ctrt (등락률) 비워 줄 때 current / prev_close 로 계산
+    # fallback (2026-05-19 사용자 보고: 결정 레포트 "KOSPI 7312.47 (—)" — change_rate
+    # NaN 표시. inquire-index-price 응답 일부 필드 누락. fetch_quote OHLCV 보강과
+    # 같은 패턴).
     kospi_quote = fetch_index_quote(client, KOSPI_CODE)
     if kospi_quote:
         stats["kospi_current"] = kospi_quote["current"]
-        stats["kospi_change_rate"] = kospi_quote["change_rate"]
+        stats["kospi_change_rate"] = _compute_change_rate_fallback(kospi_quote)
 
     # KOSDAQ 현재
     kosdaq_quote = fetch_index_quote(client, KOSDAQ_CODE)
     if kosdaq_quote:
         stats["kosdaq_current"] = kosdaq_quote["current"]
-        stats["kosdaq_change_rate"] = kosdaq_quote["change_rate"]
+        stats["kosdaq_change_rate"] = _compute_change_rate_fallback(kosdaq_quote)
 
     # KOSPI 일자별 — 적재본 우선
     kospi_daily = pd.DataFrame()

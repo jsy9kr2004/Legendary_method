@@ -1,20 +1,30 @@
-"""종배 후보 추출 (R4).
+"""종배 후보 추출 (R4 v2 — round 41 → 2026-05-19 코드 적용).
 
-정량 정의:
+정량 정의 (R4 v2 (e) 부분 적용):
     조건 (모두 만족):
       (a) R1, R2, R3 통과 (시장 국면은 사람 판정, 유니버스/주도테마는 호출부에서)
-      (b) 일봉 종가 수익률 >= +20%
+      (b) **일봉 종가 수익률 10% ≤ ret ≤ 27%** ← R4 v2 (e)
       (c) historical 유사 사례 >= 5건 (R5에서 별도 검증)
 
-진입 우선순위:
-    PRIORITY_LIMIT_UP   (1순위): 주도테마 + 일봉 +20%↑ + 상한가 도달
-    PRIORITY_HIGH_PULL  (2순위): 일중 +28%↑ 찍고 +20~25% 영역으로 정리
-    PRIORITY_NORMAL     (3순위): 그 외 +20%↑ 조건 만족 (주도테마 안)
+    상한가 (+30%≈) 및 +28~29.5% "자리잡힘" 케이스는 상한 27% 컷에 의해 자동 제외.
+    `(a) 거래대금 50위 단일종목` `(c) 종가 고가-10% 이내` `(d) 52주 신고가`
+    `(f) Layer 표본 ≥5` 는 별도 round 작업 — plan.md round 41 TODO 참조.
 
-제외 (애매한 케이스):
-    - +28% 찍고 안 빠지고 +28%~30% 그대로 마감 (상한가 못 갔는데 자리 잡힘)
-    - 일중 +30% 찍고 +5%로 떡락 (시세 죽음)
+진입 우선순위 (eligible 범위 내):
+    PRIORITY_HIGH_PULL  (1순위): 일중 +28%↑ 찍고 +20~25% 영역으로 정리
+    PRIORITY_NORMAL     (2순위): 그 외 10~27% 조건 만족
+
+제외:
+    - daily_return < 10%  → "+x.x% (<10%)"
+    - daily_return > 27%  → "+x.x% (>27%, R4 v2 상한 컷)" (상한가 / 자리잡힘 포함)
     - 비주도테마 (이 모듈 호출 전에 leading_theme로 필터링)
+
+정정 이력:
+    - 2026-05-19 round 41 (e) 코드 적용: MIN 20→10, MAX 추가 27. 사용자 보고 —
+      진원생명과학(011000) +29.97% 가 후보로 진입한 회귀 fix.
+      `STUCK_AT_28_RANGE` / `DEAD_PULL_THRESHOLD` 제거 (모두 새 컷 범위 밖이라
+      자동 제외). `PRIORITY_LIMIT_UP` 상수는 backward-compat 위해 유지하지만
+      classify_priority 가 더는 반환하지 않음 (상한가 종목은 +30%≈ → 27% 초과).
 """
 from __future__ import annotations
 
@@ -23,13 +33,12 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-MIN_DAILY_RETURN = 20.0
+MIN_DAILY_RETURN = 10.0   # R4 v2 (e) 하한 (round 41 이전: 20.0)
+MAX_DAILY_RETURN = 27.0   # R4 v2 (e) 상한 (round 41 신규)
 INTRADAY_HIGH_THRESHOLD = 28.0
 HIGH_PULL_RANGE = (20.0, 25.0)
-DEAD_PULL_THRESHOLD = 5.0   # 일중 +28% 이후 종가 +5% 이하 → "떡락" 제외
-STUCK_AT_28_RANGE = (28.0, 29.5)  # +28~29.5% 그대로 마감 → "자리잡힘" 제외
 
-PRIORITY_LIMIT_UP = "limit_up"
+PRIORITY_LIMIT_UP = "limit_up"     # round 41 이후 classify_priority 는 반환 X (상한가는 27% 초과로 자동 제외). 상수는 storage / 다른 알림 경로 호환 위해 유지.
 PRIORITY_HIGH_PULL = "high_pull"
 PRIORITY_NORMAL = "normal"
 PRIORITY_EXCLUDED = "excluded"
@@ -49,46 +58,36 @@ def _intraday_high_pct(intraday_high: int, prev_close: int) -> float:
 
 
 def classify_priority(row: pd.Series) -> tuple[str, str | None]:
-    """단일 종목의 진입 우선순위 분류.
+    """단일 종목의 진입 우선순위 분류 (R4 v2 (e)).
 
     Returns:
         (priority, exclusion_reason) — exclusion_reason은 priority가 EXCLUDED일 때만 채움.
     """
     daily_return = float(row.get("daily_return", 0.0))
-    is_limit_up = bool(row.get("is_limit_up", False))
     intraday_high_pct = float(row.get("intraday_high_pct", 0.0))
 
-    # 1순위: 상한가 도달
-    if is_limit_up:
-        return PRIORITY_LIMIT_UP, None
+    # R4 v2 (e) 상한 컷 — 상한가(+30%) / 자리잡힘(+28~29.5%) 모두 여기서 제외.
+    if daily_return > MAX_DAILY_RETURN:
+        return PRIORITY_EXCLUDED, f"일봉 +{daily_return:.1f}% (>{MAX_DAILY_RETURN:.0f}%, R4 v2 상한 컷)"
 
-    # 제외 케이스 1: +30% 찍고 +5% 이하로 떡락
-    if intraday_high_pct >= INTRADAY_HIGH_THRESHOLD and daily_return <= DEAD_PULL_THRESHOLD:
-        return PRIORITY_EXCLUDED, f"일중 +{intraday_high_pct:.1f}% 후 종가 +{daily_return:.1f}%로 떡락"
+    # R4 v2 (e) 하한 컷
+    if daily_return < MIN_DAILY_RETURN:
+        return PRIORITY_EXCLUDED, f"일봉 +{daily_return:.1f}% (<{MIN_DAILY_RETURN:.0f}%)"
 
-    # 제외 케이스 2: +28~29.5% 그대로 마감 (상한가 못 갔는데 자리잡힘)
-    lo, hi = STUCK_AT_28_RANGE
-    if lo <= daily_return < hi and intraday_high_pct < 30.0:
-        return PRIORITY_EXCLUDED, f"+{daily_return:.1f}% 그대로 마감 (상한가 미도달)"
-
-    # 2순위: 일중 +28%↑ → 종가 +20~25%로 정리
+    # 1순위 (eligible 내): 일중 +28%↑ → 종가 +20~25%로 정리
     pull_lo, pull_hi = HIGH_PULL_RANGE
     if intraday_high_pct >= INTRADAY_HIGH_THRESHOLD and pull_lo <= daily_return <= pull_hi:
         return PRIORITY_HIGH_PULL, None
 
-    # 3순위: 일반 +20%↑
-    if daily_return >= MIN_DAILY_RETURN:
-        return PRIORITY_NORMAL, None
-
-    # +20% 미만은 후보 아님 (호출부에서 필터링됨)
-    return PRIORITY_EXCLUDED, f"일봉 +{daily_return:.1f}% (<+{MIN_DAILY_RETURN}%)"
+    # 2순위: 그 외 10~27% 일반
+    return PRIORITY_NORMAL, None
 
 
 def extract_candidates(
     snapshot_df: pd.DataFrame,
     leading_theme_codes: list[str],
 ) -> pd.DataFrame:
-    """주도테마 종목 + 일봉 +20%↑ 필터로 종배 후보 추출.
+    """주도테마 종목 + R4 v2 (e) 컷 (10% ≤ ret ≤ 27%) 으로 종배 후보 추출.
 
     Args:
         snapshot_df: 거래대금 순위 스냅샷 (intraday.SNAPSHOT_COLUMNS)
@@ -96,7 +95,8 @@ def extract_candidates(
 
     Returns:
         CANDIDATE_COLUMNS 스키마 DataFrame.
-        priority 별 정렬: limit_up → high_pull → normal → excluded
+        priority 별 정렬: high_pull → normal → excluded
+        (limit_up 은 R4 v2 (e) 상한 컷에 자동 제외 — round 41 이후 비활성)
         excluded 는 디버그/레포트 표시용으로 함께 반환.
     """
     if snapshot_df.empty:
@@ -118,8 +118,12 @@ def extract_candidates(
     in_theme["priority"] = [p[0] for p in priorities]
     in_theme["exclusion_reason"] = [p[1] for p in priorities]
 
-    # 일봉 +20% 미만은 명시적으로 제외 처리
-    in_theme.loc[in_theme["daily_return"] < MIN_DAILY_RETURN, "priority"] = PRIORITY_EXCLUDED
+    # R4 v2 (e) — 10% ≤ ret ≤ 27% 범위 외는 명시적으로 제외 (round 41)
+    in_theme.loc[
+        (in_theme["daily_return"] < MIN_DAILY_RETURN)
+        | (in_theme["daily_return"] > MAX_DAILY_RETURN),
+        "priority",
+    ] = PRIORITY_EXCLUDED
 
     priority_order = {
         PRIORITY_LIMIT_UP: 0,
