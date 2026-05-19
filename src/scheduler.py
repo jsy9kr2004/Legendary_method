@@ -469,6 +469,55 @@ def _today_volume_ratio(
     return float(today_volume / avg)
 
 
+def _enrich_candidates_with_quote(
+    candidate_dicts: list[dict[str, Any]],
+    client: KISClient,
+) -> None:
+    """결정 후보 dict 리스트의 누락된 OHLCV 필드를 fetch_quote 로 보강 (in-place).
+
+    KIS volume-rank 응답이 stck_prdy_clpr / stck_hgpr / acml_tr_pbmn 등을 빈 값으로
+    주는 케이스가 있어 snapshot 기반 후보 dict 의 prev_close/intraday_high/trading_value
+    등이 0 으로 채워짐. 결정 레포트에서는 후보 수가 적으니 (1~5) 종목별 fetch_quote
+    추가 1콜로 정확한 값 확보. snapshot 의 rank/turnover/market_cap/themes 는 보존.
+    intraday_high_pct 도 보강된 prev_close/intraday_high 로 재계산.
+    """
+    from src.data.intraday import fetch_quote
+    from src.jongbae.candidates import _intraday_high_pct
+
+    _MISSING_TARGETS = (
+        "prev_close", "intraday_high", "intraday_low",
+        "trading_value", "volume", "price", "daily_return", "is_limit_up",
+    )
+
+    def _is_missing(v: Any) -> bool:
+        if v is None:
+            return True
+        if isinstance(v, bool):
+            return False
+        if isinstance(v, (int, float)):
+            return v == 0 or v != v  # 0 or NaN
+        return False
+
+    for base in candidate_dicts:
+        code = str(base.get("code", "")).zfill(6)
+        if not code:
+            continue
+        q = fetch_quote(client, code)
+        if q is None:
+            continue
+        for field in _MISSING_TARGETS:
+            if _is_missing(base.get(field)) and not _is_missing(q.get(field)):
+                base[field] = q[field]
+        # intraday_high_pct 재계산 (보강 후 값으로)
+        try:
+            high = int(base.get("intraday_high") or 0)
+            prev = int(base.get("prev_close") or 0)
+            if high > 0 and prev > 0:
+                base["intraday_high_pct"] = _intraday_high_pct(high, prev)
+        except (TypeError, ValueError):
+            pass
+
+
 def _send_decision_report(
     snapshot_df,
     settings: Settings,
@@ -502,21 +551,33 @@ def _send_decision_report(
     candidates_df = extract_candidates(snapshot_df, leading_codes)
     accepted = accepted_candidates(candidates_df)
 
+    # KIS volume-rank 응답이 일부 종목에서 prev_close / intraday_high / trading_value
+    # 필드를 비워서 주는 케이스가 있음 (2026-05-19 사용자 보고 — 진원생명과학 011000
+    # 상한가 종목의 prev_close=0, intraday_high=0, trading_value=0 → 표시 깨짐 +
+    # close_position 계산 깨짐 → Layer 3 매칭 불가). 결정 레포트는 후보 N 이 작으니
+    # (보통 1~5) 후보별로 fetch_quote 추가 호출해서 누락 필드 보강. snapshot 의
+    # rank/turnover/themes 는 살리고 OHLCV 만 덮어씀.
+    accepted_dicts: list[dict[str, Any]] = [row.to_dict() for _, row in accepted.iterrows()]
+    if client is not None and accepted_dicts:
+        _enrich_candidates_with_quote(accepted_dicts, client)
+
     candidates_with_stats: list[dict[str, Any]] = []
     today = dt.date()
-    for _, row in accepted.iterrows():
-        code = str(row["code"])
-        close = int(row.get("price", 0))
-        high = int(row.get("intraday_high", close))
-        low_raw = int(row.get("intraday_low", 0) or 0)
+    for row in accepted_dicts:
+        code = str(row.get("code", "")).zfill(6)
+        close = int(row.get("price") or 0)
+        high_raw = int(row.get("intraday_high") or 0)
+        high = high_raw if high_raw > 0 else close
+        low_raw = int(row.get("intraday_low") or 0)
         low = low_raw if low_raw > 0 else int(close * 0.85)
+        prev_close_val = int(row.get("prev_close") or 0) or close
         cp = close_position(
-            open_p=float(row.get("prev_close", close)),
+            open_p=float(prev_close_val),
             high=float(high),
             low=float(low),
             close=float(close),
         )
-        vol_ratio = _today_volume_ratio(daily_ohlcv, code, today, int(row.get("volume", 0)))
+        vol_ratio = _today_volume_ratio(daily_ohlcv, code, today, int(row.get("volume") or 0))
         layers = historical_4layer(
             daily_ohlcv,
             today_close_pos=cp,
@@ -537,7 +598,7 @@ def _send_decision_report(
             if not theme_df.empty
             else []
         )
-        c: dict[str, Any] = row.to_dict()
+        c: dict[str, Any] = dict(row)
         c["themes"] = themes
         c["layers"] = layers
         c["sizing_layer"] = sizing_layer_name
