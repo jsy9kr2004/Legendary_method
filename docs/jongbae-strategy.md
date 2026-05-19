@@ -189,27 +189,52 @@
 - +28% 찍고 안 빠지고 그대로 마감 (상한가 못 갔는데 자리 잡힘)
 - 일중 +30% 찍고 +5%로 떡락 (시세 죽음)
 
-**⚠ v2 사후 검증 결과 — 무효화 (2026-05-19 round 41 후속 2, 거래대금 fix):**
+**v2 사후 검증 결과 — 정확성 재확인 (2026-05-19 round 41 후속 3, backtest 재실행):**
 
-본 표의 5/11~5/14 backtest 는 KIS `FID_BLNG_CLS_CODE="0"` (평균거래량) 버그
-하의 universe 에서 측정됐다. "거래대금 top 50" 라벨이 사실은 "거래량 top 30"
-이었음. fix (`"3"` = 거래금액순) 적용 후 universe 가 KODEX/TIGER ETF 도배에서
-삼성전자/SK하이닉스 중심으로 완전히 바뀌므로 본 결과는 의미가 없어진다.
+round 41 후속 2 에서 KIS API 운영이 거래량 universe 였다는 사실이 드러나
+본 표 결과도 함께 의심받았으나, 재실행 결과 (`scripts/backtest_r4v2.py`,
+`data/backtest/summary.md`) **round 41 본문 backtest 는 daily_ohlcv 기반이라
+처음부터 정확한 거래대금 universe 였음 확인**:
+- 최대 갭상 LG전자 5/14 +17.97% — 재실행 결과와 일치 ✓
+- 최악 갭하락 엑스게이트 5/13 -4.88% — 재실행 결과와 일치 ✓
 
-R4 v2 룰 로직 자체 (10% ≤ ret ≤ 27% / 종가 고가-10% 이내 / 52주 신고가 soft /
-Layer 표본 soft) 는 universe 와 무관한 일봉 컷이므로 유지 가능. 단 채택 근거의
-"갭상 확률 58.8% / 평균 +2.23%" 같은 정량값은 거래대금 universe 로 재측정 필요.
+표 그대로 유효. 단 종목 수 차이 (본문 17 vs 재실행 30) 는 본문이 그 시점
+(d)(f) hard cut 적용 결과이고, 후속에서 (d)(f) soft 로 정정한 현재 운영 룰
+기준 정확한 결과는 재실행본 (`data/backtest/r4v2_4d_511_514_top50.csv`).
 
-| 지표 | 값 (구 — 거래량 universe 기준, 무효) |
-|---|---|
-| 총 후보 (4일 합계) | 18 |
-| 갭상 확률 | 58.8% (cap≤27 적용 시 17종목 기준) |
-| 평균 갭상률 | +2.23% |
-| 중앙 갭상률 | +0.43% |
-| 평균 일중 고점 매도 | +4.97% |
-| 최대 갭상 | LG전자 5/14 **+17.97%** |
-| 최악 갭하락 | 엑스게이트 5/13 **-4.88%** (모든 갭하락 ≤-5%) |
-| 다음날 종가까지 보유 시 평균 | -2.63% (시초 매도 정책 정당화) |
+| 지표 | 본문 (top 50, 4d, (d)(f) hard) | 재실행 (top 50, 4d, hard=a,b,c,e만) |
+|---|---|---|
+| 총 후보 | 17 | 30 |
+| 갭상 확률 | 58.8% | 70.0% |
+| 평균 갭상률 | +2.23% | +2.04% |
+| 중앙 갭상률 | +0.43% | +1.05% |
+| 평균 일중 고점 매도 | +4.97% | (미측정 — 분봉 부재) |
+| 최대 갭상 | LG전자 5/14 **+17.97%** | 동일 ✓ |
+| 최악 갭하락 | 엑스게이트 5/13 **-4.88%** | 동일 ✓ |
+| 다음날 종가까지 보유 시 평균 | -2.63% | -3.41% |
+
+**30 vs 50 universe 비교 (재실행, hard=a,b,c,e, 4영업일):**
+
+| top_n | N | P(갭상) | 평균갭 | 다음날 종가 평균 |
+|---|---|---|---|---|
+| 30 | 20 | 80.0% | +2.96% | -3.41% |
+| 50 | 30 | 70.0% | +2.04% | -3.41% |
+
+→ 30→50 확장 시 후보 풀 50% 증가, 평균 갭률 +2.96%→+2.04% / P(갭상) 80%→70%
+감소. 다양성 vs 신호 강도 trade-off. 현재 코드는 50 universe 채택 (운영
+universe 와 backtest 일치 + 후보 다양성 확보).
+
+**KIS API 운영 universe 와의 관계 (중요):**
+- 본 backtest = daily_ohlcv 기반 → 정확한 거래대금 universe 였음.
+- 5/12~5/18 실제 KIS API 운영 = `FID_BLNG_CLS_CODE="0"` 버그로 거래량 universe
+  → 5일 연속 0종목 현상. backtest 의 통과 종목들이 운영의 거래량 30위 밖에
+  있어 누락. **즉 backtest 와 운영 universe 가 어긋났던 게 0종목 본질**, backtest
+  자체가 무효였던 게 아님.
+- round 41 후속 2 (FID fix) + 후속 3 (30→50 가격 분할) 적용 후 다음 영업일
+  (5/20) 부터 backtest 와 일치하는 운영 universe 진입 예상.
+
+시초 매도 정책은 그대로 유지 — 다음날 종가 평균 -3.41% / 시초 평균 +2.04% 라
+시초 매도 알파 명백.
 
 **한계 (명시):**
 - 표본 4일 — KOSPI 60일 +35~46% 강세장에서만 측정. 약세장 효과 미검증.
@@ -677,6 +702,7 @@ entry_bar_low    = 진입 직전 1분봉 저점
 | Round | 잘못 알았던 것 | 정정 |
 |---|---|---|
 | 41 | 결정 레포트가 5/12~5/18 5일 연속 후보 0종목인데도 운영 유지. 원인 진단 후 사용자(Zeta) 가 사후 검증으로 R4 v2 룰 확정. **(a) R3 (v0 거래대금 50위 카운트) 가 항상 대형주 테마만 잡음** — 5/12 5G(005930 삼전), 5/13 5G/자동차부품/전기차/스마트폰, 5/18 5G 등. 대형주 일봉 변동성으로는 R4 v0 의 +20%↑ 컷 영영 통과 못함. R3 v1 (breadth + 회전율 + 평균상승률 z-score) 은 docstring/config 변수만 있고 본체 미구현. **(b) 시장엔 매일 +20%↑ 단일종목 10~31개 있음** (5/11 19, 5/13 31, 5/14 27, 5/15 24 — daily ohlcv 측정). 거의 다 거래대금 절대값 top100 밖. CLAUDE.md "거래대금 절대값 1위 = 주도주 함정" 경고 그대로 적중. **(c) "주도섹터 안" 제약 풀고 거래대금 top50 만 universe 로 잡아도 진성 갭상 종목 거의 못 잡음** — 5/12 갭상 top3 (피델릭스/엠로/크레오에스지) 거래대금 순위 886/1161/2456위, LG(149위)가 그나마 가까웠음. 즉 absolute 정렬 자체가 단타 universe 와 어긋남. **(d) "안전 종배 (top50 안 단순 정량 컷)" 와 "진짜 단타 종배 (회전율 + 전날 상한가 후 점상한가)" 는 다른 가설** — 본 round 는 (a)~(c) 진단 후 안전 종배 채널만 v2 로 확정. 진짜 단타 종배는 시총 데이터 부재(`stocks.parquet.market_cap=0` 미해결) 로 보류. | round 41 (사후 검증 기반 R4 v2 확정, 코드 적용은 후속 라운드): ①R4 v2 진입 룰 — `(a) 거래대금 50위 단일종목 + (b) 일봉 상승 + (c) 종가 고가-10% 이내 + (d) 52주 신고가 (250일 일중 고가 갱신) + (e) 10% ≤ ret ≤ 27% + (f) historical Layer 표본 ≥5`. ②**ret 상한 27% cap 채택** — 점상한가(`high==close`) + ret≥29% 종목 14:50 매수 불가 회피. 5일 backtest 종목 21개 모두 `high>close` (자연 제외 효과) + ret≥29% 0개. 최고 ret 가 제주반도체 +28.4% (1개) — cap 27 로 잘림. 안전 마진 3%. ③**52주 신고가 채택 (60일/120일/250일 비교 후)** — 60일 신고가가 갭상 확률은 약간 높지만(69.6% vs 67.4%) 52주 신고가가 사용자 직관과 부합 + 시그널 강도 안정. ret 컷과 결합 시 60/120/250 결과 거의 동일(20/20/18 종목) — 큰 차이 없음. ④**historical 갭상 비율 (1년 ret≥10 횟수 + 그중 갭상 횟수 + 비율)** 은 카드 보조 정보로만 표시, 컷으로 사용 X. 50% 컷 + 표본 ≥3 적용 시 갭상 확률 58.8% → 55.6% 으로 오히려 약간 떨어짐 (5일 표본 한계 가능). 단골 종배 종목 식별엔 유용 (대한광통신 78%/빛과전자 80%/한화갤러리아 100%). ⑤**R3 (주도섹터) 는 그대로 유지** — 결정 레포트 헤더의 "최종 주도테마" 섹션 + M6 모니터링용 식별만. 결정 후보 universe 컷에서는 R4 v2 가 R3 를 우회. ⑥**시초 매도 정책 재확인** — 5일 backtest 다음날 종가까지 보유 시 평균 -2.63%. CLAUDE.md "9:00 KRX 시초 매도" 룰 정당화. 일중 고점 매도 시 평균 +4.97% — 트레일링 익절(R15 B) 다듬을 가치 있음. ⑦**ETF/ETN/리츠/스팩/펀드 필터 활용** — `src/data/master.is_tradable_for_jongbae` 그대로 R4 v2 universe 컷에 적용. 5/12 갭상 top3 가 100% top50 밖이라 universe 좁힘 영향 없음 (모두 거래대금 600위 이상). ⑧**코드 적용 미완** — `src/jongbae/candidates.py:26` `MIN_DAILY_RETURN=20.0`, R3 후보 필터 의존성 (`extract_candidates(snapshot_df, leading_theme_codes)`), `pipeline.py:118` 호출부 모두 v0 그대로. R4 v2 적용은 후속 라운드의 `extract_candidates_v2()` 또는 R3 의존 분리 PR. plan.md 기술 부채에 항목 추가. **사후 검증 한계 명시**: 표본 4일 (KOSPI 60일 +35~46% 강세장) + 분봉 부재 → 14:50 매수 가능성 추정만. 약세장 효과 미검증. 누적 데이터 1~3개월 후 재검증. **5일 backtest 핵심 결과**: 17종목, 갭상 확률 58.8%, 평균 갭상 +2.23%, 최대 LG전자 5/14 +17.97%, 최악 엑스게이트 -4.88% (손실 모두 ≤-5%). |
+| 41 후속 3 (backtest 재실행) | round 41 후속 2 에서 backtest 결과도 무효일까 우려. 사용자 (Zeta) "R4 v2 backtest 재실행도 해줘". 재실행 (`scripts/backtest_r4v2.py`, daily_ohlcv 기반): 최대 갭상 LG전자 5/14 +17.97% / 최악 엑스게이트 5/13 -4.88% **둘 다 round 41 본문 결과와 정확히 일치** → 본문 backtest 는 처음부터 daily_ohlcv 기반이라 거래대금 universe 가 정확했음을 확인. 운영 universe 만 거래량이었던 게 진짜 문제 (= 5일 연속 0종목의 본질). 종목 수 차이 (본문 17 vs 재실행 30) 는 (d)(f) hard→soft 정정 차이로 설명. **30 vs 50 universe 비교 (4영업일, hard=a,b,c,e)**: 30위 N=20 P=80.0% 평균+2.96% / 50위 N=30 P=70.0% 평균+2.04%. 다양성 vs 신호 강도 trade-off. | round 41 후속 3 (backtest 재실행 + strategy.md 정정): ①`scripts/backtest_r4v2.py` 신규 — daily_ohlcv 의 (date, code) 별 거래대금 desc top_n cut → (a)(b)(c)(e) hard cut → 다음 영업일 갭상 측정. master 필터 적용. change_rate NaN 케이스 위해 종목별 close pct_change 로 ret 자체 계산. ②`data/backtest/` 디렉터리 신설 — top30/top50 × 4d/5d CSV 4 파일 + `summary.md`. ③`docs/jongbae-strategy.md` v2 결과 표 "무효화" → "정확성 재확인" 으로 정정 + 30 vs 50 비교 + KIS 운영 universe 와의 관계 명시. ④`docs/plan.md` backtest 재실행 항목 [x] 처리 + R4 v2 30 vs 50 universe 의사결정 TODO 추가. **검증된 핵심**: round 41 본문 backtest 정확성 + 30→50 확장의 trade-off (후보 50% ↑, 평균 갭 33% ↓). 다음 영업일 5/20 부터 운영 universe 도 backtest 일치 진입. |
 | 41 후속 2 후속 (30→50 확장) | round 41 후속 2 직후 사용자(Zeta) "50위 가져오는 방법 찾자". KIS volume-rank 가 한 호출당 30개 hard cap. 진단 (`scripts/diag_volume_rank.py --plan-b`): ctx 페이지네이션 미지원 (`ctx_area_fk*` 없음 + `tr_cont=None`), `FID_COND_MRKT_DIV_CODE` 시장 분리 미지원 (J 외 INVALID), **가격 범위 분할 작동 확인** (`FID_INPUT_PRICE_1/_2` 가 실제 가격 필터). 3회 호출 합집합 90 고유 종목 → 거래대금 desc top 50 = 1위 삼성전자(8.4조) ~ 50위 대우건설(2,195억) 완벽 cover. | round 41 후속 3 (30→50 확장): ①`src/data/intraday._PRICE_BUCKETS = [(0,10k), (10001,100k), (100001,~)]` 상수 + `_KIS_PAGE_SIZE = 30` 박음. ②`_fetch_volume_rank_page` / `_parse_volume_rank_row` helper 추출 (테스트 가능성 ↑). ③`fetch_volume_rank` 가 `top_n ≤ 30` 일 때 단일 호출 모드 (기존), `top_n > 30` 일 때 가격 버킷 3회 호출 → union (중복 시 trading_value 큰 쪽) → trading_value desc top_n 컷 → rank 글로벌 재부여. ④버킷 일부 실패 (HTTP 5xx) 시 살아남은 버킷 결과로 부분 응답 — 호출부가 `len(df)` 로 정상/부분/실패 구분 가능. ⑤회귀 테스트 5건: `test_fetch_volume_rank_price_bucket_mode_when_top_n_over_30` (3회 호출 + 50 cover + rank 재부여) + 단일 호출 모드 + 중복 제거 (trading_value max) + 부분 실패 + master 필터. 906 pass. ⑥문서: `docs/data-infra.md` API 한계 섹션에 가격 분할 우회법 명시, `docs/plan.md` 기술 부채 [x] 처리. **운영 영향**: 14:50 cron / M6 funnel tick 의 KIS 호출 1→3회. dual key rate limit ~40 req/s 한도 안. **rank 의미**: 버킷 모드의 rank 는 KIS data_rank 가 아닌 union 정렬 추정치. 정확한 시장 전체 순위는 KIS 가 1회 30개만 주는 한 v0 한계 — 1~30위는 단일 호출 모드와 동일, 31~50위는 추정. **다음 영업일 (2026-05-20) 14:50 cron 부터 진짜 거래대금 50위 universe 진입**. R4 v2 backtest 재검증은 누적 데이터 5일~ 후 (plan.md 기술 부채). |
 | 41 후속 2 (★ critical) | 2026-05-19 사용자(Zeta) "너가 보여준거 거래대금이 아니라 거래량인거 같은데?". 14:50 스냅샷 검증: KIS rank 1 KODEX 200선물인버스2X (거래대금 1,187억 / 거래량 96.5억주), rank 15 삼성전자 (거래대금 6.8조 / 거래량 2,500만주) — rank 가 **거래량 desc** 와 완벽 일치, **거래대금 desc** 와 어긋남. 원인: `src/data/intraday.fetch_volume_rank` 의 `FID_BLNG_CLS_CODE="0"` (= 평균거래량). 정상은 `"3"` (= 거래금액순). **영향 범위 (대규모)**: ①M5.5 round 41 backtest 5일 분석의 "거래대금 top 50" 라벨이 사실은 "거래량 top 30" — R4 v2 룰 채택 근거 자체가 잘못된 universe 에서 도출. ②5/12~5/18 5일 연속 0종목 현상도 거래량 universe (KODEX/TIGER ETF 가 1~5위 점령) 에서 single-stock +20% 종목이 거의 없었기 때문 (master 필터로 ETF 빠지면 universe 가 더 좁아짐). ③R3 주도섹터 식별 universe (`LEADING_SECTOR_TOP_N=50`) + M6 모니터링 funnel surface (`_WATCH_TOP_N=50`) + 회전율 계산용 universe 모두 같은 endpoint 사용 → 동일 버그. ④KIS volume-rank 가 한 호출당 30개 상한 — `top_n=50` 인자는 추가 컷일 뿐 endpoint 확장 X (별도 round). | round 41 후속 2 (FID_BLNG_CLS_CODE fix + 거래량/거래대금 구분 명시): ①`src/data/intraday._VOLUME_RANK_BLNG_CLS_TRADING_VALUE = "3"` 상수 신설 + params 에 적용. ②모듈 docstring 에 FID_BLNG_CLS_CODE 값 표 + 이전 버그 경고 박음. SNAPSHOT_COLUMNS 의 rank 컬럼 주석에 "거래량 아님" 명시. ③`tests/test_intraday.test_fetch_volume_rank_sends_trading_value_sort_axis` + `test_volume_rank_blng_cls_constant_is_trading_value` 회귀 테스트 2 신규 — 누가 다시 "0" 으로 바꾸면 즉시 실패. ④`CLAUDE.md` "절대 헷갈리지 말 것" 최상단에 거래량≠거래대금 항목 추가 + "핵심 도메인 용어" 표에 거래량/거래대금 행 신설. ⑤본 문서 정정 이력 (현 행). **무효화 표시**: round 41 본문의 "5일 backtest 17종목, 갭상 확률 58.8%, 평균 갭상 +2.23%" 결과는 거래량 universe 기준. fix 적용 후 거래대금 universe 로 다시 5일~ 누적 측정 후 R4 v2 룰 재검증 필요. R4 v2 자체 (10% ≤ ret ≤ 27%, 종가 고가-10% 이내 등) 는 universe 와 무관한 일봉 컷이므로 룰 로직은 유지 가능. **운영 영향**: fix 다음 영업일부터 진짜 거래대금 30위 universe 진입. KIS 30 상한 → 50 확장은 별도 endpoint (예: 종가 거래대금 ranking) 또는 자체 정렬 (전종목 시세 일괄 후 sort) 필요. **사용자 톤**: "거래량과 거래대금은 진짜 구분해서 봐야 해" — 같은 실수 재발 방지 위해 문서/메타파일에 명시 요청. |
 | 41 후속 | round 41 R4 v2 룰 코드 적용 진행 중 사용자(Zeta) 발견 (2026-05-19): (d) 52주 신고가 + (f) Layer 표본 ≥5 를 hard cut 으로 박았더니 5일 backtest 표본 한계 + (d) 가드 까다로워서 후보 0~1종목으로 좁아짐 (진원생명과학 1종목만 통과 후 다른 검증으로 발견). 사용자 지적: "(d)(f) 는 보조 지표로만 보여주고 hard cut 에서는 제외시켜줘. 문서와 코드 둘다 반영해놔줘" — round 41 본문이 (d)(f) 를 hard 로 박았던 결정 자체를 정정. | round 41 후속 ((d)(f) hard→soft 정정): ①`src/jongbae/candidates.apply_r4v2_post_filters` (d) 52주 신고가 hard cut 제거 — `is_52w_high` 결과 (True/False/None) 를 `r4v2_check["is_52w_high"]` 에 저장만, 후보 탈락 X. ②`src/scheduler._send_decision_report` + `src/pipeline.run_pipeline` `has_enough_samples` 가드 `continue` 제거 — sample_sufficient False 도 후보 유지, candidate dict 에 `sample_sufficient` 키 저장. Kelly 만 None 으로 나오고 Sharpe/Equal 은 정상. ③`src/report/decision._candidate_block` R4 v2 표시 라인 갱신: (c) 통과 ✅ + (d) ✓/✗/— 항상 표시 + (f) 표본 부족 시 ⚠ 경고. 푸터 hard/soft 명시 분리. ④문서 — `docs/jongbae-strategy.md` v2 섹션을 "Hard cut" / "Soft 보조 지표" 두 블록으로 재정렬, 정정 사유 명시. `candidates.py` 모듈 docstring 도 갱신. ⑤테스트: `test_r4v2_post_filter_excludes_when_not_52w_high` 의도 반전 → `_52w_high_is_soft_keeps_candidate` (탈락 X 검증). 896 pass. **사용자 정정 의도**: 5일 backtest 같은 작은 표본으로는 (d)(f) 의 통계적 의미가 약함 + 결과적으로 후보가 너무 적게 살아남아 운영 의미 X. 보조 지표로 표시는 유지해서 의사결정 보조하되 hard cut 은 (a)(b)(c)(e) 만. (b) 는 (e) 의 하한 10% 가 strict subset 이라 별도 코드 X. |
