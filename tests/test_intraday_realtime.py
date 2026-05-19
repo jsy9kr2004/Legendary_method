@@ -6,12 +6,20 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import httpx
+
 from src.data.intraday_realtime import (
     fetch_asking_price,
     fetch_ccnl_strength,
     fetch_investor_flow,
     fetch_minute_bars,
 )
+
+
+def _http_status_error(status: int = 500) -> httpx.HTTPStatusError:
+    req = httpx.Request("GET", "https://openapi.koreainvestment.com:9443/x")
+    resp = httpx.Response(status, request=req, text="server error")
+    return httpx.HTTPStatusError(f"Server error '{status}'", request=req, response=resp)
 
 
 def _client(payload: dict) -> MagicMock:
@@ -71,6 +79,32 @@ def test_fetch_minute_bars_api_error_returns_empty():
     c.get.side_effect = KISApiError("ERR", "ERR", "test", {})
     df = fetch_minute_bars(c, "005930")
     assert df.empty
+
+
+def test_fetch_minute_bars_http_500_returns_empty():
+    """KIS 서버 5xx (tenacity 재시도 후 reraise) — 모니터링 tick 보호."""
+    c = MagicMock()
+    c.get.side_effect = _http_status_error(500)
+    df = fetch_minute_bars(c, "229200")
+    assert df.empty
+
+
+def test_fetch_ccnl_http_500_returns_none():
+    c = MagicMock()
+    c.get.side_effect = _http_status_error(503)
+    assert fetch_ccnl_strength(c, "229200") is None
+
+
+def test_fetch_asking_price_transport_error_returns_none():
+    c = MagicMock()
+    c.get.side_effect = httpx.ConnectError("Connection refused")
+    assert fetch_asking_price(c, "229200") is None
+
+
+def test_fetch_investor_flow_http_500_returns_none():
+    c = MagicMock()
+    c.get.side_effect = _http_status_error(500)
+    assert fetch_investor_flow(c, "229200") is None
 
 
 # ── fetch_ccnl_strength ──────────────────────────────────────────────────────

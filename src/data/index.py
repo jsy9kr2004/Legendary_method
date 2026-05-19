@@ -19,6 +19,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pandas as pd
 from loguru import logger
 
@@ -78,6 +79,9 @@ def fetch_index_quote(client: KISClient, index_code: str = KOSPI_CODE) -> dict[s
     except KISApiError as e:
         logger.error(f"지수({index_code}) 현재가 조회 실패: {e}")
         return None
+    except httpx.HTTPError as e:
+        logger.warning(f"지수({index_code}) 현재가 조회 HTTP 실패: {type(e).__name__}: {e}")
+        return None
 
     out = payload.get("output") or {}
     if isinstance(out, list):
@@ -125,6 +129,9 @@ def fetch_index_daily(
         payload = client.get(_INDEX_DAILY_ENDPOINT, _INDEX_DAILY_TR_ID, params=params)
     except KISApiError as e:
         logger.error(f"지수({index_code}) 일별 조회 실패: {e}")
+        return pd.DataFrame(columns=["date", "close"])
+    except httpx.HTTPError as e:
+        logger.warning(f"지수({index_code}) 일별 조회 HTTP 실패: {type(e).__name__}: {e}")
         return pd.DataFrame(columns=["date", "close"])
 
     rows = payload.get("output2") or payload.get("output") or []
@@ -198,6 +205,12 @@ def fetch_index_daily_range(
             payload = client.get(_INDEX_DAILY_ENDPOINT, _INDEX_DAILY_TR_ID, params=params)
         except KISApiError as e:
             logger.error(f"지수({index_code}) 페이지 fetch 실패 (~{cursor_end}): {e}")
+            break
+        except httpx.HTTPError as e:
+            logger.warning(
+                f"지수({index_code}) 페이지 fetch HTTP 실패 (~{cursor_end}): "
+                f"{type(e).__name__}: {e}"
+            )
             break
 
         rows = payload.get("output2") or payload.get("output") or []
