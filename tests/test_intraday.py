@@ -234,6 +234,44 @@ def test_fetch_volume_rank_http_500_returns_empty(tmp_path):
     assert list(df.columns) == SNAPSHOT_COLUMNS
 
 
+# ── 거래대금 vs 거래량 회귀 (2026-05-19 round 41 후속 3) ────────────────────
+# 사용자 발견: 14:50 스냅샷 1~5위가 KODEX 인버스류로 도배 + 삼성전자 (실제 거래대금 1위)
+# 가 15위로 밀림. 원인 — FID_BLNG_CLS_CODE="0" (평균거래량) 으로 보낸 버그. 정상은
+# "3" (거래금액순). 종배/주도섹터 universe 전체가 거래량 top 30 으로 오염되어
+# 5/12~5/18 5일 연속 0종목 현상 + round 41 backtest 검증 결과 모두 무효화됨.
+#
+# 본 테스트는 FID_BLNG_CLS_CODE 가 반드시 "3" (= 거래대금) 으로 나가는지 직접
+# 검증한다. 누가 또 "0" 으로 되돌리면 즉시 실패.
+
+def test_fetch_volume_rank_sends_trading_value_sort_axis(tmp_path):
+    """FID_BLNG_CLS_CODE 가 '3' (거래금액순) 로 KIS 에 전송되는지 검증.
+
+    함정: '0' 은 평균거래량 순이라 KODEX 200선물인버스2X 같은 저가 고회전 ETF 가
+    1위로 잡힘. 종배 universe 가 무너진다 (2026-05-19 발견 버그).
+    """
+    client = _make_client(tmp_path)
+    captured: dict = {}
+
+    def fake_get(endpoint, tr_id, params=None):  # noqa: ARG001
+        captured["params"] = params or {}
+        return _VOLUME_RANK_PAYLOAD
+
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=fake_get):
+            fetch_volume_rank(client, top_n=30)
+
+    assert captured["params"]["FID_BLNG_CLS_CODE"] == "3", (
+        f"FID_BLNG_CLS_CODE 가 '{captured['params'].get('FID_BLNG_CLS_CODE')}' "
+        f"— 반드시 '3' (거래금액순) 이어야 함. '0' 은 평균거래량으로 universe 오염."
+    )
+
+
+def test_volume_rank_blng_cls_constant_is_trading_value():
+    """상수가 '3' 으로 박혀 있는지 — 임의 변경 회귀 방지."""
+    from src.data.intraday import _VOLUME_RANK_BLNG_CLS_TRADING_VALUE
+    assert _VOLUME_RANK_BLNG_CLS_TRADING_VALUE == "3"
+
+
 # ── rank / turnover_rank 회귀 (2026-05-18) ──────────────────────────────────
 # 사용자 보고: 카드의 "(00위)" 가 HTS 와 다르다. 원인 — 이전엔 master 필터
 # (ETF/펀드/리츠/스팩/우선주 제외) 후 rank 를 1부터 재부여하여 사용자가 HTS

@@ -1,9 +1,20 @@
 """KIS Open API 기반 장중 데이터 fetcher.
 
-거래대금 순위:
+거래대금 순위 (★ 거래량 아님 — 함정 주의):
     TR_ID: FHPST01710000
     Endpoint: /uapi/domestic-stock/v1/quotations/volume-rank
-    - 한 번 호출로 상위 30위(또는 top_n) 전종목 반환
+    - 한 번 호출로 KIS 가 반환하는 상한 30 종목 (별도 페이지네이션 없음 — 2026-05-19
+      round 41 후속 2 진단). `top_n` 인자는 우리 쪽 추가 컷일 뿐 endpoint 자체 확장 X.
+      50 으로 늘리려면 별도 endpoint 또는 자체 정렬 필요 (TODO).
+
+    ⚠ `FID_BLNG_CLS_CODE` 가 정렬축을 결정 — 절대 임의로 바꾸지 말 것:
+        - "0" : 평균거래량 ← 이전 버그 (2026-05-19 발견). 삼성전자가 14위로 밀리고
+                KODEX 200선물인버스2X 가 1위로 오는 이유. 거래량(주) 순.
+        - "1" : 거래증가율
+        - "2" : 평균거래회전율
+        - "3" : 거래금액순 ← **종배/주도섹터 universe 는 반드시 이 값** (거래대금/원).
+        - "4" : 평균거래금액회전율
+    `_VOLUME_RANK_BLNG_CLS_TRADING_VALUE` 상수로 박아둠 — 테스트도 같이 검증.
 
 종목 현재가:
     TR_ID: FHKST01010100
@@ -14,6 +25,9 @@
     - daily_return(%): (현재가 - 전일종가) / 전일종가 * 100
     - limit_up_price: 전일종가 * 1.30 (KOSPI/KOSDAQ 공통 +30%)
     - intraday_high: 당일 장중 고가 (stck_hgpr)
+    - 거래대금(trading_value): acml_tr_pbmn (원) — 누적 체결금액
+    - 거래량(volume): acml_vol (주) — 누적 체결주식수
+      ★ 단타 universe 는 거래대금 기준. 거래량은 저가주 노이즈 큼 (KODEX 인버스류 1위 점령).
 """
 from __future__ import annotations
 
@@ -28,22 +42,28 @@ from src.kis.client import KISApiError, KISClient
 _VOLUME_RANK_ENDPOINT = "/uapi/domestic-stock/v1/quotations/volume-rank"
 _VOLUME_RANK_TR_ID = "FHPST01710000"
 
+# FID_BLNG_CLS_CODE — KIS volume-rank 정렬축. 종배/주도섹터는 거래대금 기준 "3" 만
+# 허용. "0"(평균거래량) 으로 잘못 쓰면 KODEX 인버스류가 1위로 잡혀 universe 자체가
+# 무너진다 (2026-05-19 발견 버그). docstring 표 + 회귀 테스트로 박아둠.
+_VOLUME_RANK_BLNG_CLS_TRADING_VALUE = "3"
+
 _INQUIRE_PRICE_ENDPOINT = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _INQUIRE_PRICE_TR_ID = "FHKST01010100"
 
 SNAPSHOT_COLUMNS = [
-    "rank",          # KIS data_rank — 진짜 거래대금 순위 (ETF/펀드 포함 전체 시장 기준).
-                     # master 필터로 제외된 종목은 응답에서 빠지지만 보통주의 rank 는
-                     # KIS 원본 값 그대로 유지. 사용자가 HTS 거래대금 순위와 1:1 비교
-                     # 가능 (2026-05-18 정정 — 이전엔 master 필터 후 1부터 재부여하여
-                     # HTS 와 어긋남).
+    "rank",          # KIS data_rank — **거래대금**(원, acml_tr_pbmn) 내림차순 절대 순위.
+                     # ETF/펀드 포함 전체 시장 기준. master 필터로 제외된 종목은
+                     # 응답에서 빠지지만 보통주의 rank 는 KIS 원본 값 그대로 유지 →
+                     # HTS 거래대금 순위와 1:1 비교 가능 (2026-05-18 정정).
+                     # ⚠ "거래량" 아님. 2026-05-19 까지 FID_BLNG_CLS_CODE="0" 버그로
+                     # 사실상 평균거래량 순이었음 → fix 후 거래대금 순.
     "turnover_rank", # master 필터 통과 종목들의 turnover 내림차순 순위 (1~top_n).
-                     # "거래대금 50위 안에서의 회전율 순위" — 절대 시장 순위 아님.
+                     # "거래대금 N위 안에서의 회전율 순위" — 절대 시장 순위 아님.
                      # KIS API 가 회전율 순위는 별도 제공 X.
-    "volume_rank",   # master 필터 통과 종목들의 volume(주) 내림차순 순위 (1~top_n).
-                     # KIS volume-rank API 는 거래대금만 절대 순위 제공 — 거래량
-                     # 절대 순위는 별도 호출 필요. snapshot universe 안의 상대 순위로
-                     # 충분 (2026-05-19 round 41 후속 사용자 요청).
+                     # turnover = trading_value / market_cap (시총 정규화).
+    "volume_rank",   # master 필터 통과 종목들의 **volume**(주) 내림차순 순위 (1~top_n).
+                     # ⚠ rank(거래대금) 와 명확히 다른 축. snapshot universe 안의
+                     # 상대 순위로만 의미 — KIS 가 절대 거래량 순위는 endpoint 분리.
     "code",
     "name",
     "price",
@@ -100,7 +120,9 @@ def fetch_volume_rank(
         "FID_COND_SCR_DIV_CODE": "20171",
         "FID_INPUT_ISCD": "0000",
         "FID_DIV_CLS_CODE": "0",
-        "FID_BLNG_CLS_CODE": "0",
+        # ⚠ "0" 으로 두면 평균거래량 정렬 — 종배 universe 가 ETF/저가주로 오염됨.
+        # 반드시 "3" (= 거래금액순 / 거래대금). 모듈 docstring 표 참조.
+        "FID_BLNG_CLS_CODE": _VOLUME_RANK_BLNG_CLS_TRADING_VALUE,
         "FID_TRGT_CLS_CODE": "111111111",
         "FID_TRGT_EXLS_CLS_CODE": "000000",
         "FID_INPUT_PRICE_1": "",

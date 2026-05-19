@@ -22,6 +22,31 @@
 
 ## API 한계 — 알아두기
 
+### ★ 거래량(volume) vs 거래대금(trading_value) — 절대 헷갈리지 말 것
+
+KIS volume-rank (`FHPST01710000`) 는 `FID_BLNG_CLS_CODE` 파라미터로 정렬축을 결정한다.
+
+| 값 | 의미 | 종배 universe 적합성 |
+|---|---|---|
+| `"0"` | 평균거래량 (주) | ❌ KODEX/TIGER 인버스류가 1위 점령. 종배엔 부적합 |
+| `"1"` | 거래증가율 | — |
+| `"2"` | 평균거래회전율 | — |
+| `"3"` | **거래금액순 (거래대금/원)** | ✅ 종배/주도섹터 universe 정답. 보통 삼성전자 1위 |
+| `"4"` | 평균거래금액회전율 | — |
+
+- **거래량 (volume)** = `acml_vol`, 단위 주. 누적 체결주식수.
+- **거래대금 (trading_value)** = `acml_tr_pbmn`, 단위 원. 누적 체결금액. = price × volume 의 합.
+
+저가주(KODEX 200선물인버스2X 등 주당 100~1,500원대) 는 거래량 96억주가 나와도 거래대금은 1,000억 수준. 삼성전자 (주당 27만원) 는 거래량 2,500만주만 돼도 거래대금 6.8조원. **종배는 자금 쏠림 = 거래대금 기준**. 거래량으로 잡으면 universe 가 ETF/저가주로 무너진다.
+
+코드 진입점: `src/data/intraday._VOLUME_RANK_BLNG_CLS_TRADING_VALUE = "3"` 상수 박혀 있음. 회귀 테스트 `tests/test_intraday.test_fetch_volume_rank_sends_trading_value_sort_axis` 가 누가 임의로 `"0"` 으로 바꾸면 즉시 실패하도록 검증.
+
+**사고 이력 (2026-05-19 round 41 후속 2):** `"0"` 으로 잘못 박혀 있어 5/12~5/18 5일 연속 종배 후보 0종목. universe 1~5위가 KODEX 인버스류로 도배되고 삼성전자가 15위까지 밀림. round 41 의 R4 v2 backtest 결과 5일 17종목도 모두 거래량 universe 기준이라 무효화 → 거래대금 universe 로 재실행 필요 (plan.md 기술 부채).
+
+### KIS volume-rank 30개 상한
+
+이 endpoint 는 한 호출당 30개 반환 상한. `top_n=50` 인자는 우리 코드의 추가 컷일 뿐 endpoint 확장 X. 거래대금 50위까지 보려면 별도 endpoint (예: 종가 거래대금 ranking) 또는 전종목 시세 일괄 후 자체 정렬 (별도 round, plan.md TODO).
+
 ### 분봉 히스토리는 사실상 불가
 
 - **키움 OpenAPI+**: 분봉 1년치만 제공, 특정 기간 명시 지정 불가

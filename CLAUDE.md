@@ -98,6 +98,8 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 | 주도테마(주도섹터) | (v0) 거래대금 30위 내 같은 테마 ≥3종목. (v1, M5.5) 테마별 breadth + 동일가중 평균상승률 + 회전율 합계의 z-score 합산 상위 N개 |
 | 주도주 (정통, 결정 레포트용) | 주도테마 내 first-mover 상한가 도달 종목. `identify_leading_stocks()` |
 | 주도주 (고주파, 09:00~10:30 모니터링용) | 주도테마 내 **회전율 1위** 종목. pre-limit-up 진입 후보. 상승률/거래대금 절대값은 표시만 (점수화 X). `identify_early_morning_leaders()` |
+| 거래량 (volume) | 누적 체결주식수 (주). KIS `acml_vol`. ★ universe 정렬 기준으로 쓰면 ETF/저가주 편향 — 종배 universe엔 부적합 |
+| 거래대금 (trading_value) | 누적 체결금액 (원). KIS `acml_tr_pbmn`. ★ 종배/주도섹터 universe의 정답 정렬축. KIS volume-rank 사용 시 `FID_BLNG_CLS_CODE="3"` |
 | 회전율 (turnover) | 거래대금 ÷ 시가총액. 시총 정규화로 대형주 편향 제거. 단타 자금 유입의 진짜 강도 |
 | breadth (테마 폭) | 테마 구성종목 중 +5%↑/+10%↑ 종목 수 |
 | 가속배율 | 현재 5분봉 거래대금 ÷ 직전 30분 평균 5분봉 거래대금. 양수→치고 올라옴, 음수→자금 이탈 |
@@ -119,6 +121,14 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 
 ## 절대 헷갈리지 말 것
 
+- **거래량(volume) ≠ 거래대금(trading_value)** ★ — 2026-05-19 사용자가 발견한 critical 버그
+  - 거래량 = `acml_vol` (주식 수, 주). KODEX 200선물인버스2X 같은 저가 고회전 ETF가 늘 1위.
+  - 거래대금 = `acml_tr_pbmn` (체결금액, 원). 보통 삼성전자/SK하이닉스가 1위.
+  - 종배/주도섹터 universe는 **반드시 거래대금** 기준. 거래량으로 잡으면 ETF/인버스가 점령.
+  - KIS volume-rank API `FID_BLNG_CLS_CODE`: `"0"`=평균거래량(틀림), `"3"`=거래금액순(정답).
+    `src/data/intraday._VOLUME_RANK_BLNG_CLS_TRADING_VALUE` 상수 + 회귀 테스트로 박아둠.
+  - 5/12~5/18 0종목 현상 + round 41 backtest 5일 검증 결과 모두 이 버그로 무효화됨 → 재검증 필요.
+  - 회전율(turnover) = 거래대금 / 시총. 분모가 시총이라 거래량/거래대금 혼동과 또 별개 축.
 - "음봉 시작" = **하루 일봉이 음봉인 날** (분봉 아님)
 - "-20~30%" 표현은 빠진 폭이 아니라 **일봉 상승률 +20~30%**를 의미함 (대화록 다회 확인됨)
 - 한국 장전 시간외 (08:30~08:40)는 **어제 종가 고정**이라 갭 익절 불가
