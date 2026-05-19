@@ -114,8 +114,9 @@ def run_pipeline(
     if not leading_themes:
         logger.info("주도테마 없음 — 후보 없이 레포트 생성")
 
-    # ── 3. 종배 후보 추출 (R4) ─────────────────────────────────────────────
-    candidates_df = extract_candidates(snapshot_df, leading_codes)
+    # ── 3. 종배 후보 추출 (R4 v2 round 41) ────────────────────────────────
+    # leading_codes 우회 — 거래대금 50위 전체 universe + 10~27% 컷
+    candidates_df = extract_candidates(snapshot_df, leading_theme_codes=None)
     accepted = accepted_candidates(candidates_df)
 
     # ── 4. Historical + Sizing (R5, R6) ───────────────────────────────────

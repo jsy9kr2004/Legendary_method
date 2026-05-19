@@ -85,13 +85,18 @@ def classify_priority(row: pd.Series) -> tuple[str, str | None]:
 
 def extract_candidates(
     snapshot_df: pd.DataFrame,
-    leading_theme_codes: list[str],
+    leading_theme_codes: list[str] | None = None,
 ) -> pd.DataFrame:
-    """주도테마 종목 + R4 v2 (e) 컷 (10% ≤ ret ≤ 27%) 으로 종배 후보 추출.
+    """R4 v2 종배 후보 추출 — 거래대금 50위 단일종목 + 10% ≤ ret ≤ 27% 컷.
 
     Args:
-        snapshot_df: 거래대금 순위 스냅샷 (intraday.SNAPSHOT_COLUMNS)
-        leading_theme_codes: 주도테마에 속한 종목 코드 리스트
+        snapshot_df: 거래대금 순위 스냅샷 (intraday.SNAPSHOT_COLUMNS).
+            R4 v2 (a) 거래대금 50위 universe 는 호출부에서 `top_n=50` 으로
+            fetch 한 스냅샷을 그대로 사용 (이 함수는 추가 rank 컷 X).
+        leading_theme_codes: R4 v1 호환 인자. **None / 빈 리스트 = R4 v2 (round 41)
+            기본 동작 — 주도섹터 필터 우회, 전체 universe 사용** (`docs/jongbae-strategy.md`
+            line 206: "결정 후보 universe 컷에서는 R4 v2 가 R3 를 우회").
+            list 가 주어지면 R4 v1 동작 — 그 코드들만 후보로 잡음 (backward-compat).
 
     Returns:
         CANDIDATE_COLUMNS 스키마 DataFrame.
@@ -101,11 +106,17 @@ def extract_candidates(
     """
     if snapshot_df.empty:
         return pd.DataFrame(columns=CANDIDATE_COLUMNS)
-    if not leading_theme_codes:
-        logger.debug("종배 후보 추출: 주도테마 종목 없음")
-        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
 
-    in_theme = snapshot_df[snapshot_df["code"].astype(str).isin(set(leading_theme_codes))].copy()
+    if leading_theme_codes:
+        # R4 v1 backward-compat: 주도섹터 필터 적용
+        in_theme = snapshot_df[
+            snapshot_df["code"].astype(str).isin(set(leading_theme_codes))
+        ].copy()
+    else:
+        # R4 v2 (a) 기본: 주도섹터 필터 우회 — 전체 스냅샷 universe (호출부가
+        # top 50 으로 잘라 넘김). docs/jongbae-strategy.md round 41.
+        in_theme = snapshot_df.copy()
+
     if in_theme.empty:
         return pd.DataFrame(columns=CANDIDATE_COLUMNS)
 

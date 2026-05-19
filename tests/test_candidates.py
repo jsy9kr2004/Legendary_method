@@ -136,10 +136,34 @@ def test_extract_candidates_empty_snapshot():
     assert out.empty
 
 
-def test_extract_candidates_empty_leading():
-    snap = _snapshot_full([{"code": "A"}])
-    out = extract_candidates(snap, leading_theme_codes=[])
-    assert out.empty
+def test_extract_candidates_no_theme_filter_r4v2():
+    """R4 v2 (round 41) — leading_theme_codes=None / 빈 list 이면 주도섹터 필터
+    우회 + 전체 snapshot universe 사용 (호출부가 top 50 으로 잘라 넘김)."""
+    snap = _snapshot_full([
+        # 주도섹터 없이 +20% (R4 v2 eligible)
+        {"code": "A", "daily_return": 20.0, "prev_close": 1000, "intraday_high": 1240},
+        # +30% (R4 v2 상한 컷 제외) — 결과에 priority=EXCLUDED 로 포함
+        {"code": "B", "daily_return": 30.0, "prev_close": 1000, "intraday_high": 1300,
+         "is_limit_up": True},
+    ])
+    out_none = extract_candidates(snap, leading_theme_codes=None)
+    out_empty = extract_candidates(snap, leading_theme_codes=[])
+    # None / [] 동일 동작
+    assert len(out_none) == 2
+    assert len(out_empty) == 2
+    # accepted 는 +20% A 만 (B 는 상한 컷)
+    assert set(accepted_candidates(out_none)["code"]) == {"A"}
+
+
+def test_extract_candidates_theme_filter_backward_compat():
+    """leading_theme_codes 가 주어지면 R4 v1 호환 — 그 코드만 후보."""
+    snap = _snapshot_full([
+        {"code": "A", "daily_return": 20.0, "prev_close": 1000, "intraday_high": 1240},
+        {"code": "B", "daily_return": 22.0, "prev_close": 1000, "intraday_high": 1260},
+    ])
+    out = extract_candidates(snap, leading_theme_codes=["A"])
+    assert len(out) == 1
+    assert out.iloc[0]["code"] == "A"
 
 
 def test_accepted_candidates_drops_excluded():

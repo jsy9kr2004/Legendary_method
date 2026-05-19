@@ -18,7 +18,7 @@
 
 환경변수:
     LIMIT_UP_POLL_INTERVAL_SEC: 상한가 폴링 간격 (초, 기본 60)
-    LIMIT_UP_WATCH_TOP_N: 거래대금 상위 몇 개 종목을 감시할지 (기본 30)
+    LIMIT_UP_WATCH_TOP_N: 거래대금 상위 몇 개 종목을 감시할지 (기본 50, R4 v2 (a))
 """
 from __future__ import annotations
 
@@ -73,7 +73,10 @@ from src.report.periodic import build_periodic_report, save_periodic_report
 _SNAPSHOT_TIMES = ["11:00", "13:00", "14:00", "14:50"]
 
 _POLL_INTERVAL_SEC = int(os.getenv("LIMIT_UP_POLL_INTERVAL_SEC", "60"))
-_WATCH_TOP_N = int(os.getenv("LIMIT_UP_WATCH_TOP_N", "30"))
+# R4 v2 (a) round 41 — 종배 후보 universe = 거래대금 50위.
+# `LIMIT_UP_WATCH_TOP_N` 환경변수로 오버라이드 가능 (상한가 폴링 + 결정 레포트
+# 동일 스냅샷 사용).
+_WATCH_TOP_N = int(os.getenv("LIMIT_UP_WATCH_TOP_N", "50"))
 
 
 # ── 일별 글로벌 상태 ─────────────────────────────────────────────────────────
@@ -547,8 +550,10 @@ def _send_decision_report(
     today_strong_market = market_stats.get("kospi_above_ma200")
 
     leading = identify_leading_themes(snapshot_df, theme_df)
-    leading_codes = codes_in_leading_themes(leading)
-    candidates_df = extract_candidates(snapshot_df, leading_codes)
+    # R4 v2 (a) round 41 — 결정 후보 universe 는 주도섹터 우회, 전체 snapshot (top 50)
+    # 사용. 주도테마는 레포트 헤더의 [최종 주도테마] 섹션 표시용으로만 식별.
+    # docs/jongbae-strategy.md line 206 참조.
+    candidates_df = extract_candidates(snapshot_df, leading_theme_codes=None)
     accepted = accepted_candidates(candidates_df)
 
     # KIS volume-rank 응답이 일부 종목에서 prev_close / intraday_high / trading_value
