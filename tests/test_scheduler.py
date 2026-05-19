@@ -125,6 +125,172 @@ def test_business_day_only_calls_dispatcher_error_alert_on_exception():
     disp.telegram_error.assert_called_once()
 
 
+def test_business_day_only_silences_httpx_errors(tmp_path):
+    """KIS HTTP 5xx 가 잡 본체에서 propagate 되도 텔레그램 / 누적 로그 둘 다 skip.
+
+    fetcher 레벨 격리(intraday.py 등)가 미래에 깨져도 노이즈가 안 새는 safety net.
+    """
+    import httpx
+    from src.config import Settings
+    from src.notify.dispatcher import Dispatcher
+
+    wed = datetime(2026, 5, 6, 14, 50, tzinfo=KST)
+    disp = MagicMock(spec=Dispatcher)
+    settings = MagicMock(spec=Settings)
+    settings.data_dir = tmp_path
+
+    req = httpx.Request("GET", "https://openapi.koreainvestment.com:9443/x")
+    resp = httpx.Response(500, request=req, text="server error")
+    http_err = httpx.HTTPStatusError("Server error '500'", request=req, response=resp)
+
+    @scheduler._business_day_only("상한가 폴링")
+    def fn(client, settings, dispatcher):
+        raise http_err
+
+    with patch("src.scheduler.now_kst", return_value=wed):
+        result = fn(MagicMock(), settings, disp)
+
+    assert result is None
+    # 텔레그램 알림 호출 X (가장 중요)
+    disp.telegram_error.assert_not_called()
+    # 사후 레포트가 읽는 누적 로그도 X
+    err_file = tmp_path / "errors" / "2026-05-06.jsonl"
+    assert not err_file.exists()
+
+
+def test_business_day_only_silences_httpx_transport_error(tmp_path):
+    """네트워크 단절 (ConnectError 등 httpx.HTTPError 하위) 도 동일."""
+    import httpx
+    from src.config import Settings
+    from src.notify.dispatcher import Dispatcher
+
+    wed = datetime(2026, 5, 6, 14, 50, tzinfo=KST)
+    disp = MagicMock(spec=Dispatcher)
+    settings = MagicMock(spec=Settings)
+    settings.data_dir = tmp_path
+
+    @scheduler._business_day_only("상한가 폴링")
+    def fn(client, settings, dispatcher):
+        raise httpx.ConnectError("Connection refused")
+
+    with patch("src.scheduler.now_kst", return_value=wed):
+        fn(MagicMock(), settings, disp)
+
+    disp.telegram_error.assert_not_called()
+
+
+def test_enrich_candidates_fills_missing_ohlcv_from_fetch_quote():
+    """KIS volume-rank 가 prev_close=0 / intraday_high=0 / trading_value=0 으로
+    줘서 후보 dict 가 비어 있을 때 fetch_quote 결과로 보강. 2026-05-19 사용자 보고
+    회귀 — 진원생명과학 011000 결정 레포트 표시 깨짐 ("0 → 1,366").
+    """
+    candidates = [{
+        "code": "011000",
+        "name": "진원생명과학",
+        "price": 1366,
+        "prev_close": 0,         # 누락
+        "daily_return": 29.97,
+        "intraday_high": 0,      # 누락
+        "intraday_low": 0,       # 누락
+        "trading_value": 0,      # 누락
+        "volume": 0,             # 누락
+        "rank": 11,
+        "turnover": 12.5,        # snapshot 의 보존 필드
+        "market_cap": 1234,      # snapshot 의 보존 필드
+    }]
+    fetch_result = {
+        "code": "011000",
+        "name": "진원생명과학",
+        "price": 1366,
+        "prev_close": 1051,
+        "daily_return": 29.97,
+        "intraday_high": 1366,
+        "intraday_low": 1100,
+        "volume": 5_000_000,
+        "trading_value": 50_000_000_000,
+        "is_limit_up": True,
+        "market_cap": 0,         # fetch_quote 기본값
+        "turnover": float("nan"),
+    }
+    with patch("src.data.intraday.fetch_quote", return_value=fetch_result):
+        scheduler._enrich_candidates_with_quote(candidates, MagicMock())
+
+    base = candidates[0]
+    # 누락됐던 필드는 보강됨
+    assert base["prev_close"] == 1051
+    assert base["intraday_high"] == 1366
+    assert base["intraday_low"] == 1100
+    assert base["trading_value"] == 50_000_000_000
+    assert base["volume"] == 5_000_000
+    assert base["is_limit_up"] is True
+    # intraday_high_pct 도 재계산 — (1366-1051)/1051 * 100 ≈ 29.97
+    assert abs(base["intraday_high_pct"] - 29.97) < 0.5
+    # snapshot 의 rank / turnover / market_cap 은 보존 (fetch_quote 기본값으로
+    # 덮어쓰지 않음)
+    assert base["rank"] == 11
+    assert base["turnover"] == 12.5
+    assert base["market_cap"] == 1234
+
+
+def test_enrich_candidates_preserves_existing_values():
+    """snapshot 에 값이 이미 있으면 fetch_quote 결과로 덮어쓰지 않는다."""
+    candidates = [{
+        "code": "075180",
+        "price": 91300,
+        "prev_close": 70230,     # 이미 있음
+        "intraday_high": 91300,  # 이미 있음
+        "trading_value": 400_000_000_000,
+        "rank": 1,
+    }]
+    fetch_result = {
+        "code": "075180",
+        "prev_close": 99999,     # 다른 값 — snapshot 우선이라 무시돼야 함
+        "intraday_high": 99999,
+        "price": 91300,
+        "trading_value": 1,
+        "volume": 100,
+        "is_limit_up": True,
+    }
+    with patch("src.data.intraday.fetch_quote", return_value=fetch_result):
+        scheduler._enrich_candidates_with_quote(candidates, MagicMock())
+
+    base = candidates[0]
+    assert base["prev_close"] == 70230   # snapshot 유지
+    assert base["intraday_high"] == 91300
+    assert base["trading_value"] == 400_000_000_000
+
+
+def test_enrich_candidates_handles_fetch_quote_none():
+    """fetch_quote 가 None 반환 (HTTP 5xx 등) 해도 후보 dict 그대로 유지 — 크래시 X."""
+    candidates = [{"code": "229200", "price": 0, "prev_close": 0}]
+    with patch("src.data.intraday.fetch_quote", return_value=None):
+        scheduler._enrich_candidates_with_quote(candidates, MagicMock())
+    # 변경 없음
+    assert candidates[0]["price"] == 0
+
+
+def test_business_day_only_still_alerts_on_non_http_exception(tmp_path):
+    """KISApiError / KeyError 등 non-HTTP 예외는 기존대로 fail-loud 유지."""
+    from src.config import Settings
+    from src.kis.client import KISApiError
+    from src.notify.dispatcher import Dispatcher
+
+    wed = datetime(2026, 5, 6, 14, 50, tzinfo=KST)
+    disp = MagicMock(spec=Dispatcher)
+    settings = MagicMock(spec=Settings)
+    settings.data_dir = tmp_path
+
+    @scheduler._business_day_only("상한가 폴링")
+    def fn(client, settings, dispatcher):
+        raise KISApiError("1", "ERR", "rt_cd 불량", {})
+
+    with patch("src.scheduler.now_kst", return_value=wed):
+        fn(MagicMock(), settings, disp)
+
+    # 진짜 시스템 오류는 여전히 텔레그램 알림
+    disp.telegram_error.assert_called_once()
+
+
 # ── 잡 등록 ─────────────────────────────────────────────────────────────────
 
 def test_run_registers_all_jobs(tmp_path, monkeypatch):

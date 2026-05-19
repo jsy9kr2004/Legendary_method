@@ -31,6 +31,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
 
+import httpx
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
@@ -117,7 +118,16 @@ def _reset_state() -> None:
 
 
 def _business_day_only(label: str) -> Callable:
-    """잡 함수에 휴장일 가드 적용."""
+    """잡 함수에 휴장일 가드 + KIS 일시적 HTTP 오류 격리 적용.
+
+    HTTP 5xx / 네트워크 단절 (httpx.HTTPError) 은 KIS 서버 측 일시 장애로
+    간주, **logger.warning 만** 남기고 record_error / telegram_error 둘 다 skip.
+    이유: 단일 종목 5xx 가 폴링 사이클을 죽일 때마다 텔레그램 푸시 폭주 +
+    사후 레포트의 [알려진 이슈] 섹션 도배. fetcher 레벨 (intraday.py 등)에서
+    이미 종목 단위로 격리하지만 미래 회귀를 막기 위한 safety net.
+
+    그 외 예외 (KISApiError, KeyError, AttributeError 등)는 기존대로 fail-loud.
+    """
     def deco(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -126,6 +136,12 @@ def _business_day_only(label: str) -> Callable:
                 return None
             try:
                 return fn(*args, **kwargs)
+            except httpx.HTTPError as e:
+                # KIS 서버 5xx / 네트워크 단절 — 일시 장애. 푸시/누적 로그 skip.
+                logger.warning(
+                    f"[{label}] KIS HTTP 일시 오류: {type(e).__name__}: {e}"
+                )
+                return None
             except Exception as e:  # noqa: BLE001
                 logger.exception(f"[{label}] 잡 오류: {e}")
                 # 사후 레포트가 읽도록 일자별 에러 로그에 기록
@@ -176,7 +192,11 @@ def _collect_snapshot(
     dt = now_kst()
     logger.info(f"[스냅샷] {label} 수집 시작 ({dt.strftime('%H:%M:%S')})")
 
-    df = fetch_volume_rank(client, top_n=_WATCH_TOP_N)
+    # master_df 전달 — 비주식 (ETF/ETN/리츠/스팩 + 신주인수권 등 letter 코드)
+    # 필터링. 미전달 시 KIS volume-rank 원본에 letter 코드 (0167A0 등) 가 섞여
+    # 상한가 폴링이 그 종목들에 inquire-price 호출 → KIS 500 반환 → 폴링 사이클
+    # 종료 (2026-05-19 round 후속).
+    df = fetch_volume_rank(client, top_n=_WATCH_TOP_N, master_df=_dashboard_master_df)
     if df.empty:
         logger.warning(f"[스냅샷] {label}: 데이터 없음 (휴장일 또는 API 오류)")
         record_error(settings.data_dir, f"스냅샷 {label}", "데이터 없음 (휴장일 또는 API 오류)")
@@ -185,8 +205,9 @@ def _collect_snapshot(
     save_snapshot(df, settings.data_dir, dt)
     logger.info(f"[스냅샷] {label}: {len(df)}종목 저장")
 
-    # 감시 종목 갱신 (상한가 폴링용)
-    _watch_codes = df["code"].tolist()
+    # 감시 종목 갱신 (상한가 폴링용). 6자리 숫자가 아닌 코드 (warrants/rights 등)
+    # 는 KIS inquire-price 가 500 반환하므로 한 번 더 방어적으로 제외.
+    _watch_codes = [c for c in df["code"].tolist() if str(c).isdigit() and len(str(c)) == 6]
 
     # 스냅샷에서 바로 상한가 종목 체크 → 즉시 알림
     lup_df = filter_limit_up_from_snapshot(df)
@@ -448,6 +469,55 @@ def _today_volume_ratio(
     return float(today_volume / avg)
 
 
+def _enrich_candidates_with_quote(
+    candidate_dicts: list[dict[str, Any]],
+    client: KISClient,
+) -> None:
+    """결정 후보 dict 리스트의 누락된 OHLCV 필드를 fetch_quote 로 보강 (in-place).
+
+    KIS volume-rank 응답이 stck_prdy_clpr / stck_hgpr / acml_tr_pbmn 등을 빈 값으로
+    주는 케이스가 있어 snapshot 기반 후보 dict 의 prev_close/intraday_high/trading_value
+    등이 0 으로 채워짐. 결정 레포트에서는 후보 수가 적으니 (1~5) 종목별 fetch_quote
+    추가 1콜로 정확한 값 확보. snapshot 의 rank/turnover/market_cap/themes 는 보존.
+    intraday_high_pct 도 보강된 prev_close/intraday_high 로 재계산.
+    """
+    from src.data.intraday import fetch_quote
+    from src.jongbae.candidates import _intraday_high_pct
+
+    _MISSING_TARGETS = (
+        "prev_close", "intraday_high", "intraday_low",
+        "trading_value", "volume", "price", "daily_return", "is_limit_up",
+    )
+
+    def _is_missing(v: Any) -> bool:
+        if v is None:
+            return True
+        if isinstance(v, bool):
+            return False
+        if isinstance(v, (int, float)):
+            return v == 0 or v != v  # 0 or NaN
+        return False
+
+    for base in candidate_dicts:
+        code = str(base.get("code", "")).zfill(6)
+        if not code:
+            continue
+        q = fetch_quote(client, code)
+        if q is None:
+            continue
+        for field in _MISSING_TARGETS:
+            if _is_missing(base.get(field)) and not _is_missing(q.get(field)):
+                base[field] = q[field]
+        # intraday_high_pct 재계산 (보강 후 값으로)
+        try:
+            high = int(base.get("intraday_high") or 0)
+            prev = int(base.get("prev_close") or 0)
+            if high > 0 and prev > 0:
+                base["intraday_high_pct"] = _intraday_high_pct(high, prev)
+        except (TypeError, ValueError):
+            pass
+
+
 def _send_decision_report(
     snapshot_df,
     settings: Settings,
@@ -481,21 +551,33 @@ def _send_decision_report(
     candidates_df = extract_candidates(snapshot_df, leading_codes)
     accepted = accepted_candidates(candidates_df)
 
+    # KIS volume-rank 응답이 일부 종목에서 prev_close / intraday_high / trading_value
+    # 필드를 비워서 주는 케이스가 있음 (2026-05-19 사용자 보고 — 진원생명과학 011000
+    # 상한가 종목의 prev_close=0, intraday_high=0, trading_value=0 → 표시 깨짐 +
+    # close_position 계산 깨짐 → Layer 3 매칭 불가). 결정 레포트는 후보 N 이 작으니
+    # (보통 1~5) 후보별로 fetch_quote 추가 호출해서 누락 필드 보강. snapshot 의
+    # rank/turnover/themes 는 살리고 OHLCV 만 덮어씀.
+    accepted_dicts: list[dict[str, Any]] = [row.to_dict() for _, row in accepted.iterrows()]
+    if client is not None and accepted_dicts:
+        _enrich_candidates_with_quote(accepted_dicts, client)
+
     candidates_with_stats: list[dict[str, Any]] = []
     today = dt.date()
-    for _, row in accepted.iterrows():
-        code = str(row["code"])
-        close = int(row.get("price", 0))
-        high = int(row.get("intraday_high", close))
-        low_raw = int(row.get("intraday_low", 0) or 0)
+    for row in accepted_dicts:
+        code = str(row.get("code", "")).zfill(6)
+        close = int(row.get("price") or 0)
+        high_raw = int(row.get("intraday_high") or 0)
+        high = high_raw if high_raw > 0 else close
+        low_raw = int(row.get("intraday_low") or 0)
         low = low_raw if low_raw > 0 else int(close * 0.85)
+        prev_close_val = int(row.get("prev_close") or 0) or close
         cp = close_position(
-            open_p=float(row.get("prev_close", close)),
+            open_p=float(prev_close_val),
             high=float(high),
             low=float(low),
             close=float(close),
         )
-        vol_ratio = _today_volume_ratio(daily_ohlcv, code, today, int(row.get("volume", 0)))
+        vol_ratio = _today_volume_ratio(daily_ohlcv, code, today, int(row.get("volume") or 0))
         layers = historical_4layer(
             daily_ohlcv,
             today_close_pos=cp,
@@ -516,7 +598,7 @@ def _send_decision_report(
             if not theme_df.empty
             else []
         )
-        c: dict[str, Any] = row.to_dict()
+        c: dict[str, Any] = dict(row)
         c["themes"] = themes
         c["layers"] = layers
         c["sizing_layer"] = sizing_layer_name
