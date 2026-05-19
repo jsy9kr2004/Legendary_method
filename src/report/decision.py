@@ -30,8 +30,10 @@ from src.report.formatting import (
     fmt_layer_stats,
     fmt_pct,
     fmt_price,
+    fmt_rank,
     fmt_sizing_table,
     fmt_time,
+    fmt_volume,
     save_report,
     sep,
 )
@@ -49,7 +51,9 @@ def _candidate_block(c: dict[str, Any]) -> str:
     intraday_high = c.get("intraday_high", 0)
     intraday_high_pct = c.get("intraday_high_pct", float("nan"))
     trading_value = c.get("trading_value", 0)
+    volume = c.get("volume", 0)
     rank = c.get("rank", 0)
+    volume_rank = c.get("volume_rank")
     themes = c.get("themes", [])
     priority = c.get("priority", "")
     layers = c.get("layers", {})
@@ -77,17 +81,22 @@ def _candidate_block(c: dict[str, Any]) -> str:
     lines.append("[오늘 시그니처]")
     lines.append(f"일봉:      {fmt_pct(daily_return)}  ({fmt_price(prev_close)} → {fmt_price(price)})")
     lines.append(f"일중 고점: {fmt_price(intraday_high)}  ({fmt_pct(intraday_high_pct)})")
-    lines.append(f"거래대금:  {fmt_billion(trading_value)}  (현재 {rank}위)")
+    # 거래대금 (KIS 절대 순위) + 거래량 (snapshot universe 내 상대 순위).
+    # KIS volume-rank 는 거래대금 절대 순위만 — 거래량 절대 순위 별도 API 필요.
+    lines.append(f"거래대금:  {fmt_billion(trading_value)}  (거래대금 {rank}위)")
+    lines.append(f"거래량:    {fmt_volume(volume)}  (top50 내 {fmt_rank(volume_rank)})")
 
-    # Historical 통계
+    # Historical 통계 + Layer 정의 설명 (라벨에 사례 매칭 조건 명시).
+    # 각 Layer 는 동일 종목 1년 일봉에서 유사 사례 추출 → 다음날 갭상 통계.
+    # ★ 사이징 기준 Layer 는 fmt_layer_stats 가 'sizing_basis' 라벨 부착.
     lines.append("")
     lines.append("[Historical 갭상 분석 — 1년 lookback]")
     layer_order = [
-        ("layer1", "Layer 1 (+20%↑)"),
-        ("layer2", "Layer 2 (상한가)"),
-        ("layer3", "Layer 3 (종가위치 매칭)"),
-        ("layer3_strong_mkt", "Layer 3 + 강세장 매칭"),
-        ("layer3_high_vol", "Layer 3 + 거래량 매칭"),
+        ("layer1",            "Layer 1 (ret≥20% 모든 사례)"),
+        ("layer2",            "Layer 2 (상한가 ret≥29.5%)"),
+        ("layer3",            "Layer 3 (L2 + 종가위치 ±2% 일치)"),
+        ("layer3_strong_mkt", "Layer 3 + KOSPI 200ma 위 매칭"),
+        ("layer3_high_vol",   "Layer 3 + 거래량비율 ±0.5배 매칭"),
     ]
     for layer_key, label in layer_order:
         if layer_key not in layers:
@@ -96,9 +105,42 @@ def _candidate_block(c: dict[str, Any]) -> str:
         is_basis = layer_key == sizing_layer
         lines.append("  " + fmt_layer_stats(stats, label, is_sizing_basis=is_basis))
 
+    # Layer 4 — v1 (분봉 적재 후 구현). 사용자 자주 묻는 항목이라 무엇인지 명시.
     layer4_note = layers.get("layer4", {}).get("note", "")
-    if layer4_note:
-        lines.append(f"  Layer 4: ⚠ {layer4_note}")
+    lines.append(
+        f"  Layer 4 (L3 + 고점도달 시각 매칭): ⚠ v1 — 오늘 고점 시각과 유사 사례"
+    )
+    lines.append(
+        f"          분봉 히스토리 적재 누적 후 구현 (현재 v0 미구현)"
+    )
+    if layer4_note and "분봉" not in layer4_note:
+        # 기존 note 가 다른 사유로 채워졌으면 그것도 표시
+        lines.append(f"          비고: {layer4_note}")
+
+    # R4 v2 보조 지표 — 1년 ret≥10 횟수 + 갭상 비율 (round 41 ④, 컷 X 표시만)
+    aux = c.get("historical_aux") or {}
+    n_ret10 = int(aux.get("n_ret10", 0) or 0)
+    if n_ret10 > 0:
+        n_gap = int(aux.get("n_gap_up", 0) or 0)
+        ratio = aux.get("ratio", float("nan"))
+        if ratio == ratio:  # not NaN
+            lines.append(
+                f"  📊 1년 ret≥10: {n_ret10}회 / 갭상 {n_gap}회 ({ratio*100:.0f}%)"
+            )
+        else:
+            lines.append(f"  📊 1년 ret≥10: {n_ret10}회 (갭상 데이터 없음)")
+
+    # R4 v2 (c)(d) 통과 표시
+    chk = c.get("r4v2_check") or {}
+    chk_parts: list[str] = []
+    if chk.get("close_within_10pct_high") is True:
+        chk_parts.append("✅ 종가 고가-10% 이내")
+    if chk.get("is_52w_high") is True:
+        chk_parts.append("✅ 52주 신고가")
+    elif chk.get("is_52w_high") is None and chk:
+        chk_parts.append("— 52주 신고가 (lookback 부족)")
+    if chk_parts:
+        lines.append(f"  R4 v2: {' / '.join(chk_parts)}")
 
     # 14:50 시그널 (표시만, 점수화 X)
     signals = c.get("intraday_signals") or {}
@@ -289,6 +331,8 @@ def build_decision_report(
         "",
         sep("─"),
         "• 본 레포트는 14:50 기준. 종가 직전 상황 변동 가능",
+        "• R4 v2 룰: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 "
+        "+ (d) 52주 신고가 + (e) 10≤ret≤27% + (f) Layer 표본≥5",
         "• NXT 청산 가능 여부: v1 예정",
     ]
 

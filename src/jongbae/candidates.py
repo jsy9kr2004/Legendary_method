@@ -33,8 +33,9 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-MIN_DAILY_RETURN = 10.0   # R4 v2 (e) 하한 (round 41 이전: 20.0)
-MAX_DAILY_RETURN = 27.0   # R4 v2 (e) 상한 (round 41 신규)
+MIN_DAILY_RETURN = 10.0       # R4 v2 (e) 하한 (round 41 이전: 20.0)
+MAX_DAILY_RETURN = 27.0       # R4 v2 (e) 상한 (round 41 신규)
+MAX_DROP_FROM_HIGH_PCT = 10.0  # R4 v2 (c) 종가 고가-10% 이내
 INTRADAY_HIGH_THRESHOLD = 28.0
 HIGH_PULL_RANGE = (20.0, 25.0)
 
@@ -44,9 +45,12 @@ PRIORITY_NORMAL = "normal"
 PRIORITY_EXCLUDED = "excluded"
 
 CANDIDATE_COLUMNS = [
-    "code", "name", "rank", "price", "prev_close",
-    "daily_return", "intraday_high", "intraday_high_pct",
-    "is_limit_up", "priority", "exclusion_reason",
+    "code", "name", "rank", "volume_rank", "turnover_rank",
+    "price", "prev_close",
+    "daily_return", "intraday_high", "intraday_low", "intraday_high_pct",
+    "volume", "trading_value",
+    "is_limit_up", "market_cap", "turnover",
+    "priority", "exclusion_reason",
 ]
 
 
@@ -85,13 +89,18 @@ def classify_priority(row: pd.Series) -> tuple[str, str | None]:
 
 def extract_candidates(
     snapshot_df: pd.DataFrame,
-    leading_theme_codes: list[str],
+    leading_theme_codes: list[str] | None = None,
 ) -> pd.DataFrame:
-    """주도테마 종목 + R4 v2 (e) 컷 (10% ≤ ret ≤ 27%) 으로 종배 후보 추출.
+    """R4 v2 종배 후보 추출 — 거래대금 50위 단일종목 + 10% ≤ ret ≤ 27% 컷.
 
     Args:
-        snapshot_df: 거래대금 순위 스냅샷 (intraday.SNAPSHOT_COLUMNS)
-        leading_theme_codes: 주도테마에 속한 종목 코드 리스트
+        snapshot_df: 거래대금 순위 스냅샷 (intraday.SNAPSHOT_COLUMNS).
+            R4 v2 (a) 거래대금 50위 universe 는 호출부에서 `top_n=50` 으로
+            fetch 한 스냅샷을 그대로 사용 (이 함수는 추가 rank 컷 X).
+        leading_theme_codes: R4 v1 호환 인자. **None / 빈 리스트 = R4 v2 (round 41)
+            기본 동작 — 주도섹터 필터 우회, 전체 universe 사용** (`docs/jongbae-strategy.md`
+            line 206: "결정 후보 universe 컷에서는 R4 v2 가 R3 를 우회").
+            list 가 주어지면 R4 v1 동작 — 그 코드들만 후보로 잡음 (backward-compat).
 
     Returns:
         CANDIDATE_COLUMNS 스키마 DataFrame.
@@ -101,11 +110,17 @@ def extract_candidates(
     """
     if snapshot_df.empty:
         return pd.DataFrame(columns=CANDIDATE_COLUMNS)
-    if not leading_theme_codes:
-        logger.debug("종배 후보 추출: 주도테마 종목 없음")
-        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
 
-    in_theme = snapshot_df[snapshot_df["code"].astype(str).isin(set(leading_theme_codes))].copy()
+    if leading_theme_codes:
+        # R4 v1 backward-compat: 주도섹터 필터 적용
+        in_theme = snapshot_df[
+            snapshot_df["code"].astype(str).isin(set(leading_theme_codes))
+        ].copy()
+    else:
+        # R4 v2 (a) 기본: 주도섹터 필터 우회 — 전체 스냅샷 universe (호출부가
+        # top 50 으로 잘라 넘김). docs/jongbae-strategy.md round 41.
+        in_theme = snapshot_df.copy()
+
     if in_theme.empty:
         return pd.DataFrame(columns=CANDIDATE_COLUMNS)
 
@@ -153,3 +168,65 @@ def accepted_candidates(candidates_df: pd.DataFrame) -> pd.DataFrame:
     if candidates_df.empty:
         return candidates_df
     return candidates_df[candidates_df["priority"] != PRIORITY_EXCLUDED].reset_index(drop=True)
+
+
+def apply_r4v2_post_filters(
+    candidate_dicts: list[dict[str, Any]],
+    daily_ohlcv: pd.DataFrame,
+    today: Any,
+) -> list[dict[str, Any]]:
+    """R4 v2 (c)(d) post-filter — fetch_quote 보강 후 OHLCV 가 있는 상태에서 적용.
+
+    (c) 종가 고가-10% 이내 — `(intraday_high - price) / intraday_high <= 10%`.
+        떡락 패턴 (긴 윗꼬리) 제외.
+    (d) 52주 신고가 — `intraday_high > max(past 250 daily close)`.
+        새 고가 돌파 종목만 채택. 데이터 부족 시 (lookback <60일) 통과.
+
+    Args:
+        candidate_dicts: accepted 후보 dict list. fetch_quote 보강 후 권장 (intraday_high
+            / price 가 0/NaN 이 아닌 상태). 0 이면 (c) skip.
+        daily_ohlcv: 전체 종목 일봉.
+        today: 기준 날짜 (`datetime.date`).
+
+    Returns:
+        통과 후보만 남긴 새 list. 각 dict 에 r4v2_check (dict) 추가 — 디버그/표시용:
+            {"close_within_10pct_high": bool|None, "is_52w_high": bool|None}.
+    """
+    from src.jongbae.historical import is_52w_high  # 순환 import 회피
+
+    survived: list[dict[str, Any]] = []
+    for c in candidate_dicts:
+        code = str(c.get("code", "")).zfill(6)
+        price = c.get("price") or 0
+        high = c.get("intraday_high") or 0
+        check: dict[str, Any] = {
+            "close_within_10pct_high": None,
+            "is_52w_high": None,
+        }
+
+        # (c) 종가 고가-10% 이내
+        if high > 0 and price > 0:
+            drop_pct = (high - price) / high * 100.0
+            check["close_within_10pct_high"] = bool(drop_pct <= MAX_DROP_FROM_HIGH_PCT)
+            if not check["close_within_10pct_high"]:
+                c["r4v2_check"] = check
+                c["exclusion_reason"] = (
+                    f"종가 고가 대비 -{drop_pct:.1f}% (R4 v2 (c) -10% 컷)"
+                )
+                c["priority"] = PRIORITY_EXCLUDED
+                continue
+
+        # (d) 52주 신고가
+        check["is_52w_high"] = is_52w_high(daily_ohlcv, code, today, high)
+        if check["is_52w_high"] is False:
+            c["r4v2_check"] = check
+            c["exclusion_reason"] = "52주 신고가 미달성 (R4 v2 (d) 컷)"
+            c["priority"] = PRIORITY_EXCLUDED
+            continue
+
+        c["r4v2_check"] = check
+        survived.append(c)
+
+    if not survived:
+        logger.info("[R4 v2] post-filter 후 후보 0개 — (c)(d) 컷 통과 종목 없음")
+    return survived

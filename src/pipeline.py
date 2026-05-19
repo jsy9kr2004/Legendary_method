@@ -114,23 +114,33 @@ def run_pipeline(
     if not leading_themes:
         logger.info("주도테마 없음 — 후보 없이 레포트 생성")
 
-    # ── 3. 종배 후보 추출 (R4) ─────────────────────────────────────────────
-    candidates_df = extract_candidates(snapshot_df, leading_codes)
+    # ── 3. 종배 후보 추출 (R4 v2 round 41) ────────────────────────────────
+    # leading_codes 우회 — 거래대금 50위 전체 universe + 10~27% 컷
+    candidates_df = extract_candidates(snapshot_df, leading_theme_codes=None)
     accepted = accepted_candidates(candidates_df)
+
+    # R4 v2 (c) 종가 고가-10% 이내 + (d) 52주 신고가 post-filter.
+    # pipeline 은 fetch_quote 보강 path 가 없으므로 snapshot 의 intraday_high 가
+    # 0 이면 (c) skip 되고 통과. 운영 환경(real)에서는 KIS volume-rank 가
+    # intraday_high 를 채워주므로 정상 동작 — demo 모드 fixture 도 채워서 전달.
+    from src.jongbae.candidates import apply_r4v2_post_filters
+    accepted_dicts = [row.to_dict() for _, row in accepted.iterrows()]
+    if accepted_dicts and not daily_ohlcv.empty:
+        accepted_dicts = apply_r4v2_post_filters(accepted_dicts, daily_ohlcv, target_date)
 
     # ── 4. Historical + Sizing (R5, R6) ───────────────────────────────────
     candidates_with_stats: list[dict[str, Any]] = []
-    for _, row in accepted.iterrows():
-        code = str(row["code"])
-        close = int(row.get("price", 0))
-        high = int(row.get("intraday_high", close))
+    for row in accepted_dicts:
+        code = str(row.get("code", ""))
+        close = int(row.get("price") or 0)
+        high = int(row.get("intraday_high") or close)
         # 일중 저가는 KIS API stck_lwpr 에서 받음 (H1 수정).
         # 스냅샷에 없거나 0이면 보수적 추정값 사용.
-        low_raw = int(row.get("intraday_low", 0) or 0)
+        low_raw = int(row.get("intraday_low") or 0)
         low = low_raw if low_raw > 0 else int(close * 0.85)
 
         cp = close_position(
-            open_p=float(row.get("prev_close", close)),
+            open_p=float(row.get("prev_close") or close),
             high=float(high),
             low=float(low),
             close=float(close),
@@ -166,11 +176,16 @@ def run_pipeline(
         else:
             themes = []
 
-        c: dict[str, Any] = row.to_dict()
+        # R4 v2 보조 지표 (round 41 ④) — 1년 ret≥10 + 갭상 비율
+        from src.jongbae.historical import historical_ret10_gap_stats
+        ret10_aux = historical_ret10_gap_stats(daily_ohlcv, code, target_date)
+
+        c: dict[str, Any] = dict(row)
         c["themes"] = themes
         c["layers"] = layers
         c["sizing_layer"] = sizing_layer_name
         c["sizing_stats"] = sizing_stats
+        c["historical_aux"] = ret10_aux
         candidates_with_stats.append(c)
 
     # 사이징 계산

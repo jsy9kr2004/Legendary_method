@@ -1,6 +1,8 @@
 """src.jongbae.candidates 테스트."""
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pandas as pd
 import pytest
 
@@ -10,6 +12,7 @@ from src.jongbae.candidates import (
     PRIORITY_LIMIT_UP,
     PRIORITY_NORMAL,
     accepted_candidates,
+    apply_r4v2_post_filters,
     classify_priority,
     extract_candidates,
 )
@@ -95,7 +98,7 @@ def test_extract_candidates_priority_order():
     (limit_up 은 +30%≈로 R4 v2 (e) 상한 컷에 자동 제외 — round 41)."""
     snap = _snapshot_full([
         # rank 1: 일반 +21%
-        {"rank": 1, "code": "A", "daily_return": 21.0, "is_limit_up": False,
+        {"rank": 1, "code": "000001", "daily_return": 21.0, "is_limit_up": False,
          "prev_close": 1000, "intraday_high": 1240},
         # rank 2: 상한가 (R4 v2 에서 제외됨)
         {"rank": 2, "code": "B", "daily_return": 30.0, "is_limit_up": True,
@@ -104,14 +107,14 @@ def test_extract_candidates_priority_order():
         {"rank": 3, "code": "C", "daily_return": 22.0, "is_limit_up": False,
          "prev_close": 1000, "intraday_high": 1290},
     ])
-    out = extract_candidates(snap, leading_theme_codes=["A", "B", "C"])
+    out = extract_candidates(snap, leading_theme_codes=["000001", "B", "C"])
     priorities = out["priority"].tolist()
     # 정렬 순서: high_pull → normal → excluded
     assert priorities[0] == PRIORITY_HIGH_PULL  # C
     assert priorities[1] == PRIORITY_NORMAL     # A
     assert priorities[2] == PRIORITY_EXCLUDED   # B (상한가 → 제외)
     assert out.iloc[0]["code"] == "C"
-    assert out.iloc[1]["code"] == "A"
+    assert out.iloc[1]["code"] == "000001"
     assert out.iloc[2]["code"] == "B"
 
 
@@ -132,22 +135,102 @@ def test_extract_candidates_excludes_user_reported_regression():
 
 
 def test_extract_candidates_empty_snapshot():
-    out = extract_candidates(pd.DataFrame(), leading_theme_codes=["A"])
+    out = extract_candidates(pd.DataFrame(), leading_theme_codes=["000001"])
     assert out.empty
 
 
-def test_extract_candidates_empty_leading():
-    snap = _snapshot_full([{"code": "A"}])
-    out = extract_candidates(snap, leading_theme_codes=[])
-    assert out.empty
+def test_extract_candidates_no_theme_filter_r4v2():
+    """R4 v2 (round 41) — leading_theme_codes=None / 빈 list 이면 주도섹터 필터
+    우회 + 전체 snapshot universe 사용 (호출부가 top 50 으로 잘라 넘김)."""
+    snap = _snapshot_full([
+        # 주도섹터 없이 +20% (R4 v2 eligible)
+        {"code": "000001", "daily_return": 20.0, "prev_close": 1000, "intraday_high": 1240},
+        # +30% (R4 v2 상한 컷 제외) — 결과에 priority=EXCLUDED 로 포함
+        {"code": "B", "daily_return": 30.0, "prev_close": 1000, "intraday_high": 1300,
+         "is_limit_up": True},
+    ])
+    out_none = extract_candidates(snap, leading_theme_codes=None)
+    out_empty = extract_candidates(snap, leading_theme_codes=[])
+    # None / [] 동일 동작
+    assert len(out_none) == 2
+    assert len(out_empty) == 2
+    # accepted 는 +20% A 만 (B 는 상한 컷)
+    assert set(accepted_candidates(out_none)["code"]) == {"000001"}
+
+
+def test_extract_candidates_theme_filter_backward_compat():
+    """leading_theme_codes 가 주어지면 R4 v1 호환 — 그 코드만 후보."""
+    snap = _snapshot_full([
+        {"code": "000001", "daily_return": 20.0, "prev_close": 1000, "intraday_high": 1240},
+        {"code": "B", "daily_return": 22.0, "prev_close": 1000, "intraday_high": 1260},
+    ])
+    out = extract_candidates(snap, leading_theme_codes=["000001"])
+    assert len(out) == 1
+    assert out.iloc[0]["code"] == "000001"
+
+
+# ── R4 v2 (c)(d) post-filter — round 41 ─────────────────────────────────────
+
+def _daily_history(code: str, today: date, closes: list[int]) -> pd.DataFrame:
+    """간단 일봉 DF — 오늘 직전 N일 close 만 채움 (other fields 더미)."""
+    rows = []
+    for i, cl in enumerate(closes):
+        d = today - timedelta(days=len(closes) - i)
+        rows.append({
+            "code": code, "date": d,
+            "open": cl, "high": cl, "low": cl, "close": cl,
+            "volume": 1000, "trading_value": cl * 1000, "change_rate": pd.NA,
+        })
+    return pd.DataFrame(rows)
+
+
+def test_r4v2_post_filter_passes_when_close_at_high_and_52w_high():
+    today = date(2026, 5, 19)
+    daily = _daily_history("000001", today, [1000] * 60 + [1100] * 50)  # 100일치
+    cands = [{"code": "000001", "price": 1500, "intraday_high": 1500, "daily_return": 22.0}]
+    out = apply_r4v2_post_filters(cands, daily, today)
+    assert len(out) == 1
+    assert out[0]["r4v2_check"]["close_within_10pct_high"] is True
+    assert out[0]["r4v2_check"]["is_52w_high"] is True
+
+
+def test_r4v2_post_filter_excludes_close_drop_over_10pct_from_high():
+    """(c) close 가 고가 대비 -10% 초과 시 제외."""
+    today = date(2026, 5, 19)
+    daily = _daily_history("000001", today, [1000] * 60)
+    # high=2000, close=1700 → drop=15% > 10%
+    cands = [{"code": "000001", "price": 1700, "intraday_high": 2000, "daily_return": 22.0}]
+    out = apply_r4v2_post_filters(cands, daily, today)
+    assert len(out) == 0
+
+
+def test_r4v2_post_filter_excludes_when_not_52w_high():
+    """(d) intraday_high 가 과거 250일 종가 최고치를 못 넘으면 제외."""
+    today = date(2026, 5, 19)
+    # 과거에 5000 종가가 있음 — 오늘 1500 은 신고가 X
+    daily = _daily_history("000001", today, [1000] * 50 + [5000] + [1000] * 30)
+    cands = [{"code": "000001", "price": 1500, "intraday_high": 1500, "daily_return": 22.0}]
+    out = apply_r4v2_post_filters(cands, daily, today)
+    assert len(out) == 0
+    assert "52주" in cands[0]["exclusion_reason"]
+
+
+def test_r4v2_post_filter_passes_when_history_too_short():
+    """(d) lookback 60일 미만이면 신고가 판정 불가 → None → 통과."""
+    today = date(2026, 5, 19)
+    daily = _daily_history("000001", today, [1000] * 10)  # 10일치만
+    cands = [{"code": "000001", "price": 1500, "intraday_high": 1500, "daily_return": 22.0}]
+    out = apply_r4v2_post_filters(cands, daily, today)
+    assert len(out) == 1
+    assert out[0]["r4v2_check"]["is_52w_high"] is None
 
 
 def test_accepted_candidates_drops_excluded():
     df = pd.DataFrame([
-        {"code": "A", "priority": PRIORITY_LIMIT_UP},
+        {"code": "000001", "priority": PRIORITY_LIMIT_UP},
         {"code": "B", "priority": PRIORITY_EXCLUDED},
         {"code": "C", "priority": PRIORITY_NORMAL},
     ])
     accepted = accepted_candidates(df)
     assert len(accepted) == 2
-    assert set(accepted["code"]) == {"A", "C"}
+    assert set(accepted["code"]) == {"000001", "C"}

@@ -15,9 +15,11 @@ from src.report.formatting import (
     fmt_billion,
     fmt_pct,
     fmt_price,
+    fmt_rank,
     fmt_layer_stats,
     fmt_sizing_table,
     fmt_sizing_table,
+    fmt_volume,
     fmt_date,
 )
 from src.report.decision import (
@@ -59,6 +61,26 @@ def test_fmt_billion_large():
 
 def test_fmt_billion_small():
     assert "억" in fmt_billion(1_200_000_000)
+
+
+def test_fmt_volume_large_in_10k_units():
+    assert fmt_volume(5_000_000) == "500.0만주"
+    assert fmt_volume(12_345_678) == "1,234.6만주"
+
+
+def test_fmt_volume_small_in_shares():
+    assert fmt_volume(9_999) == "9,999주"
+    assert fmt_volume(0) == "0주"
+
+
+def test_fmt_rank_basic():
+    assert fmt_rank(1) == "1위"
+    assert fmt_rank(11) == "11위"
+
+
+def test_fmt_rank_handles_nan_and_none():
+    assert fmt_rank(None) == "—"
+    assert fmt_rank(float("nan")) == "—"
 
 def test_fmt_date_weekday():
     d = date(2026, 5, 6)  # 수요일
@@ -189,6 +211,30 @@ def test_decision_report_contains_candidate():
 def test_decision_report_no_candidates():
     report = build_decision_report([], [], _DT)
     assert "후보 없음" in report
+
+
+def test_decision_report_shows_volume_with_rank():
+    """거래량 라인 — 만/주 단위 + snapshot universe 내 상대 순위 (2026-05-19)."""
+    c = _make_candidate(volume=5_000_000, volume_rank=3)
+    report = build_decision_report([], [c], _DT)
+    assert "거래량:" in report
+    assert "500.0만주" in report  # fmt_volume
+    assert "top50 내 3위" in report  # fmt_rank
+
+
+def test_decision_report_layer_labels_explain_matching():
+    """Layer 1/2/3 라벨이 매칭 조건을 설명해야 함 (2026-05-19 사용자 요청)."""
+    report = build_decision_report([], [_make_candidate()], _DT)
+    assert "ret≥20% 모든 사례" in report  # Layer 1
+    assert "상한가 ret≥29.5%" in report   # Layer 2
+    assert "종가위치 ±2% 일치" in report  # Layer 3
+
+
+def test_decision_report_layer4_explains_what_it_is():
+    """Layer 4 가 단순 'v1 미구현' 이 아니라 무엇인지 설명해야 함."""
+    report = build_decision_report([], [_make_candidate()], _DT)
+    assert "고점도달 시각" in report  # Layer 4 의 의미
+    assert "분봉" in report
 
 
 def test_decision_report_leading_themes():

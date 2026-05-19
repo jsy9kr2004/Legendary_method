@@ -163,6 +163,17 @@ def make_daily_ohlcv(target_date: date, lookback_days: int = 260) -> pd.DataFram
                     df_vals.at[hist_idx, "close"] = int(prev_close * 1.21)
                     df_vals.at[hist_idx, "high"] = int(prev_close * 1.23)
 
+        # R4 v2 (d) 가드용 demo 후처리 — target_date 가 52주 신고가가 되도록
+        # 과거 close 가 target close 를 넘으면 (target_close - 1) 로 cap.
+        # 075180 (특수 spike 종목) 과 전기/전선 강세 종목만 — 일반 종목은 그대로.
+        if code == "075180" or code in ("001440", "229640", "010120", "267260"):
+            target_close = int(df_vals.iloc[today_idx]["close"])
+            past_close = df_vals["close"].iloc[:today_idx]
+            cap = target_close - 1
+            df_vals.loc[df_vals.index[:today_idx], "close"] = past_close.clip(upper=cap)
+            past_high = df_vals["high"].iloc[:today_idx]
+            df_vals.loc[df_vals.index[:today_idx], "high"] = past_high.clip(upper=cap)
+
         for i, d in enumerate(days):
             row = df_vals.iloc[i]
             all_rows.append({
@@ -235,7 +246,18 @@ def make_snapshot(target_date: date) -> pd.DataFrame:
             "turnover": round(turnover, 4) if turnover == turnover else float("nan"),
         })
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # demo 도 fetch_volume_rank 와 동일하게 turnover_rank / volume_rank 부여
+    if not df.empty:
+        df["turnover_rank"] = (
+            df["turnover"].rank(method="min", ascending=False, na_option="bottom")
+            .astype("Int64")
+        )
+        df["volume_rank"] = (
+            df["volume"].rank(method="min", ascending=False, na_option="bottom")
+            .astype("Int64")
+        )
+    return df
 
 
 def make_theme_mapping(crawled_at: date | None = None) -> pd.DataFrame:

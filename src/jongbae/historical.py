@@ -61,6 +61,97 @@ def close_position(open_p: float, high: float, low: float, close: float) -> floa
     return (close - low) / (high - low)
 
 
+def historical_ret10_gap_stats(
+    daily_ohlcv: pd.DataFrame,
+    code: str,
+    today: date,
+    lookback: int = LOOKBACK_TRADING_DAYS,
+) -> dict[str, Any]:
+    """R4 v2 보조 지표 — 1년 lookback 동안 ret≥10% 발생 횟수 + 그중 갭상 비율.
+
+    plan.md round 41 ④: "historical 갭상 비율 (1년 ret≥10 횟수 + 그중 갭상 횟수 +
+    비율) 은 카드 보조 정보로만 표시, 컷으로 사용 X". 단골 종배 종목 식별용
+    (대한광통신 78%/빛과전자 80%/한화갤러리아 100% 등).
+
+    Args:
+        daily_ohlcv: 전체 종목 일봉 (DAILY_OHLCV_COLUMNS).
+        code: 6자리 종목 코드.
+        today: 기준 날짜. 이 날짜 직전 lookback 거래일 윈도우.
+        lookback: 거래일 수 (기본 252 ≈ 1년).
+
+    Returns:
+        {
+            "n_ret10": int,    # ret≥10% 발생 일수
+            "n_gap_up": int,   # 그중 다음날 갭상 (next_open > close) 일수
+            "ratio": float,    # n_gap_up / n_ret10. 표본 0 이면 NaN.
+        }
+    """
+    if daily_ohlcv is None or daily_ohlcv.empty:
+        return {"n_ret10": 0, "n_gap_up": 0, "ratio": float("nan")}
+
+    own = daily_ohlcv[daily_ohlcv["code"] == code]
+    if own.empty:
+        return {"n_ret10": 0, "n_gap_up": 0, "ratio": float("nan")}
+
+    own = own[own["date"] < today].sort_values("date").tail(lookback)
+    if own.empty:
+        return {"n_ret10": 0, "n_gap_up": 0, "ratio": float("nan")}
+
+    enriched = _compute_returns(own)
+    qualifying = enriched[enriched["daily_return"] >= 10.0]
+    n_ret10 = int(len(qualifying))
+    if n_ret10 == 0:
+        return {"n_ret10": 0, "n_gap_up": 0, "ratio": float("nan")}
+
+    # gap_pct = (next_open - close) / close * 100. next_open NaN(마지막행)은 제외.
+    gap_valid = qualifying.dropna(subset=["gap_pct"])
+    n_gap_up = int((gap_valid["gap_pct"] > 0).sum())
+    # 표본은 ret10 이지만 비율은 next_open 이 있는 표본 기준 (안전).
+    ratio_base = len(gap_valid) if len(gap_valid) > 0 else n_ret10
+    ratio = float(n_gap_up / ratio_base) if ratio_base > 0 else float("nan")
+
+    return {"n_ret10": n_ret10, "n_gap_up": n_gap_up, "ratio": ratio}
+
+
+def is_52w_high(
+    daily_ohlcv: pd.DataFrame,
+    code: str,
+    today: date,
+    today_high: int | float,
+    window: int = LOOKBACK_TRADING_DAYS,
+) -> bool | None:
+    """R4 v2 (d) — 오늘 일중 고가가 직전 N거래일(기본 250 ≈ 52주) 종가 최고치를
+    돌파했는지.
+
+    종가 기준 비교 (HTS 신고가 표시 관례). 일중 고가 데이터를 today_high 로 받음 —
+    snapshot.intraday_high 또는 fetch_quote 보강 결과.
+
+    Args:
+        daily_ohlcv: 전체 종목 일봉.
+        code: 6자리 종목 코드.
+        today: 기준 날짜.
+        today_high: 오늘 일중 고가.
+        window: lookback 거래일 (기본 250).
+
+    Returns:
+        True / False. 데이터 부족 (lookback 60일 미만 또는 today_high 0/NaN) 시 None.
+    """
+    if today_high is None or today_high <= 0:
+        return None
+    if daily_ohlcv is None or daily_ohlcv.empty:
+        return None
+    own = daily_ohlcv[(daily_ohlcv["code"] == code) & (daily_ohlcv["date"] < today)]
+    if own.empty:
+        return None
+    own = own.sort_values("date").tail(window)
+    if len(own) < 60:  # 데이터 부족
+        return None
+    past_max_close = float(own["close"].max())
+    if past_max_close <= 0:
+        return None
+    return float(today_high) > past_max_close
+
+
 def _compute_returns(df: pd.DataFrame) -> pd.DataFrame:
     """일봉 DF에 daily_return, next_day 메트릭 + 거래량 비율 추가.
 
