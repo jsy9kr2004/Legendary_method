@@ -12,6 +12,7 @@
 #   ./go setup        venv 생성 + 의존성 설치
 #   ./go logs         최근 로그 출력
 #   ./go test         pytest 실행
+#   ./go decision-rerun [--from-saved] 결정 레포트 즉시 재발송 (fresh fetch or saved)
 
 set -euo pipefail
 
@@ -113,6 +114,11 @@ cmd_update_index() {
 cmd_tel() {
     ensure_venv
     "$PY" -m src.notify.test_send "$@"
+}
+
+cmd_decision_rerun() {
+    ensure_venv
+    "$PY" -m src.rerun_decision "$@"
 }
 
 cmd_test() {
@@ -387,6 +393,11 @@ Legendary Method — 간편 실행 스크립트
   update-index KOSPI/KOSDAQ incremental
   setup       venv 생성 + 의존성 설치 (idempotent)
   test        pytest 실행
+  decision-rerun [--from-saved [--date YYYY-MM-DD] [--snapshot 14:50]]
+              결정 레포트 수동 재실행 + 텔레그램 재발송.
+              기본: 호출 시점에 fetch_volume_rank 새로 fetch (fresh).
+              --from-saved: 저장된 스냅샷 parquet 로드 (기본 오늘 14:50).
+              preview 만: DRY_RUN=1 ./go decision-rerun
 
   demo start     PWA UI 검증용 mock 서버 (KIS/텔레그램 무관, 백그라운드)
   demo stop      PWA 데모 종료
@@ -427,6 +438,7 @@ case "$cmd" in
     init-index)         cmd_init_index "$@" ;;
     update-index)       cmd_update_index "$@" ;;
     tel)                cmd_tel "$@" ;;
+    decision-rerun)     cmd_decision_rerun "$@" ;;
     start)              cmd_start ;;
     stop)               cmd_stop ;;
     status)             cmd_status ;;
