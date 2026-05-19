@@ -246,7 +246,18 @@ def make_snapshot(target_date: date) -> pd.DataFrame:
             "turnover": round(turnover, 4) if turnover == turnover else float("nan"),
         })
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # demo 도 fetch_volume_rank 와 동일하게 turnover_rank / volume_rank 부여
+    if not df.empty:
+        df["turnover_rank"] = (
+            df["turnover"].rank(method="min", ascending=False, na_option="bottom")
+            .astype("Int64")
+        )
+        df["volume_rank"] = (
+            df["volume"].rank(method="min", ascending=False, na_option="bottom")
+            .astype("Int64")
+        )
+    return df
 
 
 def make_theme_mapping(crawled_at: date | None = None) -> pd.DataFrame:

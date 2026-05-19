@@ -45,9 +45,12 @@ PRIORITY_NORMAL = "normal"
 PRIORITY_EXCLUDED = "excluded"
 
 CANDIDATE_COLUMNS = [
-    "code", "name", "rank", "price", "prev_close",
-    "daily_return", "intraday_high", "intraday_high_pct",
-    "is_limit_up", "priority", "exclusion_reason",
+    "code", "name", "rank", "volume_rank", "turnover_rank",
+    "price", "prev_close",
+    "daily_return", "intraday_high", "intraday_low", "intraday_high_pct",
+    "volume", "trading_value",
+    "is_limit_up", "market_cap", "turnover",
+    "priority", "exclusion_reason",
 ]
 
 

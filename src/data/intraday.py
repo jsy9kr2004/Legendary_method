@@ -40,6 +40,10 @@ SNAPSHOT_COLUMNS = [
     "turnover_rank", # master 필터 통과 종목들의 turnover 내림차순 순위 (1~top_n).
                      # "거래대금 50위 안에서의 회전율 순위" — 절대 시장 순위 아님.
                      # KIS API 가 회전율 순위는 별도 제공 X.
+    "volume_rank",   # master 필터 통과 종목들의 volume(주) 내림차순 순위 (1~top_n).
+                     # KIS volume-rank API 는 거래대금만 절대 순위 제공 — 거래량
+                     # 절대 순위는 별도 호출 필요. snapshot universe 안의 상대 순위로
+                     # 충분 (2026-05-19 round 41 후속 사용자 요청).
     "code",
     "name",
     "price",
@@ -178,6 +182,12 @@ def fetch_volume_rank(
     # 회전율 순위 부여 — master 필터 통과 종목 turnover desc. NaN 은 끝으로.
     df["turnover_rank"] = (
         df["turnover"]
+        .rank(method="min", ascending=False, na_option="bottom")
+        .astype("Int64")
+    )
+    # 거래량 순위 — universe 내 volume desc (2026-05-19 round 41 후속).
+    df["volume_rank"] = (
+        df["volume"]
         .rank(method="min", ascending=False, na_option="bottom")
         .astype("Int64")
     )

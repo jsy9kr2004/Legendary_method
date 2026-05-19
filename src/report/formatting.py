@@ -109,6 +109,42 @@ def fmt_billion(value: int | float) -> str:
         return "N/A"
 
 
+def fmt_volume(value: int | float) -> str:
+    """거래량 주 단위 — 만/주 자동 분기.
+
+    Examples:
+        5_000_000 → "500.0만주"
+        12_345    → "12,345주"
+        0         → "0주"
+    """
+    try:
+        v = int(value)
+        if v >= 10_000:
+            return f"{v / 10_000:,.1f}만주"
+        return f"{v:,}주"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def fmt_rank(value: Any) -> str:
+    """순위 정수 — NaN/None 시 '—'.
+
+    Examples:
+        11   → "11위"
+        None → "—"
+        NaN  → "—"
+    """
+    if value is None:
+        return "—"
+    try:
+        f = float(value)
+        if f != f:  # NaN
+            return "—"
+        return f"{int(f)}위"
+    except (TypeError, ValueError):
+        return "—"
+
+
 def fmt_date(d: date) -> str:
     """날짜 + 요일.
 
