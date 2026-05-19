@@ -32,6 +32,10 @@ R4 v2 soft 보조 지표 (표시만, 탈락 X — 2026-05-19 정정):
       (d)(f) hard cut 시 후보 0~1종목 좁아져 운영 의미 X. 보조 지표로만 활용".
       (d) 52주 신고가 / (f) Layer 표본 ≥5 hard cut 제거. 표시 + Kelly 산출
       가능여부 만 영향.
+    - 2026-05-19 round 41 후속 MIN 10→5: 사용자 "ret 하한을 10에서 5로 낮춰줘".
+      후보 풀 확보. 5% 미만은 단타 갭상 알파 약하다는 단편 가설 — 사용자 운영
+      누적 데이터로 재검증 예정. 5일 backtest 결과상 하한 5% 가 (e) 의 본래 의도
+      "단타 종배 정신" 과 충돌하지 않음.
 """
 from __future__ import annotations
 
@@ -40,7 +44,7 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-MIN_DAILY_RETURN = 10.0       # R4 v2 (e) 하한 (round 41 이전: 20.0)
+MIN_DAILY_RETURN = 5.0        # R4 v2 (e) 하한 (round 41 후속 2026-05-19: 10→5 사용자 정정 — 후보 폭 확보)
 MAX_DAILY_RETURN = 27.0       # R4 v2 (e) 상한 (round 41 신규)
 MAX_DROP_FROM_HIGH_PCT = 10.0  # R4 v2 (c) 종가 고가-10% 이내
 INTRADAY_HIGH_THRESHOLD = 28.0

@@ -556,6 +556,34 @@ def _send_decision_report(
     candidates_df = extract_candidates(snapshot_df, leading_theme_codes=None)
     accepted = accepted_candidates(candidates_df)
 
+    # 진단 로깅 (2026-05-19 round 41 후속) — 사용자 보고: "후보가 top 50 밖 종목"
+    # 의심 시 snapshot 의 실제 KIS rank / 후보 선정 결과 확인용.
+    logger.info(
+        f"[결정] 진단: snapshot {len(snapshot_df)}종목 "
+        f"(KIS rank 범위 {snapshot_df['rank'].min() if not snapshot_df.empty else 'N/A'}"
+        f"~{snapshot_df['rank'].max() if not snapshot_df.empty else 'N/A'})"
+    )
+    if not snapshot_df.empty:
+        top10 = snapshot_df.sort_values("rank").head(10)
+        for _, r in top10.iterrows():
+            logger.info(
+                f"  rank={int(r['rank']):>3} {str(r.get('code','')):>6} "
+                f"{str(r.get('name','')):<10} ret={float(r.get('daily_return') or 0):+.2f}% "
+                f"value={int(r.get('trading_value') or 0)/1e8:.1f}억"
+            )
+    if not candidates_df.empty:
+        excluded = candidates_df[candidates_df["priority"] == "excluded"]
+        if not excluded.empty:
+            logger.info(f"[결정] 제외된 종목 ({len(excluded)}개):")
+            for _, r in excluded.head(20).iterrows():
+                reason = r.get("exclusion_reason", "?")
+                logger.info(
+                    f"  rank={int(r['rank']):>3} {str(r.get('code','')):>6} "
+                    f"{str(r.get('name','')):<10} ret={float(r.get('daily_return') or 0):+.2f}% "
+                    f"← {reason}"
+                )
+    logger.info(f"[결정] 채택 후보: {len(accepted)}종목")
+
     # KIS volume-rank 응답이 일부 종목에서 prev_close / intraday_high / trading_value
     # 필드를 비워서 주는 케이스가 있음 (2026-05-19 사용자 보고 — 진원생명과학 011000
     # 상한가 종목의 prev_close=0, intraday_high=0, trading_value=0 → 표시 깨짐 +
