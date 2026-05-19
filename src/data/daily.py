@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import httpx
 import pandas as pd
 from loguru import logger
 
@@ -103,6 +104,13 @@ def fetch_one_ticker(
             chunk = _fetch_chunk(client, code, cur_from, cur_to, adjusted)
         except KISApiError as e:
             logger.warning(f"{code} {cur_from}~{cur_to}: KIS 에러 — {e}")
+            break
+        except httpx.HTTPError as e:
+            # KIS 5xx / 네트워크 단절. 재시도 후에도 실패한 청크 — 종목 단위로 break 하고
+            # 그 종목은 다음 incremental 사이클에서 재시도 (배치 잡 전체는 진행).
+            logger.warning(
+                f"{code} {cur_from}~{cur_to}: HTTP 실패 — {type(e).__name__}: {e}"
+            )
             break
         if chunk.empty:
             break

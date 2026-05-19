@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pandas as pd
 from loguru import logger
 
@@ -112,6 +113,10 @@ def fetch_minute_bars(
     except KISApiError as e:
         logger.error(f"{code} 분봉 조회 실패: {e}")
         return pd.DataFrame(columns=MINUTE_BAR_COLUMNS)
+    except httpx.HTTPError as e:
+        # KIS 서버 5xx / 네트워크 단절 (tenacity 3회 재시도 후 실패). 종목 단위 격리.
+        logger.warning(f"{code} 분봉 조회 HTTP 실패: {type(e).__name__}: {e}")
+        return pd.DataFrame(columns=MINUTE_BAR_COLUMNS)
 
     rows: list[dict] = payload.get("output2") or []
     if not rows:
@@ -184,6 +189,9 @@ def fetch_ccnl_strength(client: KISClient, code: str) -> dict[str, Any] | None:
         payload = client.get(_CCNL_ENDPOINT, _CCNL_TR_ID, params=params)
     except KISApiError as e:
         logger.error(f"{code} 체결강도 조회 실패: {e}")
+        return None
+    except httpx.HTTPError as e:
+        logger.warning(f"{code} 체결강도 조회 HTTP 실패: {type(e).__name__}: {e}")
         return None
 
     # 응답 구조: payload["output"] = [{...}, ...] (체결 30건, 최신순). 일부 응답에서
@@ -258,6 +266,9 @@ def fetch_asking_price(client: KISClient, code: str) -> dict[str, Any] | None:
     except KISApiError as e:
         logger.error(f"{code} 호가 조회 실패: {e}")
         return None
+    except httpx.HTTPError as e:
+        logger.warning(f"{code} 호가 조회 HTTP 실패: {type(e).__name__}: {e}")
+        return None
 
     out = payload.get("output1") or payload.get("output") or {}
     if not out:
@@ -330,6 +341,9 @@ def fetch_investor_flow(client: KISClient, code: str) -> dict[str, Any] | None:
         payload = client.get(_INVESTOR_ENDPOINT, _INVESTOR_TR_ID, params=params)
     except KISApiError as e:
         logger.error(f"{code} 투자자 매매 조회 실패: {e}")
+        return None
+    except httpx.HTTPError as e:
+        logger.warning(f"{code} 투자자 매매 조회 HTTP 실패: {type(e).__name__}: {e}")
         return None
 
     raw = payload.get("output") or payload.get("output1") or payload.get("output2")

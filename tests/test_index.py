@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import httpx
 import pandas as pd
 
 from src.data.index import (
@@ -20,6 +21,12 @@ def _client(payload: dict) -> MagicMock:
     c = MagicMock()
     c.get.return_value = payload
     return c
+
+
+def _http_status_error(status: int = 500) -> httpx.HTTPStatusError:
+    req = httpx.Request("GET", "https://openapi.koreainvestment.com:9443/x")
+    resp = httpx.Response(status, request=req, text="server error")
+    return httpx.HTTPStatusError(f"Server error '{status}'", request=req, response=resp)
 
 
 # ── fetch_index_quote ────────────────────────────────────────────────────────
@@ -50,6 +57,20 @@ def test_fetch_index_quote_api_error_returns_none():
     c = MagicMock()
     c.get.side_effect = KISApiError("ERR", "ERR", "fail", {})
     assert fetch_index_quote(c, KOSPI_CODE) is None
+
+
+def test_fetch_index_quote_http_500_returns_none():
+    """KIS 서버 5xx (tenacity 재시도 후 reraise) — 모닝/결정 레포트 보호."""
+    c = MagicMock()
+    c.get.side_effect = _http_status_error(500)
+    assert fetch_index_quote(c, KOSPI_CODE) is None
+
+
+def test_fetch_index_daily_http_500_returns_empty():
+    c = MagicMock()
+    c.get.side_effect = _http_status_error(502)
+    df = fetch_index_daily(c, KOSPI_CODE)
+    assert df.empty
 
 
 def test_fetch_index_quote_handles_list_output():

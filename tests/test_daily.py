@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import MagicMock
 
+import httpx
 import pandas as pd
 
 from src.data import daily
@@ -86,6 +87,18 @@ def test_fetch_one_ticker_invalid_range():
     df = daily.fetch_one_ticker(client, "005930", date(2025, 5, 5), date(2025, 5, 1))
     assert df.empty
     client.get.assert_not_called()
+
+
+def test_fetch_one_ticker_http_error_breaks_gracefully():
+    """KIS 5xx (tenacity 재시도 후 reraise) — 종목 단위로 break, 배치 잡 계속."""
+    req = httpx.Request("GET", "https://openapi.koreainvestment.com:9443/x")
+    resp = httpx.Response(500, request=req, text="server error")
+    err = httpx.HTTPStatusError("Server error '500'", request=req, response=resp)
+    client = MagicMock()
+    client.get.side_effect = err
+
+    df = daily.fetch_one_ticker(client, "229200", date(2025, 5, 1), date(2025, 5, 5))
+    assert df.empty
 
 
 def test_change_rate_is_na():

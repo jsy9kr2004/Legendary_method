@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from src.data.intraday import (
@@ -195,6 +196,42 @@ def test_fetch_quote_empty_output(tmp_path):
         with patch.object(client, "get", return_value=payload):
             q = fetch_quote(client, "075180")
     assert q is None
+
+
+def test_fetch_quote_http_500_returns_none(tmp_path):
+    """KIS 서버 500 (tenacity 3회 재시도 후 reraise) — 폴링 사이클을 죽이지 않고
+    None 반환으로 격리. 실제 운영 케이스: 229200 같은 특정 종목의 일시적 5xx."""
+    client = _make_client(tmp_path)
+    req = httpx.Request("GET", "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price")
+    resp = httpx.Response(500, request=req, text="Internal Server Error")
+    err = httpx.HTTPStatusError("Server error '500 Internal Server Error'", request=req, response=resp)
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=err):
+            q = fetch_quote(client, "229200")
+    assert q is None
+
+
+def test_fetch_quote_http_transport_error_returns_none(tmp_path):
+    """네트워크 단절(ConnectError 등) — tenacity 재시도 후 reraise 시에도 None 반환."""
+    client = _make_client(tmp_path)
+    err = httpx.ConnectError("Connection refused")
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=err):
+            q = fetch_quote(client, "229200")
+    assert q is None
+
+
+def test_fetch_volume_rank_http_500_returns_empty(tmp_path):
+    """fetch_volume_rank 도 동일 패턴 — HTTP 5xx 시 빈 DataFrame."""
+    client = _make_client(tmp_path)
+    req = httpx.Request("GET", "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/volume-rank")
+    resp = httpx.Response(502, request=req, text="Bad Gateway")
+    err = httpx.HTTPStatusError("Server error '502 Bad Gateway'", request=req, response=resp)
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=err):
+            df = fetch_volume_rank(client, top_n=30)
+    assert df.empty
+    assert list(df.columns) == SNAPSHOT_COLUMNS
 
 
 # ── rank / turnover_rank 회귀 (2026-05-18) ──────────────────────────────────
