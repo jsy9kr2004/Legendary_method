@@ -87,7 +87,7 @@ def extract_candidates(
     snapshot_df: pd.DataFrame,
     leading_theme_codes: list[str],
 ) -> pd.DataFrame:
-    """주도테마 종목 + 일봉 +20%↑ 필터로 종배 후보 추출.
+    """주도테마 종목 + R4 v2 (e) 컷 (10% ≤ ret ≤ 27%) 으로 종배 후보 추출.
 
     Args:
         snapshot_df: 거래대금 순위 스냅샷 (intraday.SNAPSHOT_COLUMNS)
@@ -95,7 +95,8 @@ def extract_candidates(
 
     Returns:
         CANDIDATE_COLUMNS 스키마 DataFrame.
-        priority 별 정렬: limit_up → high_pull → normal → excluded
+        priority 별 정렬: high_pull → normal → excluded
+        (limit_up 은 R4 v2 (e) 상한 컷에 자동 제외 — round 41 이후 비활성)
         excluded 는 디버그/레포트 표시용으로 함께 반환.
     """
     if snapshot_df.empty:

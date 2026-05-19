@@ -53,12 +53,19 @@ def build_morning_report(
         return fmt_fn(v) if fmt_fn else str(v)
 
     kospi = market_stats.get("kospi_current")
-    kospi_prev = market_stats.get("kospi_prev_close")
+    # compute_market_stats 는 kospi_prev_close 를 안 채움 — kospi_change_rate 직접 사용.
+    # change_rate 가 비면 prev_close 로 fallback (예전 인터페이스 호환). (2026-05-19)
+    kospi_chg = market_stats.get("kospi_change_rate")
+    if (kospi_chg is None or (isinstance(kospi_chg, float) and kospi_chg != kospi_chg)):
+        kospi_prev = market_stats.get("kospi_prev_close")
+        if kospi and kospi_prev and kospi_prev > 0:
+            kospi_chg = (kospi - kospi_prev) / kospi_prev * 100
     ma200 = market_stats.get("kospi_ma200")
 
-    if kospi and kospi_prev and kospi_prev > 0:
-        kospi_chg = (kospi - kospi_prev) / kospi_prev * 100
+    if kospi and kospi_chg is not None and not (isinstance(kospi_chg, float) and kospi_chg != kospi_chg):
         kospi_str = f"{kospi:,.2f}  ({fmt_pct(kospi_chg)})"
+    elif kospi:
+        kospi_str = f"{kospi:,.2f}  (—)"
     else:
         kospi_str = "N/A"
 
