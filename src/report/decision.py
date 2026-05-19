@@ -169,10 +169,12 @@ def _intraday_signal_lines(signals: dict[str, Any]) -> list[str]:
     if ap:
         bid = ap.get("bid_total_volume", 0)
         ask = ap.get("ask_total_volume", 0)
-        ratio = ap.get("bid_ask_ratio", float("nan"))
-        ratio_str = f"{ratio:.1f}배" if ratio == ratio and ratio > 0 else "—"
+        ratio = ap.get("bid_ask_ratio")
+        # save_decision_candidates 가 NaN→None 으로 직렬화하므로 reload 시 None 가능
+        ratio_ok = isinstance(ratio, (int, float)) and ratio == ratio and ratio > 0
+        ratio_str = f"{ratio:.1f}배" if ratio_ok else "—"
         tag = ""
-        if ratio == ratio:
+        if ratio_ok:
             if ratio >= 3.0:
                 tag = "  🟢 매수 우세"
             elif ratio <= 0.5:
@@ -181,10 +183,11 @@ def _intraday_signal_lines(signals: dict[str, Any]) -> list[str]:
 
     cs = signals.get("ccnl_strength") or {}
     if cs:
-        strength = cs.get("ccnl_strength", float("nan"))
-        s_str = f"{strength:.0f}" if strength == strength else "—"
+        strength = cs.get("ccnl_strength")
+        strength_ok = isinstance(strength, (int, float)) and strength == strength
+        s_str = f"{strength:.0f}" if strength_ok else "—"
         tag = ""
-        if strength == strength:
+        if strength_ok:
             if strength >= 120:
                 tag = "  🟢 매수 우세"
             elif strength <= 80:
