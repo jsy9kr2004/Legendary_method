@@ -204,19 +204,21 @@ def test_r4v2_post_filter_excludes_close_drop_over_10pct_from_high():
     assert len(out) == 0
 
 
-def test_r4v2_post_filter_excludes_when_not_52w_high():
-    """(d) intraday_high 가 과거 250일 종가 최고치를 못 넘으면 제외."""
+def test_r4v2_post_filter_52w_high_is_soft_keeps_candidate():
+    """(d) 52주 신고가는 soft 지표 — 미달성 시도 후보 유지 (2026-05-19 정정)."""
     today = date(2026, 5, 19)
     # 과거에 5000 종가가 있음 — 오늘 1500 은 신고가 X
     daily = _daily_history("000001", today, [1000] * 50 + [5000] + [1000] * 30)
     cands = [{"code": "000001", "price": 1500, "intraday_high": 1500, "daily_return": 22.0}]
     out = apply_r4v2_post_filters(cands, daily, today)
-    assert len(out) == 0
-    assert "52주" in cands[0]["exclusion_reason"]
+    assert len(out) == 1   # ← 탈락 X
+    assert out[0]["r4v2_check"]["is_52w_high"] is False  # 미달성 표시만
+    # 탈락 사유가 (d) 로 채워지면 안 됨
+    assert out[0].get("priority") != PRIORITY_EXCLUDED
 
 
 def test_r4v2_post_filter_passes_when_history_too_short():
-    """(d) lookback 60일 미만이면 신고가 판정 불가 → None → 통과."""
+    """(d) lookback 60일 미만이면 신고가 판정 불가 → None → 통과 (soft)."""
     today = date(2026, 5, 19)
     daily = _daily_history("000001", today, [1000] * 10)  # 10일치만
     cands = [{"code": "000001", "price": 1500, "intraday_high": 1500, "daily_return": 22.0}]
