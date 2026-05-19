@@ -12,8 +12,7 @@
 #   ./go setup        venv 생성 + 의존성 설치
 #   ./go logs         최근 로그 출력
 #   ./go test         pytest 실행
-#   ./go decision-rerun [--date YYYY-MM-DD] [--snapshot 14:50]
-#                     저장된 스냅샷으로 결정 레포트 재발송 (DRY_RUN=1 로 preview)
+#   ./go decision-rerun [--from-saved] 결정 레포트 즉시 재발송 (fresh fetch or saved)
 
 set -euo pipefail
 
@@ -394,9 +393,10 @@ Legendary Method — 간편 실행 스크립트
   update-index KOSPI/KOSDAQ incremental
   setup       venv 생성 + 의존성 설치 (idempotent)
   test        pytest 실행
-  decision-rerun [--date YYYY-MM-DD] [--snapshot 14:50]
-              저장된 스냅샷으로 결정 레포트 재생성 + 텔레그램 재발송.
-              cron 시점 이후 코드 fix 를 오늘 데이터에 적용할 때.
+  decision-rerun [--from-saved [--date YYYY-MM-DD] [--snapshot 14:50]]
+              결정 레포트 수동 재실행 + 텔레그램 재발송.
+              기본: 호출 시점에 fetch_volume_rank 새로 fetch (fresh).
+              --from-saved: 저장된 스냅샷 parquet 로드 (기본 오늘 14:50).
               preview 만: DRY_RUN=1 ./go decision-rerun
 
   demo start     PWA UI 검증용 mock 서버 (KIS/텔레그램 무관, 백그라운드)
