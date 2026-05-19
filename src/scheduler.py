@@ -603,10 +603,12 @@ def _send_decision_report(
         )
         sizing_layer_name, sizing_stats = pick_sizing_layer(layers)
 
-        # R4 (c): 모든 layer 가 n<5 면 후보 제외
-        if not has_enough_samples(sizing_stats):
-            logger.info(f"[결정] {code} R4(c) 표본부족 제외 (n<5)")
-            continue
+        # R4 v2 (f) Layer 표본 ≥5 — round 41 후속 2026-05-19: hard cut → soft.
+        # 표본 부족도 후보 유지 + Kelly 가 None 으로 나오는 것만 사용자에게 표시.
+        # 사이즈 결정은 사용자가 Sharpe/Equal/직관 으로 판단.
+        sample_sufficient = has_enough_samples(sizing_stats)
+        if not sample_sufficient:
+            logger.info(f"[결정] {code} R4 v2 (f) 표본 부족 (n<5) — soft 경고, 후보 유지")
 
         themes = (
             theme_df[theme_df["code"] == code]["theme"].tolist()
@@ -623,6 +625,7 @@ def _send_decision_report(
         c["sizing_layer"] = sizing_layer_name
         c["sizing_stats"] = sizing_stats
         c["historical_aux"] = ret10_aux
+        c["sample_sufficient"] = sample_sufficient
         candidates_with_stats.append(c)
 
     sizing_results = compute_sizing(candidates_with_stats)

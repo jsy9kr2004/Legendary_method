@@ -130,15 +130,24 @@ def _candidate_block(c: dict[str, Any]) -> str:
         else:
             lines.append(f"  📊 1년 ret≥10: {n_ret10}회 (갭상 데이터 없음)")
 
-    # R4 v2 (c)(d) 통과 표시
+    # R4 v2 hard cut 통과 + soft 지표 표시
+    # (c) hard cut 통과 시 ✅, (d) 신고가는 soft — pass/fail/unknown 모두 표시.
+    # (f) Layer 표본 ≥5 도 soft — sample_sufficient False 면 ⚠ 경고만.
     chk = c.get("r4v2_check") or {}
     chk_parts: list[str] = []
     if chk.get("close_within_10pct_high") is True:
         chk_parts.append("✅ 종가 고가-10% 이내")
+    # (d) 52주 신고가 — soft 지표 (round 41 후속, hard cut X)
     if chk.get("is_52w_high") is True:
-        chk_parts.append("✅ 52주 신고가")
-    elif chk.get("is_52w_high") is None and chk:
-        chk_parts.append("— 52주 신고가 (lookback 부족)")
+        chk_parts.append("📌 52주 신고가 ✓")
+    elif chk.get("is_52w_high") is False:
+        chk_parts.append("📌 52주 신고가 ✗ (참고)")
+    elif "is_52w_high" in chk:
+        chk_parts.append("📌 52주 신고가 — (lookback 부족)")
+    # (f) Layer 표본 — soft 지표 (round 41 후속, hard cut X)
+    sample_ok = c.get("sample_sufficient")
+    if sample_ok is False:
+        chk_parts.append("⚠ Layer 표본 부족 (n<5) — Kelly 산출 불가, Sharpe/Equal/직관 활용")
     if chk_parts:
         lines.append(f"  R4 v2: {' / '.join(chk_parts)}")
 
@@ -334,8 +343,8 @@ def build_decision_report(
         "",
         sep("─"),
         "• 본 레포트는 14:50 기준. 종가 직전 상황 변동 가능",
-        "• R4 v2 룰: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 "
-        "+ (d) 52주 신고가 + (e) 10≤ret≤27% + (f) Layer 표본≥5",
+        "• R4 v2 hard cut: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 + (e) 10≤ret≤27%",
+        "• R4 v2 보조 지표 (표시만): (d) 52주 신고가 + (f) Layer 표본≥5 + 1년 ret≥10 갭상 비율",
         "• NXT 청산 가능 여부: v1 예정",
     ]
 
