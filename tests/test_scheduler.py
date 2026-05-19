@@ -125,6 +125,82 @@ def test_business_day_only_calls_dispatcher_error_alert_on_exception():
     disp.telegram_error.assert_called_once()
 
 
+def test_business_day_only_silences_httpx_errors(tmp_path):
+    """KIS HTTP 5xx 가 잡 본체에서 propagate 되도 텔레그램 / 누적 로그 둘 다 skip.
+
+    fetcher 레벨 격리(intraday.py 등)가 미래에 깨져도 노이즈가 안 새는 safety net.
+    """
+    import httpx
+    from src.config import Settings
+    from src.notify.dispatcher import Dispatcher
+
+    wed = datetime(2026, 5, 6, 14, 50, tzinfo=KST)
+    disp = MagicMock(spec=Dispatcher)
+    settings = MagicMock(spec=Settings)
+    settings.data_dir = tmp_path
+
+    req = httpx.Request("GET", "https://openapi.koreainvestment.com:9443/x")
+    resp = httpx.Response(500, request=req, text="server error")
+    http_err = httpx.HTTPStatusError("Server error '500'", request=req, response=resp)
+
+    @scheduler._business_day_only("상한가 폴링")
+    def fn(client, settings, dispatcher):
+        raise http_err
+
+    with patch("src.scheduler.now_kst", return_value=wed):
+        result = fn(MagicMock(), settings, disp)
+
+    assert result is None
+    # 텔레그램 알림 호출 X (가장 중요)
+    disp.telegram_error.assert_not_called()
+    # 사후 레포트가 읽는 누적 로그도 X
+    err_file = tmp_path / "errors" / "2026-05-06.jsonl"
+    assert not err_file.exists()
+
+
+def test_business_day_only_silences_httpx_transport_error(tmp_path):
+    """네트워크 단절 (ConnectError 등 httpx.HTTPError 하위) 도 동일."""
+    import httpx
+    from src.config import Settings
+    from src.notify.dispatcher import Dispatcher
+
+    wed = datetime(2026, 5, 6, 14, 50, tzinfo=KST)
+    disp = MagicMock(spec=Dispatcher)
+    settings = MagicMock(spec=Settings)
+    settings.data_dir = tmp_path
+
+    @scheduler._business_day_only("상한가 폴링")
+    def fn(client, settings, dispatcher):
+        raise httpx.ConnectError("Connection refused")
+
+    with patch("src.scheduler.now_kst", return_value=wed):
+        fn(MagicMock(), settings, disp)
+
+    disp.telegram_error.assert_not_called()
+
+
+def test_business_day_only_still_alerts_on_non_http_exception(tmp_path):
+    """KISApiError / KeyError 등 non-HTTP 예외는 기존대로 fail-loud 유지."""
+    from src.config import Settings
+    from src.kis.client import KISApiError
+    from src.notify.dispatcher import Dispatcher
+
+    wed = datetime(2026, 5, 6, 14, 50, tzinfo=KST)
+    disp = MagicMock(spec=Dispatcher)
+    settings = MagicMock(spec=Settings)
+    settings.data_dir = tmp_path
+
+    @scheduler._business_day_only("상한가 폴링")
+    def fn(client, settings, dispatcher):
+        raise KISApiError("1", "ERR", "rt_cd 불량", {})
+
+    with patch("src.scheduler.now_kst", return_value=wed):
+        fn(MagicMock(), settings, disp)
+
+    # 진짜 시스템 오류는 여전히 텔레그램 알림
+    disp.telegram_error.assert_called_once()
+
+
 # ── 잡 등록 ─────────────────────────────────────────────────────────────────
 
 def test_run_registers_all_jobs(tmp_path, monkeypatch):

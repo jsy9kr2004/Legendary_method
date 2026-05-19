@@ -31,6 +31,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
 
+import httpx
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
@@ -117,7 +118,16 @@ def _reset_state() -> None:
 
 
 def _business_day_only(label: str) -> Callable:
-    """잡 함수에 휴장일 가드 적용."""
+    """잡 함수에 휴장일 가드 + KIS 일시적 HTTP 오류 격리 적용.
+
+    HTTP 5xx / 네트워크 단절 (httpx.HTTPError) 은 KIS 서버 측 일시 장애로
+    간주, **logger.warning 만** 남기고 record_error / telegram_error 둘 다 skip.
+    이유: 단일 종목 5xx 가 폴링 사이클을 죽일 때마다 텔레그램 푸시 폭주 +
+    사후 레포트의 [알려진 이슈] 섹션 도배. fetcher 레벨 (intraday.py 등)에서
+    이미 종목 단위로 격리하지만 미래 회귀를 막기 위한 safety net.
+
+    그 외 예외 (KISApiError, KeyError, AttributeError 등)는 기존대로 fail-loud.
+    """
     def deco(fn: Callable) -> Callable:
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -126,6 +136,12 @@ def _business_day_only(label: str) -> Callable:
                 return None
             try:
                 return fn(*args, **kwargs)
+            except httpx.HTTPError as e:
+                # KIS 서버 5xx / 네트워크 단절 — 일시 장애. 푸시/누적 로그 skip.
+                logger.warning(
+                    f"[{label}] KIS HTTP 일시 오류: {type(e).__name__}: {e}"
+                )
+                return None
             except Exception as e:  # noqa: BLE001
                 logger.exception(f"[{label}] 잡 오류: {e}")
                 # 사후 레포트가 읽도록 일자별 에러 로그에 기록
@@ -176,7 +192,11 @@ def _collect_snapshot(
     dt = now_kst()
     logger.info(f"[스냅샷] {label} 수집 시작 ({dt.strftime('%H:%M:%S')})")
 
-    df = fetch_volume_rank(client, top_n=_WATCH_TOP_N)
+    # master_df 전달 — 비주식 (ETF/ETN/리츠/스팩 + 신주인수권 등 letter 코드)
+    # 필터링. 미전달 시 KIS volume-rank 원본에 letter 코드 (0167A0 등) 가 섞여
+    # 상한가 폴링이 그 종목들에 inquire-price 호출 → KIS 500 반환 → 폴링 사이클
+    # 종료 (2026-05-19 round 후속).
+    df = fetch_volume_rank(client, top_n=_WATCH_TOP_N, master_df=_dashboard_master_df)
     if df.empty:
         logger.warning(f"[스냅샷] {label}: 데이터 없음 (휴장일 또는 API 오류)")
         record_error(settings.data_dir, f"스냅샷 {label}", "데이터 없음 (휴장일 또는 API 오류)")
@@ -185,8 +205,9 @@ def _collect_snapshot(
     save_snapshot(df, settings.data_dir, dt)
     logger.info(f"[스냅샷] {label}: {len(df)}종목 저장")
 
-    # 감시 종목 갱신 (상한가 폴링용)
-    _watch_codes = df["code"].tolist()
+    # 감시 종목 갱신 (상한가 폴링용). 6자리 숫자가 아닌 코드 (warrants/rights 등)
+    # 는 KIS inquire-price 가 500 반환하므로 한 번 더 방어적으로 제외.
+    _watch_codes = [c for c in df["code"].tolist() if str(c).isdigit() and len(str(c)) == 6]
 
     # 스냅샷에서 바로 상한가 종목 체크 → 즉시 알림
     lup_df = filter_limit_up_from_snapshot(df)
