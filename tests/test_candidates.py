@@ -48,17 +48,23 @@ def test_classify_normal_within_range():
     assert p == PRIORITY_NORMAL
 
 
-def test_classify_normal_between_10_and_20():
-    """R4 v2 (e) 하한 10% 적용 후 — 이전엔 20% 하한에 제외됐던 +15% 도 NORMAL."""
+def test_classify_normal_between_5_and_20():
+    """R4 v2 (e) 하한 5% 적용 후 — 이전엔 20% 하한에 제외됐던 +15% 도 NORMAL."""
     p, _ = classify_priority(_row(daily_return=15.0, intraday_high_pct=18.0))
     assert p == PRIORITY_NORMAL
 
 
-def test_classify_excluded_below_10():
-    """+10% 미만은 R4 v2 (e) 하한 컷."""
+def test_classify_normal_at_lower_bound_5pct():
+    """R4 v2 (e) 하한 5% 경계 — +6% 도 NORMAL (round 41 후속 2026-05-19)."""
+    p, _ = classify_priority(_row(daily_return=6.0, intraday_high_pct=7.0))
+    assert p == PRIORITY_NORMAL
+
+
+def test_classify_excluded_below_5():
+    """+5% 미만은 R4 v2 (e) 하한 컷 (round 41 후속: 10→5)."""
     p, reason = classify_priority(_row(daily_return=4.0, intraday_high_pct=30.0))
     assert p == PRIORITY_EXCLUDED
-    assert "10" in reason
+    assert "5" in reason
 
 
 def test_classify_excluded_above_27_stuck_at_28():
