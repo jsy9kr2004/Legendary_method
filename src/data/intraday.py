@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pandas as pd
 from loguru import logger
 
@@ -107,6 +108,11 @@ def fetch_volume_rank(
         payload = client.get(_VOLUME_RANK_ENDPOINT, _VOLUME_RANK_TR_ID, params=params)
     except KISApiError as e:
         logger.error(f"거래대금 순위 조회 실패: {e}")
+        return pd.DataFrame(columns=SNAPSHOT_COLUMNS)
+    except httpx.HTTPError as e:
+        # KIS 서버 5xx / 네트워크 단절 — tenacity 재시도 (3회) 후에도 실패한 경우.
+        # 호출 사이클을 죽이지 않고 빈 결과로 격리. 호출부가 빈 DF 를 보고 휴장/오류 로그.
+        logger.warning(f"거래대금 순위 조회 HTTP 실패: {type(e).__name__}: {e}")
         return pd.DataFrame(columns=SNAPSHOT_COLUMNS)
 
     rows: list[dict] = payload.get("output") or []
@@ -212,6 +218,12 @@ def fetch_quote(client: KISClient, code: str) -> dict[str, Any] | None:
         payload = client.get(_INQUIRE_PRICE_ENDPOINT, _INQUIRE_PRICE_TR_ID, params=params)
     except KISApiError as e:
         logger.error(f"{code} 현재가 조회 실패: {e}")
+        return None
+    except httpx.HTTPError as e:
+        # KIS 서버 5xx (특정 종목 일시적 오류) / 네트워크 단절. tenacity 3회 재시도 후 실패.
+        # 종목 단위 실패로 격리 — 폴링 사이클 전체를 죽이지 않는다. 사이클이 죽으면
+        # `@_business_day_only` 가 텔레그램 "시스템 장애" 알림을 발사해 푸시 폭주가 된다.
+        logger.warning(f"{code} 현재가 조회 HTTP 실패: {type(e).__name__}: {e}")
         return None
 
     out: dict = payload.get("output") or {}
