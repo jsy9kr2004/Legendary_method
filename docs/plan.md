@@ -357,8 +357,8 @@
 
 코드 작성하면서 발견되는 것 누적:
 
-- [ ] **★ 거래량 universe → 거래대금 universe 전환 후 R4 v2 backtest 재실행 (round 41 후속 2, 2026-05-19)** — `FID_BLNG_CLS_CODE="0"→"3"` fix 로 다음 영업일부터 진짜 거래대금 30위가 들어옴. 기존 round 41 "5/11~5/14 4영업일 17종목 갭상 58.8%" 등 정량 결과는 거래량 universe 기준이라 무효. 거래대금 universe 로 5일~ 누적 후 R4 v2 (10≤ret≤27 / 종가 고가-10% 이내) 룰 재검증 필요. 가설: ETF 빠진 자리에 진짜 +20% 단일종목이 들어와 후보 풀이 더 많아질 가능성 ↔ 거래대금 절대값 30위가 5/12 갭상 top3 거래대금 순위 886/1161/2456 와 어긋난다는 round 41 발견도 여전히 유효. 두 가설 양립 → 누적 데이터로만 판단.
-- [ ] **KIS volume-rank 30 → 50 확장 (round 41 후속 2 후속)** — 현재 endpoint 한 호출당 30개 상한. `top_n=50` 인자는 추가 컷일 뿐 endpoint 확장 X. 옵션: (a) 다른 endpoint (예: 종가 거래대금 ranking, `inquire-volume-rank` 페이지네이션 검토), (b) 전종목 시세 일괄 후 자체 정렬. KIS 콜 빈도 / latency 영향 측정 필요.
+- [ ] **★ 거래량 universe → 거래대금 universe 전환 + 30→50 확장 후 R4 v2 backtest 재실행 (round 41 후속 2 + 후속 3, 2026-05-19)** — 두 fix 모두 적용된 다음 영업일부터 진짜 거래대금 50위가 들어옴. 기존 round 41 "5/11~5/14 4영업일 17종목 갭상 58.8%" 등 정량 결과는 거래량 30위 universe 기준이라 무효. 거래대금 50위 universe 로 5일~ 누적 후 R4 v2 (10≤ret≤27 / 종가 고가-10% 이내) 룰 재검증 필요. 가설: ETF 빠진 자리에 진짜 +20% 단일종목이 들어와 후보 풀이 더 많아질 가능성 ↔ 거래대금 절대값 30~50위가 5/12 갭상 top3 거래대금 순위 886/1161/2456 와 어긋난다는 round 41 발견도 여전히 유효. 두 가설 양립 → 누적 데이터로만 판단.
+- [x] **KIS volume-rank 30 → 50 확장 (round 41 후속 2 후속, 2026-05-19)** — 진단: ctx 페이지네이션 X (`ctx_area_fk*` 없음 + `tr_cont=None`), `FID_COND_MRKT_DIV_CODE` 시장 분리 X (J 외 INVALID), **가격 범위 분할 O** (`FID_INPUT_PRICE_1/_2` 작동 확인). 구현: `_PRICE_BUCKETS = [(0,10k), (10001,100k), (100001,~)]` 3회 호출 → 합집합 (중복 시 trading_value 큰 쪽 채택) → trading_value desc top_n 컷 → rank 글로벌 재부여. `top_n ≤ 30` 은 기존 단일 호출 모드 유지. 회귀 테스트 5건 (가격 버킷 / 단일 호출 / 중복 제거 / 부분 실패 / master 필터). 906 pass. 진단 결과: 1위 삼성전자(8.4조) ~ 50위 대우건설(2,195억) cover. KIS 호출 1→3회, dual key rate limit (~40 req/s) 한도 안.
 - [ ] **무결성 체크: snapshot 정렬축 일치 검증 자동화** — `data/intraday/snapshots/.../HH_MM.parquet` 의 rank 가 정말 trading_value desc 와 일치하는지 매일 적재 직후 검증. 회귀 발생 시 텔레그램 에러 알림. `src/data/integrity_check.py` 에 케이스 추가.
 - [x] KIS API 토큰 만료 (24시간) 자동 갱신 — `src/kis/auth.py` 만료 5분전 갱신
 - [ ] 수정주가 vs 원주가 일관성 (분할/배당 시) — daily fetcher 는 `adjusted=True` 일관 사용

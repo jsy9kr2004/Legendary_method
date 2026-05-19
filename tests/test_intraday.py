@@ -272,6 +272,212 @@ def test_volume_rank_blng_cls_constant_is_trading_value():
     assert _VOLUME_RANK_BLNG_CLS_TRADING_VALUE == "3"
 
 
+# ── 가격 버킷 모드 (2026-05-19 round 41 후속 2 후속, 30→50 확장) ─────────────
+# KIS volume-rank 가 한 호출당 30개 hard cap + 페이지네이션 미지원 +
+# FID_COND_MRKT_DIV_CODE 분리 미지원 (진단 확인) → 가격 범위 분할 호출로 우회.
+# `_PRICE_BUCKETS` 3회 호출 + 합집합 + trading_value desc 정렬 + top_n 컷 +
+# rank 재부여 동작 검증.
+
+def _make_payload(stocks: list[dict]) -> dict:
+    """raw KIS volume-rank payload 빌더. stocks 는 (code, name, price, tv) dict list."""
+    return {
+        "rt_cd": "0",
+        "output": [
+            {
+                "data_rank": str(i + 1),
+                "mksc_shrn_iscd": s["code"],
+                "hts_kor_isnm": s["name"],
+                "stck_prpr": str(s["price"]),
+                "stck_prdy_clpr": str(int(s["price"] * 0.95)),
+                "prdy_ctrt": s.get("ret", "5.0"),
+                "stck_hgpr": str(s["price"]),
+                "stck_lwpr": str(int(s["price"] * 0.9)),
+                "acml_vol": str(s.get("vol", 1000)),
+                "acml_tr_pbmn": str(s["tv"]),
+            }
+            for i, s in enumerate(stocks)
+        ],
+    }
+
+
+def test_fetch_volume_rank_price_bucket_mode_when_top_n_over_30(tmp_path):
+    """top_n > 30 시 가격 버킷 3회 호출 + 합집합 + 거래대금 desc 정렬 + rank 재부여."""
+    client = _make_client(tmp_path)
+
+    # 저가 버킷 (0~10,000): 저가 ETF/단타주 30개. trading_value 작음 (1,000억대)
+    low_stocks = [
+        {"code": f"L{i:05d}", "name": f"저가{i}", "price": 500, "tv": (30 - i) * 100_000_000_000}
+        for i in range(30)
+    ]
+    # 중가 버킷 (10,001~100,000): 일반주 30개. 중간 trading_value (2,000~5,000억대)
+    mid_stocks = [
+        {"code": f"M{i:05d}", "name": f"중가{i}", "price": 50_000, "tv": (30 - i) * 150_000_000_000}
+        for i in range(30)
+    ]
+    # 고가 버킷 (100,001~): 대형주 30개. 가장 큰 trading_value (5,000억~수조)
+    # rank 1 종목이 8.4조로 잡혀야 정렬 검증 가능.
+    high_stocks = [
+        {"code": f"H{i:05d}", "name": f"고가{i}", "price": 300_000, "tv": (30 - i) * 300_000_000_000}
+        for i in range(30)
+    ]
+
+    call_args: list[dict] = []
+
+    def fake_get(endpoint, tr_id, params=None):  # noqa: ARG001
+        call_args.append(dict(params))
+        lo = params.get("FID_INPUT_PRICE_1", "")
+        if lo == "0":
+            return _make_payload(low_stocks)
+        elif lo == "10001":
+            return _make_payload(mid_stocks)
+        elif lo == "100001":
+            return _make_payload(high_stocks)
+        raise AssertionError(f"unexpected price range: {lo}")
+
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=fake_get):
+            df = fetch_volume_rank(client, top_n=50)
+
+    # 1) 3회 호출 + 정확한 가격 범위 전달
+    assert len(call_args) == 3
+    assert call_args[0]["FID_INPUT_PRICE_1"] == "0"
+    assert call_args[0]["FID_INPUT_PRICE_2"] == "10000"
+    assert call_args[1]["FID_INPUT_PRICE_1"] == "10001"
+    assert call_args[1]["FID_INPUT_PRICE_2"] == "100000"
+    assert call_args[2]["FID_INPUT_PRICE_1"] == "100001"
+    assert call_args[2]["FID_INPUT_PRICE_2"] == "9999999"
+
+    # 2) 정확히 50종목 반환 (90 union → top_n=50 컷)
+    assert len(df) == 50
+
+    # 3) rank 가 1..50 으로 글로벌 재부여
+    assert df["rank"].tolist() == list(range(1, 51))
+
+    # 4) 거래대금 desc 정렬 — 고가 버킷이 가장 큰 trading_value 라 H00000 이 1위
+    assert df.iloc[0]["code"] == "H00000"
+    assert df.iloc[0]["trading_value"] == 30 * 300_000_000_000  # 9조
+    # 마지막 50위는 trading_value 가 50번째로 큰 종목
+    assert df.iloc[49]["trading_value"] > 0
+    # trading_value 가 단조 감소
+    tvs = df["trading_value"].tolist()
+    assert tvs == sorted(tvs, reverse=True)
+
+
+def test_fetch_volume_rank_top_n_30_single_call_mode(tmp_path):
+    """top_n=30 은 기존 단일 호출 모드 — 가격 분할 안 함, KIS data_rank 보존."""
+    client = _make_client(tmp_path)
+    call_count = 0
+
+    def fake_get(endpoint, tr_id, params=None):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        # 단일 호출이면 가격 범위 비어있어야 함
+        assert params.get("FID_INPUT_PRICE_1") == ""
+        assert params.get("FID_INPUT_PRICE_2") == ""
+        return _VOLUME_RANK_PAYLOAD
+
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=fake_get):
+            df = fetch_volume_rank(client, top_n=30)
+
+    assert call_count == 1  # 단일 호출
+    assert len(df) == 2
+    # KIS data_rank 보존
+    assert df.iloc[0]["rank"] == 1
+    assert df.iloc[1]["rank"] == 2
+
+
+def test_fetch_volume_rank_bucket_mode_dedupes_by_max_trading_value(tmp_path):
+    """같은 종목이 두 버킷에 등장 (가격 경계 + intraday 변동) 하면 trading_value 큰 쪽 채택."""
+    client = _make_client(tmp_path)
+
+    # 저가 버킷에서 ABCDEF 가 trading_value=100억 으로 등장
+    low = [{"code": "ABCDEF", "name": "경계종목", "price": 9_999, "tv": 10_000_000_000}]
+    # 중가 버킷에서 같은 ABCDEF 가 trading_value=500억 으로 등장 (가격 10,001원 시점)
+    mid = [{"code": "ABCDEF", "name": "경계종목", "price": 10_001, "tv": 50_000_000_000}]
+    high: list[dict] = []  # 빈 버킷
+
+    def fake_get(endpoint, tr_id, params=None):  # noqa: ARG001
+        lo = params.get("FID_INPUT_PRICE_1", "")
+        if lo == "0":
+            return _make_payload(low)
+        elif lo == "10001":
+            return _make_payload(mid)
+        elif lo == "100001":
+            return _make_payload(high)
+        raise AssertionError(f"unexpected: {lo}")
+
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=fake_get):
+            df = fetch_volume_rank(client, top_n=50)
+
+    # 1종목만 (중복 제거) + trading_value 큰 쪽
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "ABCDEF"
+    assert df.iloc[0]["trading_value"] == 50_000_000_000
+
+
+def test_fetch_volume_rank_bucket_mode_partial_failure_returns_remaining(tmp_path):
+    """가격 버킷 중 하나가 실패해도 나머지 버킷 결과로 부분 응답."""
+    client = _make_client(tmp_path)
+    req = httpx.Request("GET", "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/volume-rank")
+    resp = httpx.Response(502, request=req, text="Bad Gateway")
+    err = httpx.HTTPStatusError("Server error '502 Bad Gateway'", request=req, response=resp)
+
+    mid = [{"code": "M00001", "name": "정상", "price": 50_000, "tv": 100_000_000_000}]
+
+    def fake_get(endpoint, tr_id, params=None):  # noqa: ARG001
+        lo = params.get("FID_INPUT_PRICE_1", "")
+        if lo == "0":
+            raise err  # 저가 버킷 실패
+        elif lo == "10001":
+            return _make_payload(mid)
+        elif lo == "100001":
+            raise err  # 고가 버킷 실패
+        raise AssertionError(f"unexpected: {lo}")
+
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=fake_get):
+            df = fetch_volume_rank(client, top_n=50)
+
+    # 중가 버킷 1종목만 살아남음 — 빈 DF 아님, fail-loud 로 호출부가 부분 응답 인지 가능
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "M00001"
+
+
+def test_fetch_volume_rank_bucket_mode_master_filter_excludes_etf(tmp_path):
+    """가격 버킷 모드에서도 master_df 필터로 ETF 등 차단."""
+    import pandas as pd_test  # 로컬 별칭
+
+    client = _make_client(tmp_path)
+    # 저가 버킷에 KODEX ETF + 일반주 섞임
+    low = [
+        {"code": "252670", "name": "KODEX 200선물인버스2X", "price": 123, "tv": 100_000_000_000},
+        {"code": "066430", "name": "아이로보틱스", "price": 4_500, "tv": 80_000_000_000},
+    ]
+
+    def fake_get(endpoint, tr_id, params=None):  # noqa: ARG001
+        lo = params.get("FID_INPUT_PRICE_1", "")
+        if lo == "0":
+            return _make_payload(low)
+        return _make_payload([])
+
+    # master 에 일반주만 등록 — KODEX 코드는 빠짐
+    master = pd_test.DataFrame({
+        "code": ["066430"],
+        "market_cap": [500],
+        "name": ["아이로보틱스"],
+    })
+
+    with patch.object(auth, "get_token", return_value=_fake_token()):
+        with patch.object(client, "get", side_effect=fake_get):
+            df = fetch_volume_rank(client, top_n=50, master_df=master)
+
+    # KODEX 빠짐, 아이로보틱스만
+    assert len(df) == 1
+    assert df.iloc[0]["code"] == "066430"
+
+
 # ── rank / turnover_rank 회귀 (2026-05-18) ──────────────────────────────────
 # 사용자 보고: 카드의 "(00위)" 가 HTS 와 다르다. 원인 — 이전엔 master 필터
 # (ETF/펀드/리츠/스팩/우선주 제외) 후 rank 를 1부터 재부여하여 사용자가 HTS

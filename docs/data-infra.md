@@ -43,9 +43,34 @@ KIS volume-rank (`FHPST01710000`) 는 `FID_BLNG_CLS_CODE` 파라미터로 정렬
 
 **사고 이력 (2026-05-19 round 41 후속 2):** `"0"` 으로 잘못 박혀 있어 5/12~5/18 5일 연속 종배 후보 0종목. universe 1~5위가 KODEX 인버스류로 도배되고 삼성전자가 15위까지 밀림. round 41 의 R4 v2 backtest 결과 5일 17종목도 모두 거래량 universe 기준이라 무효화 → 거래대금 universe 로 재실행 필요 (plan.md 기술 부채).
 
-### KIS volume-rank 30개 상한
+### KIS volume-rank 30개 상한 — 가격 분할로 우회 (round 41 후속 2 후속)
 
-이 endpoint 는 한 호출당 30개 반환 상한. `top_n=50` 인자는 우리 코드의 추가 컷일 뿐 endpoint 확장 X. 거래대금 50위까지 보려면 별도 endpoint (예: 종가 거래대금 ranking) 또는 전종목 시세 일괄 후 자체 정렬 (별도 round, plan.md TODO).
+이 endpoint 는 한 호출당 30개 반환 상한. 2026-05-19 진단 (`scripts/diag_volume_rank.py --plan-b`) 결과:
+
+- ❌ **페이지네이션**: 응답에 `ctx_area_fk100/nk100` 없음, header `tr_cont=None`. ctx 동봉 호출도 같은 1~30위 반복.
+- ❌ **시장 분리**: `FID_COND_MRKT_DIV_CODE` 를 "J" 외 "0"/"1"/"K"/"Q"/"00"/"01" 모두 시도 — 전부 `ERROR INVALID FID_COND_MRKT_DI`.
+- ✅ **가격 범위 분할**: `FID_INPUT_PRICE_1/_2` 가 실제 가격 필터로 작동. 3회 호출 합집합 90 고유 종목 → 거래대금 desc top 50 = 1위 삼성전자(8.4조) ~ 50위 대우건설(2,195억) 완벽 cover.
+
+코드 구현: `src/data/intraday.fetch_volume_rank` 가 `top_n > 30` 일 때 자동으로 가격 버킷 모드로 전환.
+
+```python
+_PRICE_BUCKETS: list[tuple[int, int]] = [
+    (0, 10_000),         # 저가: KODEX 인버스류 + 저가 단타주
+    (10_001, 100_000),   # 중가: 일반 단타주 + 일부 ETF
+    (100_001, 9_999_999),# 고가: 삼성전자/SK하이닉스 + 대형주
+]
+```
+
+호출 모드:
+- `top_n ≤ 30`: 단일 호출. KIS data_rank 그대로 (HTS 거래대금 순위 1:1).
+- `top_n > 30`: 3회 호출 → 합집합 (중복 시 trading_value 큰 쪽 채택) → trading_value desc 정렬 → top_n 컷 → rank 글로벌 재부여 (1..top_n).
+
+운영 영향:
+- 14:50 cron / M6 funnel tick: KIS 호출 1회 → **3회**. duals key rate limit ~40 req/s 한도 안. round 40 `parallel_fetch` ThreadPool 안에서 동시 호출 가능.
+- 가격 버킷 중 일부 실패 (HTTP 5xx) 시 살아남은 버킷 결과로 부분 응답 — 호출부가 `len(df)` 로 정상/부분/실패 구분.
+- 버킷 모드의 rank 는 KIS 가 매긴 절대 순위가 아닌 union 정렬 추정치. 정확한 시장 순위는 KIS 가 1회 30개만 제공하는 한 v0 한계.
+
+회귀 테스트: `tests/test_intraday.test_fetch_volume_rank_price_bucket_mode_when_top_n_over_30` + 부분 실패 / 중복 제거 / master 필터 / 단일 호출 모드 4건.
 
 ### 분봉 히스토리는 사실상 불가
 

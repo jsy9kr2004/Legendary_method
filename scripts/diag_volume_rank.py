@@ -133,11 +133,107 @@ def _call_raw(
         return resp.json(), dict(resp.headers)
 
 
+def _scenario_market_split(settings, cred, blng: str) -> dict[str, set]:
+    """Plan B-1: FID_COND_MRKT_DIV_CODE 변형 시도.
+
+    KIS docs 상 "J" 가 통합. "0"/"1"/"K"/"Q"/"00"/"01" 가 KOSPI/KOSDAQ 분리로
+    동작하는지 확인. rt_cd=0 + 30개 응답 + 첫 종목이 J 와 다르면 분리 가능.
+    """
+    print("\n##### Plan B-1: FID_COND_MRKT_DIV_CODE 변형 #####")
+    results: dict[str, set] = {}
+    for mkt in ["J", "0", "1", "K", "Q", "00", "01"]:
+        params = _build_params(blng)
+        params["FID_COND_MRKT_DIV_CODE"] = mkt
+        try:
+            payload, _ = _call_raw(settings, cred, params, tr_cont="")
+        except (httpx.HTTPError, Exception) as e:  # noqa: BLE001
+            print(f"  mkt={mkt!r:5s} → 예외: {type(e).__name__}: {e}")
+            continue
+        rt = payload.get("rt_cd")
+        msg = payload.get("msg1", "")
+        out = payload.get("output") or []
+        codes = {str(r.get("mksc_shrn_iscd", "")) for r in out if isinstance(r, dict)}
+        first = next(iter(out), {}) if isinstance(out, list) else {}
+        first_str = f"{first.get('data_rank','?')}.{first.get('hts_kor_isnm','')}" if first else "—"
+        print(f"  mkt={mkt!r:5s} rt={rt} len={len(out):>2}  첫종목={first_str:<25}  msg={msg[:30]}")
+        if rt == "0" and len(codes) > 0:
+            results[mkt] = codes
+    # 비교: "J" 와 다른 값이 다른 종목 set 이면 분리 작동
+    j_codes = results.get("J", set())
+    for mkt, codes in results.items():
+        if mkt == "J":
+            continue
+        only_in_alt = codes - j_codes
+        if only_in_alt:
+            print(f"  ★ mkt={mkt!r} 는 J 와 다른 종목 {len(only_in_alt)} 개 — 분리 가능 hint")
+    return results
+
+
+def _scenario_price_split(settings, cred, blng: str) -> None:
+    """Plan B-2: 가격 범위 분할.
+
+    FID_INPUT_PRICE_1/_2 로 저가/고가 분리해서 두 번 호출. 거래대금 1위 대형주
+    (보통 5만원~ 고가) + 저가 단타주 양쪽을 cover.
+
+    추가로 FID_TRGT_EXLS_CLS_CODE 로 ETF 제외 가능한지도 시도.
+    """
+    print("\n##### Plan B-2: 가격 범위 분할 #####")
+    cases = [
+        ("저가", "0", "10000"),
+        ("중가", "10001", "100000"),
+        ("고가", "100001", "9999999"),
+        ("전체", "", ""),
+    ]
+    union: dict[str, dict] = {}
+    for label, lo, hi in cases:
+        params = _build_params(blng)
+        params["FID_INPUT_PRICE_1"] = lo
+        params["FID_INPUT_PRICE_2"] = hi
+        try:
+            payload, _ = _call_raw(settings, cred, params, tr_cont="")
+        except (httpx.HTTPError, Exception) as e:  # noqa: BLE001
+            print(f"  {label}({lo}~{hi}) → 예외: {type(e).__name__}: {e}")
+            continue
+        rt = payload.get("rt_cd")
+        out = payload.get("output") or []
+        # 진짜 가격 범위 필터되는지 확인 — 첫 종목 가격
+        first = next(iter(out), {}) if isinstance(out, list) else {}
+        first_price = int(first.get("stck_prpr", 0) or 0) if first else 0
+        first_str = f"{first.get('data_rank','?')}.{first.get('hts_kor_isnm','')}({first_price:,}원)" if first else "—"
+        print(f"  {label:5s} ({lo or '∞-':>8}~{hi or '-∞':>8}) rt={rt} len={len(out):>2}  첫종목={first_str}")
+        for r in out:
+            if isinstance(r, dict):
+                code = str(r.get("mksc_shrn_iscd", ""))
+                tv = int(r.get("acml_tr_pbmn", 0) or 0)
+                if code and (code not in union or tv > union[code]["tv"]):
+                    union[code] = {
+                        "tv": tv,
+                        "name": r.get("hts_kor_isnm", ""),
+                        "price": int(r.get("stck_prpr", 0) or 0),
+                        "label": label,
+                    }
+    # 합집합 후 거래대금 desc 정렬
+    sorted_union = sorted(union.values(), key=lambda x: x["tv"], reverse=True)
+    print(f"  ── 가격 분할 union: 고유 종목 {len(sorted_union)}개 ──")
+    print(f"     거래대금 desc top 50:")
+    for i, r in enumerate(sorted_union[:50], 1):
+        print(f"       {i:>3}. {r['name']:<25} ({r['price']:>8,}원) "
+              f"거래대금={r['tv']/1e8:>10,.0f}억  via={r['label']}")
+    if len(sorted_union) >= 50:
+        print(f"  ✅ 가격 분할로 거래대금 50위 cover 가능 (호출 {len(cases)-1}회)")
+    else:
+        print(f"  ⚠ 가격 분할 합집합도 {len(sorted_union)}개 — 50위 cover 부족")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--blng", default="3",
         help="FID_BLNG_CLS_CODE. '3'=거래금액순(기본), '0'=평균거래량(비교용)",
+    )
+    parser.add_argument(
+        "--plan-b", action="store_true",
+        help="페이지네이션 미지원 확인 후 Plan B (시장 분리 + 가격 분할) 검증",
     )
     args = parser.parse_args()
 
@@ -211,6 +307,12 @@ def main() -> int:
     # 응답 본문 일부 dump (FID_BLNG_CLS_CODE 검증용)
     print("\n===== 응답 본문 일부 (1st payload, 처음 600자) =====")
     print(json.dumps(payload1, ensure_ascii=False, indent=2)[:600])
+
+    # Plan B 시도 (페이지네이션 미지원 확정 시)
+    if args.plan_b:
+        _scenario_market_split(settings, cred, args.blng)
+        _scenario_price_split(settings, cred, args.blng)
+
     return 0
 
 

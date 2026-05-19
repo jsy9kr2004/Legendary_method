@@ -47,6 +47,24 @@ _VOLUME_RANK_TR_ID = "FHPST01710000"
 # 무너진다 (2026-05-19 발견 버그). docstring 표 + 회귀 테스트로 박아둠.
 _VOLUME_RANK_BLNG_CLS_TRADING_VALUE = "3"
 
+# KIS volume-rank 는 한 호출당 30개 hard cap. 페이지네이션(ctx_area_fk100/nk100)
+# 미지원 + FID_COND_MRKT_DIV_CODE 분리 호출도 "J" 외 INVALID 응답 (2026-05-19
+# round 41 후속 2 후속 진단). 50위 까지 가져오려면 가격 범위 분할 호출 후
+# 합집합 → trading_value desc 정렬 우회 필요.
+_KIS_PAGE_SIZE = 30
+
+# 가격 버킷 — 진단 (`scripts/diag_volume_rank.py --plan-b`) 으로 검증됨:
+#   저가(0~10,000원): KODEX 인버스류 + 저가 단타주
+#   중가(10,001~100,000원): 코스모로보틱스 / 일반 단타주 / 일부 ETF
+#   고가(100,001원~): 삼성전자 / SK하이닉스 / 대형주
+# 3개 버킷 합집합 90 종목 → 거래대금 desc top 50 = 1위 삼성전자(8.4조) ~
+# 50위 대우건설(2,195억) 완벽 cover.
+_PRICE_BUCKETS: list[tuple[int, int]] = [
+    (0, 10_000),
+    (10_001, 100_000),
+    (100_001, 9_999_999),
+]
+
 _INQUIRE_PRICE_ENDPOINT = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _INQUIRE_PRICE_TR_ID = "FHKST01010100"
 
@@ -93,6 +111,104 @@ def _to_float(val: Any, default: float = float("nan")) -> float:
         return default
 
 
+def _build_volume_rank_params(price_lo: str = "", price_hi: str = "") -> dict[str, str]:
+    """KIS volume-rank 호출용 params. 가격 범위 빈 문자열 = 전체."""
+    return {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_SCR_DIV_CODE": "20171",
+        "FID_INPUT_ISCD": "0000",
+        "FID_DIV_CLS_CODE": "0",
+        # ⚠ "0" 으로 두면 평균거래량 정렬 — 종배 universe 가 ETF/저가주로 오염됨.
+        # 반드시 "3" (= 거래금액순 / 거래대금). 모듈 docstring 표 참조.
+        "FID_BLNG_CLS_CODE": _VOLUME_RANK_BLNG_CLS_TRADING_VALUE,
+        "FID_TRGT_CLS_CODE": "111111111",
+        "FID_TRGT_EXLS_CLS_CODE": "000000",
+        "FID_INPUT_PRICE_1": price_lo,
+        "FID_INPUT_PRICE_2": price_hi,
+        "FID_VOL_CNT": "",
+        "FID_INPUT_DATE_1": "",
+    }
+
+
+def _fetch_volume_rank_page(
+    client: KISClient,
+    price_lo: str = "",
+    price_hi: str = "",
+) -> list[dict]:
+    """단일 KIS volume-rank 호출 — 최대 30개 raw row 반환.
+
+    KIS endpoint 가 한 호출당 30개 hard cap. 가격 분할 호출에서 페이지 단위로 사용.
+
+    Args:
+        price_lo, price_hi: FID_INPUT_PRICE_1/_2. 빈 문자열이면 전체.
+
+    Returns:
+        raw row list (dict). API 실패 시 빈 list — 호출부가 다른 버킷 결과로 보강 가능.
+    """
+    params = _build_volume_rank_params(price_lo, price_hi)
+    label = f"가격 {price_lo}~{price_hi}" if price_lo or price_hi else "전체"
+    try:
+        payload = client.get(_VOLUME_RANK_ENDPOINT, _VOLUME_RANK_TR_ID, params=params)
+    except KISApiError as e:
+        logger.error(f"거래대금 순위 조회 실패 ({label}): {e}")
+        return []
+    except httpx.HTTPError as e:
+        # KIS 5xx / 네트워크 단절 — tenacity 재시도 후에도 실패한 케이스.
+        logger.warning(f"거래대금 순위 조회 HTTP 실패 ({label}): {type(e).__name__}: {e}")
+        return []
+    return payload.get("output") or []
+
+
+def _parse_volume_rank_row(
+    row: dict,
+    master_lookup: dict[str, int],
+    tradable_codes: set[str] | None,
+) -> dict | None:
+    """raw KIS row → snapshot record dict. master 필터 미통과 시 None.
+
+    `rank` 는 row 의 `data_rank` 그대로 — 단일 호출 모드에서는 KIS 가 매긴
+    절대 거래대금 순위. 가격 버킷 모드에서는 버킷 내부 순위라 호출부가 글로벌
+    rank 로 덮어써야 한다.
+    """
+    code = str(row.get("mksc_shrn_iscd", "")).zfill(6)
+    if tradable_codes is not None and code not in tradable_codes:
+        return None
+    price = _to_int(row.get("stck_prpr"))
+    prev_close = _to_int(row.get("stck_prdy_clpr"))
+    daily_return = _to_float(row.get("prdy_ctrt"))
+    intraday_high = _to_int(row.get("stck_hgpr"))
+    intraday_low = _to_int(row.get("stck_lwpr"))
+    volume = _to_int(row.get("acml_vol"))
+    trading_value = _to_int(row.get("acml_tr_pbmn"))
+    lup = _is_limit_up_price(price, prev_close) if prev_close > 0 else False
+    market_cap = master_lookup.get(code, 0)
+    # KIS 는 거래대금회전율(`tr_pbmn_tnrt`, %)을 자체 계산해서 응답에 넣어준다.
+    # master_df.market_cap=0(미적재) 케이스에도 회전율이 정상으로 나오게 KIS 값을
+    # 우선 사용. 비어있을 때만 자체 계산으로 fallback.
+    kis_turnover = _to_float(row.get("tr_pbmn_tnrt"))
+    if pd.notna(kis_turnover) and kis_turnover > 0:
+        turnover = kis_turnover
+    else:
+        turnover = compute_turnover(trading_value, market_cap)
+    return {
+        "rank": _to_int(row.get("data_rank"), 0),
+        "turnover_rank": None,
+        "volume_rank": None,
+        "code": code,
+        "name": str(row.get("hts_kor_isnm", "")),
+        "price": price,
+        "prev_close": prev_close,
+        "daily_return": daily_return,
+        "intraday_high": intraday_high,
+        "intraday_low": intraday_low,
+        "volume": volume,
+        "trading_value": trading_value,
+        "is_limit_up": lup,
+        "market_cap": market_cap,
+        "turnover": turnover,
+    }
+
+
 def fetch_volume_rank(
     client: KISClient,
     top_n: int = 30,
@@ -103,45 +219,28 @@ def fetch_volume_rank(
     정량 정의:
         - FID_COND_MRKT_DIV_CODE=J: KOSPI+KOSDAQ 통합
         - FID_COND_SCR_DIV_CODE=20171: 거래대금 순위 스크리너
+        - FID_BLNG_CLS_CODE=3: 거래금액순 (모듈 docstring 의 FID 표 참조)
+
+    호출 모드 (2026-05-19 round 41 후속 2 후속):
+        - **top_n ≤ 30**: 단일 호출. KIS data_rank 그대로 (HTS 거래대금 순위 1:1).
+        - **top_n > 30**: 가격 버킷 3회 호출 (`_PRICE_BUCKETS`) → 합집합 →
+          trading_value desc 재정렬 → top_n 컷 → rank 글로벌 재부여 (1..top_n).
+          KIS endpoint 가 한 호출당 30개 hard cap + 페이지네이션 미지원이라
+          가격 범위 분할로 우회. 진단 결과: 3회 호출 → 90 고유 종목 → 거래대금
+          50위 완벽 cover (`scripts/diag_volume_rank.py --plan-b`).
 
     Args:
         client: KIS API client.
-        top_n: 거래대금 상위 몇 위까지 가져올지.
-        master_df: 종목 마스터 (M5.5 신설). `code, market_cap` 포함. 주어지면
-            (1) 종배 후보 자격 종목만 필터링, (2) market_cap/turnover 계산해서
-            스냅샷에 부착. None 이면 v0 동작 — 모든 종목 통과, market_cap=0.
+        top_n: 거래대금 상위 몇 위까지 가져올지 (30 초과 시 자동 분할 호출).
+        master_df: 종목 마스터 (M5.5). `code, market_cap` 포함. 주어지면
+            (1) 종배 후보 자격 종목만 필터링, (2) market_cap/turnover 부착.
+            None 이면 v0 동작 — 모든 종목 통과, market_cap=0.
 
     Returns:
         SNAPSHOT_COLUMNS 스키마의 DataFrame (rank 오름차순).
-        API 실패 시 빈 DataFrame 반환 (fail-loud: 호출부에서 로그 확인).
+        API 실패 시 빈 DataFrame. 가격 버킷 모드에서 일부 버킷만 실패하면 살아남은
+        버킷으로 부분 응답 (호출부가 len 으로 정상/부분/실패 구분 가능).
     """
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_COND_SCR_DIV_CODE": "20171",
-        "FID_INPUT_ISCD": "0000",
-        "FID_DIV_CLS_CODE": "0",
-        # ⚠ "0" 으로 두면 평균거래량 정렬 — 종배 universe 가 ETF/저가주로 오염됨.
-        # 반드시 "3" (= 거래금액순 / 거래대금). 모듈 docstring 표 참조.
-        "FID_BLNG_CLS_CODE": _VOLUME_RANK_BLNG_CLS_TRADING_VALUE,
-        "FID_TRGT_CLS_CODE": "111111111",
-        "FID_TRGT_EXLS_CLS_CODE": "000000",
-        "FID_INPUT_PRICE_1": "",
-        "FID_INPUT_PRICE_2": "",
-        "FID_VOL_CNT": "",
-        "FID_INPUT_DATE_1": "",
-    }
-    try:
-        payload = client.get(_VOLUME_RANK_ENDPOINT, _VOLUME_RANK_TR_ID, params=params)
-    except KISApiError as e:
-        logger.error(f"거래대금 순위 조회 실패: {e}")
-        return pd.DataFrame(columns=SNAPSHOT_COLUMNS)
-    except httpx.HTTPError as e:
-        # KIS 서버 5xx / 네트워크 단절 — tenacity 재시도 (3회) 후에도 실패한 경우.
-        # 호출 사이클을 죽이지 않고 빈 결과로 격리. 호출부가 빈 DF 를 보고 휴장/오류 로그.
-        logger.warning(f"거래대금 순위 조회 HTTP 실패: {type(e).__name__}: {e}")
-        return pd.DataFrame(columns=SNAPSHOT_COLUMNS)
-
-    rows: list[dict] = payload.get("output") or []
     # master 조인 준비
     master_lookup: dict[str, int] = {}
     tradable_codes: set[str] | None = None
@@ -152,56 +251,48 @@ def fetch_volume_rank(
         ))
         tradable_codes = set(master_df["code"].astype(str).tolist())
 
-    records = []
-    for row in rows:
-        rank = _to_int(row.get("data_rank"), 0)
-        if rank < 1 or rank > top_n:
-            continue
-        code = str(row.get("mksc_shrn_iscd", "")).zfill(6)
-        if tradable_codes is not None and code not in tradable_codes:
-            # 종배 후보 자격 없는 종목 (ETF/펀드/리츠/스팩/우선주 등) 제외
-            continue
-        price = _to_int(row.get("stck_prpr"))
-        prev_close = _to_int(row.get("stck_prdy_clpr"))
-        daily_return = _to_float(row.get("prdy_ctrt"))
-        intraday_high = _to_int(row.get("stck_hgpr"))
-        intraday_low = _to_int(row.get("stck_lwpr"))
-        volume = _to_int(row.get("acml_vol"))
-        trading_value = _to_int(row.get("acml_tr_pbmn"))
-        lup = _is_limit_up_price(price, prev_close) if prev_close > 0 else False
-        market_cap = master_lookup.get(code, 0)
-        # KIS 는 거래대금회전율(`tr_pbmn_tnrt`, %)을 자체 계산해서 응답에 넣어준다.
-        # 우리 식 = 누적거래대금 / 상장시가총액 × 100 — 정의 동일.
-        # master_df.market_cap 이 0(미적재) 인 경우에도 회전율이 정상으로 나오게
-        # KIS 값을 우선 사용. 비어있을 때만 자체 계산으로 fallback.
-        kis_turnover = _to_float(row.get("tr_pbmn_tnrt"))
-        if pd.notna(kis_turnover) and kis_turnover > 0:
-            turnover = kis_turnover
-        else:
-            turnover = compute_turnover(trading_value, market_cap)
-        records.append(
-            {
-                "rank": rank,
-                "turnover_rank": None,  # 아래에서 일괄 부여
-                "code": code,
-                "name": str(row.get("hts_kor_isnm", "")),
-                "price": price,
-                "prev_close": prev_close,
-                "daily_return": daily_return,
-                "intraday_high": intraday_high,
-                "intraday_low": intraday_low,
-                "volume": volume,
-                "trading_value": trading_value,
-                "is_limit_up": lup,
-                "market_cap": market_cap,
-                "turnover": turnover,
-            }
+    if top_n <= _KIS_PAGE_SIZE:
+        # 단일 호출 모드 — KIS data_rank 그대로 (HTS 비교 가능)
+        raw_rows = _fetch_volume_rank_page(client)
+        records: list[dict] = []
+        for row in raw_rows:
+            rank = _to_int(row.get("data_rank"), 0)
+            if rank < 1 or rank > top_n:
+                continue
+            parsed = _parse_volume_rank_row(row, master_lookup, tradable_codes)
+            if parsed is not None:
+                records.append(parsed)
+    else:
+        # 가격 버킷 모드 — 3회 호출 합집합. 같은 종목이 두 버킷에 등장 (가격
+        # 경계 + intraday 가격 변동) 하면 trading_value 큰 쪽 채택.
+        union: dict[str, dict] = {}
+        for lo, hi in _PRICE_BUCKETS:
+            raw_rows = _fetch_volume_rank_page(client, str(lo), str(hi))
+            for row in raw_rows:
+                parsed = _parse_volume_rank_row(row, master_lookup, tradable_codes)
+                if parsed is None:
+                    continue
+                code = parsed["code"]
+                prev = union.get(code)
+                if prev is None or parsed["trading_value"] > prev["trading_value"]:
+                    union[code] = parsed
+        # 거래대금 desc 정렬 + top_n 컷 + rank 글로벌 재부여
+        sorted_records = sorted(
+            union.values(),
+            key=lambda r: r["trading_value"],
+            reverse=True,
         )
+        records = sorted_records[:top_n]
+        for i, r in enumerate(records, 1):
+            # 버킷 내부 data_rank 는 의미 없음 — union 정렬 순위로 덮어씀.
+            # 사용자가 HTS 거래대금 순위와 비교할 때 본 rank 는 추정치 (정확한
+            # 시장 전체 순위는 KIS 가 1회 30개만 주므로 v0 한계).
+            r["rank"] = i
+
     if not records:
         return pd.DataFrame(columns=SNAPSHOT_COLUMNS)
     df = pd.DataFrame(records, columns=SNAPSHOT_COLUMNS).sort_values("rank").reset_index(drop=True)
-    # 거래대금 rank 는 KIS data_rank 그대로 유지 (재부여 폐기, 2026-05-18 정정).
-    # 회전율 순위 부여 — master 필터 통과 종목 turnover desc. NaN 은 끝으로.
+    # 회전율 순위 부여 — universe 내 turnover desc. NaN 은 끝으로.
     df["turnover_rank"] = (
         df["turnover"]
         .rank(method="min", ascending=False, na_option="bottom")
@@ -213,7 +304,11 @@ def fetch_volume_rank(
         .rank(method="min", ascending=False, na_option="bottom")
         .astype("Int64")
     )
-    logger.debug(f"거래대금 순위 조회 완료: {len(df)}종목 (master 적용={master_df is not None})")
+    mode = "price_bucket" if top_n > _KIS_PAGE_SIZE else "single"
+    logger.debug(
+        f"거래대금 순위 조회 완료: {len(df)}종목 "
+        f"(top_n={top_n}, mode={mode}, master 적용={master_df is not None})"
+    )
     return df
 
 
