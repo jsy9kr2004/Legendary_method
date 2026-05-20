@@ -1,7 +1,7 @@
-"""src.jongbae.divergence (R13) 단위 테스트."""
+"""src.scalping.score.divergence (R13) 단위 테스트."""
 from __future__ import annotations
 
-from src.jongbae.divergence import compute_divergence
+from src.scalping.score.divergence import compute_divergence
 
 
 def test_bearish_divergence():

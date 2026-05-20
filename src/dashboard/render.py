@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from src.dashboard.state import LeaderState, MonitoredStock, Source
-from src.jongbae.momentum import (
+from src.scalping.score.accel import (
     is_exit_signal,
     is_one_min_exit,
     is_one_min_rise,

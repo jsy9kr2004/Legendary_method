@@ -50,8 +50,8 @@ from src.data.tick_log import (
     append_tick_log,
     build_tick_log_row,
 )
-from src.jongbae.candle import is_weak_candle, latest_completed_candle
-from src.jongbae.config_thresholds import (
+from src.scalping.score.candle import is_weak_candle, latest_completed_candle
+from src.scalping.score.thresholds import (
     GRACE_PERIOD_SECONDS,
     LEADING_SECTOR_TOP_N,
     LEADING_STOCK_TOP_PER_SECTOR,
@@ -59,20 +59,20 @@ from src.jongbae.config_thresholds import (
     TICK_DURATION_WARN_SEC,
     TRANSITION_TURNOVER_RATIO,
 )
-from src.jongbae.divergence import compute_divergence
-from src.jongbae.exit_triggers import (
+from src.scalping.score.divergence import compute_divergence
+from src.scalping.exit.triggers import (
     Holding,
     compute_c_signal_states,
     evaluate_triggers,
     load_holdings,
 )
-from src.jongbae.grader import GraderSnapshot, calculate_buy_score
-from src.jongbae.leading_theme import (
+from src.scalping.score.grader import GraderSnapshot, calculate_buy_score
+from src.common.theme import (
     identify_early_morning_leaders,
     identify_rising_candidates,
     score_leading_sectors,
 )
-from src.jongbae.momentum import (
+from src.scalping.score.accel import (
     compute_accel_ratio,
     compute_minute_ma,
     compute_vwap,
@@ -80,7 +80,7 @@ from src.jongbae.momentum import (
     price_vs_vwap_pct,
     short_trend_sparkline,
 )
-from src.jongbae.volume_power import VPSeries
+from src.scalping.score.vp import VPSeries
 from src.notify.telegram import (
     delete_message,
     edit_message,

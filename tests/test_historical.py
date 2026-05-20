@@ -1,4 +1,4 @@
-"""src.jongbae.historical 테스트."""
+"""src.overnight.gap_stats 테스트."""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from src.jongbae.historical import (
+from src.overnight.gap_stats import (
     _coerce_date,
     close_position,
     has_enough_samples,

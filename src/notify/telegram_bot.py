@@ -26,8 +26,8 @@ from typing import Literal
 
 from src.dashboard.state import MonitoringSession
 from src.data.tick_log import TradeEvent, append_trade_event
-from src.jongbae.config_thresholds import TIME_STOP_MINUTES_DEFAULT
-from src.jongbae.exit_triggers import (
+from src.scalping.score.thresholds import TIME_STOP_MINUTES_DEFAULT
+from src.scalping.exit.triggers import (
     Holding,
     load_holdings,
     save_holdings,

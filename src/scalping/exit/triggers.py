@@ -42,8 +42,8 @@ from pathlib import Path
 from typing import Literal
 
 from src.config import load_settings
-from src.jongbae.candle import CandleShape, is_bearish_exit_signal
-from src.jongbae.config_thresholds import (
+from src.scalping.score.candle import CandleShape, is_bearish_exit_signal
+from src.scalping.score.thresholds import (
     ENTRY_BAR_MA_MINUTES,
     EOD_CUTOFF_HH,
     EOD_CUTOFF_MM,
@@ -57,8 +57,8 @@ from src.jongbae.config_thresholds import (
     VOL_ACCEL_1M_DRAIN,
     VOL_ACCEL_DRAIN_PERSIST_SECONDS,
 )
-from src.jongbae.divergence import DivergenceState
-from src.jongbae.volume_power import crossed_below_balanced
+from src.scalping.score.divergence import DivergenceState
+from src.scalping.score.vp import crossed_below_balanced
 
 
 class Mode(str, Enum):

@@ -1,10 +1,10 @@
-"""src.jongbae.momentum 단위 테스트."""
+"""src.scalping.score.accel 단위 테스트."""
 from __future__ import annotations
 
 import pandas as pd
 import pytest
 
-from src.jongbae.momentum import (
+from src.scalping.score.accel import (
     compute_accel_ratio,
     compute_minute_ma,
     compute_vwap,

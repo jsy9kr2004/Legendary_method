@@ -16,8 +16,8 @@ from datetime import datetime, timedelta
 from src.config import load_settings
 from src.dashboard.render import render_monitor_message
 from src.dashboard.state import LeaderState, MonitoredStock, Source
-from src.jongbae.divergence import DivergenceState
-from src.jongbae.exit_triggers import Holding
+from src.scalping.score.divergence import DivergenceState
+from src.scalping.exit.triggers import Holding
 from src.notify.telegram import send_message_single
 
 

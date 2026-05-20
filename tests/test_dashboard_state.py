@@ -9,7 +9,7 @@ from src.dashboard.state import (
     Source,
     in_monitoring_window,
 )
-from src.jongbae.config_thresholds import (
+from src.scalping.score.thresholds import (
     GRACE_PERIOD_SECONDS,
     MONITORING_MAX_CODES,
     TRANSITION_EXIT_PERSIST_SECONDS,

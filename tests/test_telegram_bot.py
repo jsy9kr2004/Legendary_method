@@ -238,7 +238,7 @@ def test_apply_buy_24h_allowed(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
@@ -258,7 +258,7 @@ def test_apply_buy_creates_holding(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
@@ -280,7 +280,7 @@ def test_apply_buy_with_time_override(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
@@ -298,7 +298,7 @@ def test_apply_buy_code_only_uses_last_prices(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
@@ -323,7 +323,7 @@ def test_apply_buy_code_only_without_last_price_registers_zero(tmp_path, monkeyp
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
@@ -344,7 +344,7 @@ def test_apply_buy_off_hours_note_appended(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
@@ -367,7 +367,7 @@ def test_apply_buy_weekend_off_hours_note(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
@@ -387,7 +387,7 @@ def test_apply_buy_in_regular_session_no_note(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)
@@ -407,7 +407,7 @@ def test_apply_sell_removes_holding(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     import src.notify.telegram_bot as bot
     importlib.reload(bot)

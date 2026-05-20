@@ -1,4 +1,4 @@
-"""src.jongbae.paper_trade (ritual 2 자동화) 단위 테스트.
+"""src.scalping.paper_trade (ritual 2 자동화) 단위 테스트.
 
 docs/plan.md "R14/R15 가중치 검증 ritual" 참조.
 """
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.jongbae.paper_trade import (
+from src.scalping.paper_trade import (
     PaperTradeRecord,
     compute_summary,
     load_records,

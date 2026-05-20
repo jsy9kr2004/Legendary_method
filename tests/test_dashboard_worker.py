@@ -64,8 +64,8 @@ def _build_cache_entry(
 
     dashboard_tick 의 bundle → tick_cache 채움 로직과 동일.
     """
-    from src.jongbae.candle import latest_completed_candle
-    from src.jongbae.momentum import compute_accel_ratio
+    from src.scalping.score.candle import latest_completed_candle
+    from src.scalping.score.accel import compute_accel_ratio
 
     accel_5m = compute_accel_ratio(bars) if not bars.empty else float("nan")
     accel_1m = (
@@ -569,7 +569,7 @@ def test_grade_assigned_to_manual_stock_outside_top50():
 def test_grade_assigned_to_holding_stock_outside_top50():
     """보유 종목이 거래대금 50위 밖이어도 등급 표시."""
     from src.dashboard.state import MonitoringSession
-    from src.jongbae.exit_triggers import Holding
+    from src.scalping.exit.triggers import Holding
 
     s = MonitoringSession()
     s.add_manual("888000", datetime(2026, 5, 11, 9, 30))

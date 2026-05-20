@@ -1,7 +1,7 @@
 """KIS API 기반 실시간 보조지표 fetcher (M6 모니터링용).
 
 본 모듈은 09:00~10:30 평일 1~2초 단위 모니터링을 위해 4개 보조 지표를
-조회한다. 분봉 거래대금 가속배율 계산은 `src.jongbae.momentum` 참고.
+조회한다. 분봉 거래대금 가속배율 계산은 `src.scalping.score.accel` 참고.
 
 엔드포인트 / TR ID:
     분봉 시세    : /uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice

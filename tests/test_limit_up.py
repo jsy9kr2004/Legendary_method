@@ -1,4 +1,4 @@
-"""src.jongbae.limit_up 테스트."""
+"""src.common.limit_up 테스트."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from src.jongbae.limit_up import (
+from src.common.limit_up import (
     detect_new_limit_up,
     filter_limit_up_from_snapshot,
     filter_strong_candidates,
@@ -168,7 +168,7 @@ def test_detect_new_limit_up_finds_new(tmp_path):
     client = _make_client(tmp_path)
     bulk_df = pd.DataFrame([_QUOTE_JERYONG, _QUOTE_SAMSUNG])
 
-    with patch("src.jongbae.limit_up.fetch_quotes_bulk", return_value=bulk_df):
+    with patch("src.common.limit_up.fetch_quotes_bulk", return_value=bulk_df):
         new_entries, updated = detect_new_limit_up(client, ["075180", "005930"], set())
 
     assert len(new_entries) == 1
@@ -181,7 +181,7 @@ def test_detect_new_limit_up_skips_already_known(tmp_path):
     client = _make_client(tmp_path)
     bulk_df = pd.DataFrame([_QUOTE_JERYONG])
 
-    with patch("src.jongbae.limit_up.fetch_quotes_bulk", return_value=bulk_df):
+    with patch("src.common.limit_up.fetch_quotes_bulk", return_value=bulk_df):
         new_entries, updated = detect_new_limit_up(
             client, ["075180"], already_limit_up={"075180"}
         )
@@ -201,7 +201,7 @@ def test_detect_new_limit_up_no_limit_up_in_result(tmp_path):
     client = _make_client(tmp_path)
     bulk_df = pd.DataFrame([_QUOTE_SAMSUNG])
 
-    with patch("src.jongbae.limit_up.fetch_quotes_bulk", return_value=bulk_df):
+    with patch("src.common.limit_up.fetch_quotes_bulk", return_value=bulk_df):
         new_entries, updated = detect_new_limit_up(client, ["005930"], set())
 
     assert new_entries == []

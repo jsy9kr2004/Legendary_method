@@ -1,4 +1,4 @@
-"""src.jongbae.jongbae_exit (종배 청산 시초가 룰, round 30, P3-2) 단위 테스트.
+"""src.overnight.exit (종배 청산 시초가 룰, round 30, P3-2) 단위 테스트.
 
 검증 기반: 통설 (WikiDocs 종가베팅, brokdam 광전자 사례).
     ≤ +1% (또는 마이너스) → 전량 매도 (갭 미발생)
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.jongbae.jongbae_exit import (
+from src.overnight.exit import (
     JongbaeExitDecision,
     evaluate_jongbae_open_exit,
 )

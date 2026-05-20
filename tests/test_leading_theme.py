@@ -1,4 +1,4 @@
-"""src.jongbae.leading_theme 테스트."""
+"""src.common.theme 테스트."""
 from __future__ import annotations
 
 from datetime import date
@@ -6,7 +6,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-from src.jongbae.leading_theme import (
+from src.common.theme import (
     codes_in_leading_themes,
     count_themes,
     identify_leading_stocks,
@@ -178,7 +178,7 @@ def test_identify_leading_stocks_empty_themes():
 
 # ── identify_early_morning_leaders (M5.5: 회전율 1위 정의) ────────────────────
 
-from src.jongbae.leading_theme import identify_early_morning_leaders
+from src.common.theme import identify_early_morning_leaders
 
 
 def _snap_em(
@@ -291,7 +291,7 @@ def test_em_leaders_excludes_non_positive_return():
 
 def test_rising_candidates_top_n_by_turnover_only():
     """후보 풀: 주도섹터 무관, 거래대금 50위 + 상승 중 + 회전율 상위 N."""
-    from src.jongbae.leading_theme import identify_rising_candidates
+    from src.common.theme import identify_rising_candidates
     snap = _snap_em([
         (1, "A", 10.0, False, 5.0),
         (2, "B", 8.0,  False, 22.0),  # 회전율 1위
@@ -347,7 +347,7 @@ def test_em_leaders_empty_inputs():
 
 # ── score_leading_sectors (M5.5 v1) ───────────────────────────────────────────
 
-from src.jongbae.leading_theme import score_leading_sectors
+from src.common.theme import score_leading_sectors
 
 
 def _full_snap(

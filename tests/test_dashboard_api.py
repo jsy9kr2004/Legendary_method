@@ -118,7 +118,7 @@ def test_holdings_buy_sell(client, session, tmp_path, monkeypatch):
     # holdings.json 영속화 우회 — tmp 경로로
     holdings_path = tmp_path / "holdings.json"
     monkeypatch.setattr(
-        "src.jongbae.exit_triggers._state_path", lambda: holdings_path,
+        "src.scalping.exit.triggers._state_path", lambda: holdings_path,
     )
     now = datetime(2026, 5, 11, 9, 30)
     session.last_prices["091340"] = 91300.0
@@ -148,7 +148,7 @@ def test_holdings_buy_price_autofill(client, session, tmp_path, monkeypatch):
     """price 생략 시 session.last_prices 에서 자동 보충 (round 20 정책)."""
     holdings_path = tmp_path / "holdings.json"
     monkeypatch.setattr(
-        "src.jongbae.exit_triggers._state_path", lambda: holdings_path,
+        "src.scalping.exit.triggers._state_path", lambda: holdings_path,
     )
     session.last_prices["091340"] = 91300.0
     session.add_manual("091340", datetime(2026, 5, 11, 9, 30))
@@ -169,7 +169,7 @@ def test_holdings_buy_price_fallback_to_payload(
     """
     holdings_path = tmp_path / "holdings.json"
     monkeypatch.setattr(
-        "src.jongbae.exit_triggers._state_path", lambda: holdings_path,
+        "src.scalping.exit.triggers._state_path", lambda: holdings_path,
     )
     session.add_manual("091340", datetime(2026, 5, 11, 9, 30))
     # last_prices 비어 있음, last_payloads 에만 current price 있음
@@ -195,7 +195,7 @@ def test_holdings_buy_price_missing_registers_zero(
     """
     holdings_path = tmp_path / "holdings.json"
     monkeypatch.setattr(
-        "src.jongbae.exit_triggers._state_path", lambda: holdings_path,
+        "src.scalping.exit.triggers._state_path", lambda: holdings_path,
     )
     session.add_manual("091340", datetime(2026, 5, 11, 9, 30))
 

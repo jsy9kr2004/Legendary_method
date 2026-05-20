@@ -136,7 +136,7 @@ async def _demo_tick_loop(session: MonitoringSession) -> None:
     4) monitored 의 모든 종목 페이로드 빌드 → last_payloads 갱신
     5) last_prices 동기화 (가격 자동 보충용)
     """
-    from src.jongbae.exit_triggers import load_holdings
+    from src.scalping.exit.triggers import load_holdings
 
     while True:
         now = now_kst()

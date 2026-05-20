@@ -1,11 +1,11 @@
-"""src.jongbae.sizing 테스트."""
+"""src.overnight.sizing 테스트."""
 from __future__ import annotations
 
 import math
 
 import pytest
 
-from src.jongbae.sizing import (
+from src.overnight.sizing import (
     KELLY_MAX_FRACTION,
     _kelly_sample_factor,
     compute_sizing,

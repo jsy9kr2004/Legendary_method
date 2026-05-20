@@ -1,4 +1,4 @@
-"""src.jongbae.exit_triggers (R15) 단위 테스트.
+"""src.scalping.exit.triggers (R15) 단위 테스트.
 
 자동 매매 금지 정책 검증: 모든 트리거는 TriggerEvent (텔레그램 메시지)만 반환.
 실주문 코드 없음.
@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from src.jongbae.candle import classify_candle
-from src.jongbae.divergence import compute_divergence
-from src.jongbae.exit_triggers import (
+from src.scalping.score.candle import classify_candle
+from src.scalping.score.divergence import compute_divergence
+from src.scalping.exit.triggers import (
     Holding,
     Mode,
     compute_c_signal_states,
@@ -478,7 +478,7 @@ def test_c_states_watch_nan_inputs_safe():
 
 def test_no_order_execution_in_module():
     """exit_triggers 모듈 코드에 KIS 주문 실행 함수가 import 되지 않아야 함."""
-    import src.jongbae.exit_triggers as mod
+    import src.scalping.exit.triggers as mod
     src_code = Path(mod.__file__).read_text(encoding="utf-8")
     # 금지 키워드 — 실주문 관련
     for kw in ("place_order", "submit_order", "send_order", "execute_order"):
@@ -494,7 +494,7 @@ def test_save_load_holdings_roundtrip(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
 
     now = datetime(2026, 5, 13, 9, 45, 0)
@@ -520,7 +520,7 @@ def test_load_holdings_missing_file(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     assert et.load_holdings() == {}
 
@@ -530,7 +530,7 @@ def test_load_holdings_corrupt_file(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
 
     state_dir = tmp_path / "state"
@@ -548,7 +548,7 @@ def _reload_exit_triggers(tmp_path, monkeypatch):
     import importlib
     import src.config
     importlib.reload(src.config)
-    import src.jongbae.exit_triggers as et
+    import src.scalping.exit.triggers as et
     importlib.reload(et)
     return et
 

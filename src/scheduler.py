@@ -41,21 +41,21 @@ from src.config import KST, Settings, load_settings, now_kst
 from src.data.intraday import fetch_volume_rank
 from src.data.snapshot import save_snapshot
 from src.data.storage import read_daily_ohlcv, read_naver_themes, read_stock_master
-from src.jongbae.candidates import accepted_candidates, extract_candidates
-from src.jongbae.historical import (
+from src.overnight.candidates import accepted_candidates, extract_candidates
+from src.overnight.gap_stats import (
     close_position,
     historical_4layer,
     has_enough_samples,
     pick_sizing_layer,
 )
-from src.jongbae.leading_theme import (
+from src.common.theme import (
     codes_in_leading_themes,
     identify_early_morning_leaders,
     identify_leading_stocks,
     identify_leading_themes,
 )
-from src.jongbae.limit_up import detect_new_limit_up, filter_limit_up_from_snapshot
-from src.jongbae.sizing import compute_sizing
+from src.common.limit_up import detect_new_limit_up, filter_limit_up_from_snapshot
+from src.overnight.sizing import compute_sizing
 from src.kis.client import KISClient
 from src.logging_setup import setup_logging
 from src.notify.dispatcher import Dispatcher
@@ -109,7 +109,7 @@ def _reset_state() -> None:
     _prev_leading_stocks = []
     # 단타 정책: 매일 빈 상태로 시작 (round 40). idempotent — 데몬 첫 가동 시에도
     # run() 에서 호출되므로 중복 안전.
-    from src.jongbae.exit_triggers import maybe_reset_holdings
+    from src.scalping.exit.triggers import maybe_reset_holdings
     did_reset = maybe_reset_holdings(now_kst())
     if did_reset:
         logger.info("[리셋] 일별 글로벌 상태 + holdings.json 초기화 완료 (archive 백업)")
@@ -277,8 +277,8 @@ def _send_jongbae_open_exit_recommendation(
     `evaluate_jongbae_open_exit` 호출 → 권고 메시지 발송. **자동 주문 X**.
     """
     from src.data.intraday import fetch_quote
-    from src.jongbae.exit_triggers import load_holdings
-    from src.jongbae.jongbae_exit import evaluate_jongbae_open_exit
+    from src.scalping.exit.triggers import load_holdings
+    from src.overnight.exit import evaluate_jongbae_open_exit
 
     holdings = load_holdings()
     if not holdings:
@@ -485,7 +485,7 @@ def _enrich_candidates_with_quote(
     intraday_high_pct 도 보강된 prev_close/intraday_high 로 재계산.
     """
     from src.data.intraday import fetch_quote
-    from src.jongbae.candidates import _intraday_high_pct
+    from src.overnight.candidates import _intraday_high_pct
 
     _MISSING_TARGETS = (
         "prev_close", "intraday_high", "intraday_low",
@@ -542,7 +542,7 @@ def _send_decision_report(
             from src.data.index_storage import read_index_daily
             market_stats = compute_market_stats(client, data_dir=settings.data_dir)
             kospi_daily = read_index_daily(settings.data_dir, KOSPI_CODE)
-            from src.jongbae.historical import market_regime_timeline
+            from src.overnight.gap_stats import market_regime_timeline
             market_regime_by_date = market_regime_timeline(kospi_daily)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[결정] market_stats/regime 조회 실패: {e}")
@@ -597,7 +597,7 @@ def _send_decision_report(
     # R4 v2 (c) 종가 고가-10% 이내 + (d) 52주 신고가 post-filter (round 41).
     # fetch_quote 보강 후 intraday_high / price 가 0 아닌 상태에서 적용.
     today = dt.date()
-    from src.jongbae.candidates import apply_r4v2_post_filters
+    from src.overnight.candidates import apply_r4v2_post_filters
     if accepted_dicts and not daily_ohlcv.empty:
         before = len(accepted_dicts)
         accepted_dicts = apply_r4v2_post_filters(accepted_dicts, daily_ohlcv, today)
@@ -644,7 +644,7 @@ def _send_decision_report(
             else []
         )
         # R4 v2 보조 지표 — 1년 ret≥10% 횟수 + 갭상 비율 (round 41 ④)
-        from src.jongbae.historical import historical_ret10_gap_stats
+        from src.overnight.gap_stats import historical_ret10_gap_stats
         ret10_aux = historical_ret10_gap_stats(daily_ohlcv, code, today)
 
         c: dict[str, Any] = dict(row)
@@ -853,7 +853,7 @@ def run() -> None:
     # 데몬 첫 가동 시 holdings 일일 reset 보장 (round 40, 단타 정책).
     # 08:30 cron 을 놓친 시각에 가동돼도 첫 가동 시 reset. idempotent — 장중
     # 재기동 시에는 today == last_reset 으로 skip 되어 보유 상태 안전.
-    from src.jongbae.exit_triggers import maybe_reset_holdings
+    from src.scalping.exit.triggers import maybe_reset_holdings
     if maybe_reset_holdings(now_kst()):
         logger.info("[리셋] 데몬 가동 시 holdings.json 초기화 완료 (archive 백업)")
 

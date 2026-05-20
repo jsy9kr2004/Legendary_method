@@ -9,8 +9,8 @@ from datetime import datetime
 
 from src.dashboard.render import build_monitor_payload
 from src.dashboard.state import LeaderState, MonitoredStock, Source
-from src.jongbae.divergence import DivergenceState
-from src.jongbae.exit_triggers import Holding
+from src.scalping.score.divergence import DivergenceState
+from src.scalping.exit.triggers import Holding
 
 
 def _stock(
@@ -294,7 +294,7 @@ def test_payload_trigger_lines_for_pwa():
 
 def test_payload_trigger_lines_holding_includes_c5():
     """보유 모드는 C5 (VI 발동) 포함, 5줄 + C5 = 6줄."""
-    from src.jongbae.exit_triggers import Holding
+    from src.scalping.exit.triggers import Holding
 
     triggers = {
         "C1_vp_below_100": False, "C2_bearish_divergence": False,

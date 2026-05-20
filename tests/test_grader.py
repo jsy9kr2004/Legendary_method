@@ -1,4 +1,4 @@
-"""src.jongbae.grader (R14) 단위 테스트.
+"""src.scalping.score.grader (R14) 단위 테스트.
 
 가장 중요한 회귀 케이스:
     - 흥아해운: 모멘텀 죽음 + 호가만 5.3배 → 🔴 AVOID
@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from src.jongbae.candle import classify_candle
-from src.jongbae.divergence import compute_divergence
-from src.jongbae.grader import (
+from src.scalping.score.candle import classify_candle
+from src.scalping.score.divergence import compute_divergence
+from src.scalping.score.grader import (
     GraderSnapshot,
     calculate_buy_score,
 )

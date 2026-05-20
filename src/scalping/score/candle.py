@@ -14,7 +14,7 @@ from typing import Literal
 
 import pandas as pd
 
-from src.jongbae.config_thresholds import (
+from src.scalping.score.thresholds import (
     UPPER_WICK_BEARISH_EXIT,
     UPPER_WICK_CLEAN,
     UPPER_WICK_LONG,

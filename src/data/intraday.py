@@ -419,6 +419,6 @@ def fetch_quotes_bulk(
     return pd.DataFrame(records)
 
 
-# 상한가 계산은 src.jongbae.limit_up 의 단일 정의를 사용 (M1: SSoT 통합).
-from src.jongbae.limit_up import is_limit_up as _is_limit_up_price  # noqa: E402
-from src.jongbae.limit_up import limit_up_price  # noqa: E402, F401
+# 상한가 계산은 src.common.limit_up 의 단일 정의를 사용 (M1: SSoT 통합).
+from src.common.limit_up import is_limit_up as _is_limit_up_price  # noqa: E402
+from src.common.limit_up import limit_up_price  # noqa: E402, F401

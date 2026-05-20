@@ -1,9 +1,9 @@
-"""src.jongbae.candle (R12) 단위 테스트."""
+"""src.scalping.score.candle (R12) 단위 테스트."""
 from __future__ import annotations
 
 import pandas as pd
 
-from src.jongbae.candle import (
+from src.scalping.score.candle import (
     classify_candle,
     is_bearish_exit_signal,
     is_clean_bullish,

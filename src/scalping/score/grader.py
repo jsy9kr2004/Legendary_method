@@ -17,12 +17,12 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import Literal
 
-from src.jongbae.candle import (
+from src.scalping.score.candle import (
     CandleShape,
     is_clean_bullish,
     is_weak_candle,
 )
-from src.jongbae.config_thresholds import (
+from src.scalping.score.thresholds import (
     BID_ASK_RATIO_THRESHOLD,
     DIST_FROM_HIGH_MAX_PCT,
     GRADE_NEUTRAL,
@@ -48,8 +48,8 @@ from src.jongbae.config_thresholds import (
     VWAP_ABOVE_THRESHOLD_PCT,
     VWAP_BELOW_THRESHOLD_PCT,
 )
-from src.jongbae.divergence import DivergenceState
-from src.jongbae.volume_power import is_vp_strong, is_vp_weak
+from src.scalping.score.divergence import DivergenceState
+from src.scalping.score.vp import is_vp_strong, is_vp_weak
 
 Grade = Literal["STRONG", "WATCH", "NEUTRAL", "AVOID"]
 GRADE_EMOJI: dict[Grade, str] = {

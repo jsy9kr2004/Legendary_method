@@ -212,7 +212,7 @@ def apply_r4v2_post_filters(
         (c) hard cut 통과 후보 list. 각 dict 에 r4v2_check (dict) 추가 — 표시용:
             {"close_within_10pct_high": bool|None, "is_52w_high": bool|None}.
     """
-    from src.jongbae.historical import is_52w_high  # 순환 import 회피
+    from src.overnight.gap_stats import is_52w_high  # 순환 import 회피
 
     survived: list[dict[str, Any]] = []
     for c in candidate_dicts:

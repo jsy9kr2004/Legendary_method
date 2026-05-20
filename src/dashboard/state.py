@@ -34,7 +34,7 @@ from typing import Any
 from loguru import logger
 
 from src.calendar_kr import is_business_day
-from src.jongbae.config_thresholds import (
+from src.scalping.score.thresholds import (
     GRACE_PERIOD_SECONDS,
     MONITORING_END_HOUR,
     MONITORING_END_MINUTE,

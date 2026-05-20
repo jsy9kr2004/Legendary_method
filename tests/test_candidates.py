@@ -1,4 +1,4 @@
-"""src.jongbae.candidates 테스트."""
+"""src.overnight.candidates 테스트."""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from src.jongbae.candidates import (
+from src.overnight.candidates import (
     PRIORITY_EXCLUDED,
     PRIORITY_HIGH_PULL,
     PRIORITY_LIMIT_UP,

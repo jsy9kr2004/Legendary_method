@@ -1,9 +1,9 @@
-"""src.jongbae.volume_power (R10) 단위 테스트."""
+"""src.scalping.score.vp (R10) 단위 테스트."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from src.jongbae.volume_power import (
+from src.scalping.score.vp import (
     VPSeries,
     crossed_below_balanced,
     is_vp_strong,

@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from src.jongbae.config_thresholds import (
+from src.scalping.score.thresholds import (
     JONGBAE_OPEN_FULL_SELL_MAX_PCT,
     JONGBAE_OPEN_PARTIAL_RATIO,
     JONGBAE_OPEN_PARTIAL_SELL_MIN_PCT,

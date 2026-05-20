@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Deque
 
-from src.jongbae.config_thresholds import (
+from src.scalping.score.thresholds import (
     VP_BALANCED,
     VP_MA_LONG_MINUTES,
     VP_MA_SHORT_MINUTES,

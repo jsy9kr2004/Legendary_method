@@ -22,7 +22,7 @@ import math
 
 import pandas as pd
 
-from src.jongbae.config_thresholds import (
+from src.scalping.score.thresholds import (
     ACCEL_BASELINE_MINUTES,
     ACCEL_RECENT_BAR_MINUTES,
     EXIT_ACCEL_RATIO,

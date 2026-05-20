@@ -37,7 +37,7 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-from src.jongbae.config_thresholds import (
+from src.scalping.score.thresholds import (
     RISING_STAGE1_TURNOVER_TOP_N,
     LEADER_CANDIDATE_RANK_MAX,
     LEADER_EXCLUDE_DAILY_RETURN_PCT,

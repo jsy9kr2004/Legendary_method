@@ -351,8 +351,8 @@ def test_render_no_delta_line_without_delta_arg():
 
 def test_render_holding_mode_basic():
     """round 22: 보유 모드 카드 — [보유] 헤더 + 합쳐진 시간/가격 라인 + 청산 시그널."""
-    from src.jongbae.exit_triggers import Holding
-    from src.jongbae.divergence import DivergenceState
+    from src.scalping.exit.triggers import Holding
+    from src.scalping.score.divergence import DivergenceState
 
     entry = datetime(2026, 5, 14, 10, 3, 45)
     now = datetime(2026, 5, 14, 10, 23, 45)
@@ -407,7 +407,7 @@ def test_render_holding_mode_basic():
 
 def test_render_holding_mode_with_fired_triggers():
     """발화된 트리거는 🚧, 미발화는 ▢."""
-    from src.jongbae.exit_triggers import Holding
+    from src.scalping.exit.triggers import Holding
 
     entry = datetime(2026, 5, 14, 10, 3, 45)
     now = datetime(2026, 5, 14, 10, 23, 45)
