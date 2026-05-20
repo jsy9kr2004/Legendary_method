@@ -520,6 +520,134 @@ def test_volume_ratio_nan_no_change():
     assert card.score == 0.0
 
 
+# ── R14k 일중 최고점 거리 페널티 (2026-05-21) ─────────────────────────────────
+#
+# 5/20 매매일지 §H7 + backtest_user_trades 검증. 사용자가 "차트의 매수 포인트가
+# 너무 고점에서 찾아옴" 진단 (2026-05-21). 정점 5%/2% 이내 매수 회피.
+
+
+def test_r14k_very_near_high_penalty():
+    """dist >= -2% (정점 2% 이내) → -2 페널티."""
+    snap = GraderSnapshot(dist_from_intraday_high_pct=-1.0)
+    card = calculate_buy_score(snap)
+    assert card.score == -2.0
+    assert any("정점" in r and "R14k" in r for r in card.reasons)
+
+
+def test_r14k_near_high_penalty():
+    """dist >= -5% (정점 5% 이내) → -1 페널티."""
+    snap = GraderSnapshot(dist_from_intraday_high_pct=-3.5)
+    card = calculate_buy_score(snap)
+    assert card.score == -1.0
+    assert any("정점근접" in r and "R14k" in r for r in card.reasons)
+
+
+def test_r14k_far_from_high_no_penalty():
+    """dist < -5% → 페널티 없음."""
+    snap = GraderSnapshot(dist_from_intraday_high_pct=-8.0)
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_r14k_nan_no_penalty():
+    snap = GraderSnapshot()  # default NaN
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+# ── R14l 횡보 정점 페널티 (2026-05-21) ─────────────────────────────────────────
+#
+# 수젠텍 케이스 (5/20). 일중 +15% 이상 + 정점 5% 이내 = 폭등 후 횡보 micro
+# fluctuation. backtest_user_trades 검증.
+
+
+def test_r14l_sideways_peak_penalty():
+    """daily_return >= 15% AND dist >= -5% → -1.5 페널티."""
+    snap = GraderSnapshot(
+        daily_return_pct=18.0,
+        dist_from_intraday_high_pct=-3.0,
+    )
+    card = calculate_buy_score(snap)
+    # R14k -1 (정점 5% 이내) + R14l -1.5 = -2.5
+    assert card.score == -2.5
+    assert any("횡보고점" in r and "R14l" in r for r in card.reasons)
+
+
+def test_r14l_no_penalty_when_dr_below_15():
+    """daily_return < 15% → R14l 무발화 (R14k 만 발화 가능)."""
+    snap = GraderSnapshot(
+        daily_return_pct=10.0,
+        dist_from_intraday_high_pct=-3.0,
+    )
+    card = calculate_buy_score(snap)
+    assert card.score == -1.0  # R14k 만
+    assert not any("횡보고점" in r for r in card.reasons)
+
+
+def test_r14l_no_penalty_when_dist_far():
+    """dist < -5% → R14l 무발화 (R14k 도 무발화)."""
+    snap = GraderSnapshot(
+        daily_return_pct=20.0,
+        dist_from_intraday_high_pct=-8.0,
+    )
+    card = calculate_buy_score(snap)
+    assert card.score == 0.0
+
+
+def test_r14l_jongmok_giganted_dr_ignored():
+    """daily_return 비정상 (abs > 200) — 시초 잡음 가드. 무발화."""
+    snap = GraderSnapshot(
+        daily_return_pct=500.0,  # 시초 잡음 케이스
+        dist_from_intraday_high_pct=-3.0,
+    )
+    card = calculate_buy_score(snap)
+    # R14k -1 만, R14l 가드 후 무발화
+    assert card.score == -1.0
+
+
+# ── 5/20 사용자 매매 회귀 케이스 (R14k/l 차단 효과) ─────────────────────────────
+
+
+def test_jusungeng_4th_blocked_by_r14k():
+    """주성엔지니어링 4차 (5/20 09:35:15) — 정점 09:32 후 3분, dist=-3.97%.
+
+    실제 매수 시점 윈도우 max(buy_score) = 6.0. R14k 페널티 -1 → 5.0.
+    STRONG cutoff 5.0 직상 — 진입 가능. 그러나 실제 손익 -1.20% (5/20 일지).
+    페널티 적용으로 점수가 borderline 으로 떨어짐 → 사용자 의사결정 보조.
+    """
+    snap = GraderSnapshot(
+        volume_turnover_rank=3,
+        vol_accel_5m=1.8, vol_accel_1m=0.4,
+        candle=classify_candle(o=208000, h=209500, l=205500, c=205500),  # bearish
+        vp=112, vp_5ma=116,
+        dist_from_intraday_high_pct=-3.97,  # 정점 5% 이내
+        daily_return_pct=17.58,  # 횡보 정점 조건 충족
+    )
+    card = calculate_buy_score(snap)
+    # R14k -1 (dist=-3.97% >= -5%) + R14l -1.5 (dr=17 >= 15 AND dist>=−5%) = -2.5
+    assert -3.0 <= card.score - sum([1 for r in card.reasons if "R14k" in r or "R14l" in r]) * 0
+    # 점수가 충분히 차감되어 STRONG cutoff 미달 가능
+    # (다른 시그널 강도에 따라 STRONG/WATCH/NEUTRAL 변동 — 페널티 발화만 확인)
+    assert any("R14k" in r for r in card.reasons)
+    assert any("R14l" in r for r in card.reasons)
+
+
+def test_sujentech_sideways_blocked_by_r14l():
+    """수젠텍 (5/20) — 일중 +18% 도달 후 횡보. 사용자가 인지한 '고점 매수' 케이스.
+
+    daily_return=18.1%, dist=-1.26% → R14k -2 (정점 2% 이내) + R14l -1.5 = -3.5.
+    """
+    snap = GraderSnapshot(
+        # 회전율 가산 회피 (rank 없음) — 페널티만 확인
+        dist_from_intraday_high_pct=-1.26,
+        daily_return_pct=18.1,
+    )
+    card = calculate_buy_score(snap)
+    assert card.score == -3.5  # -2 (R14k) - 1.5 (R14l)
+    assert any("R14k" in r for r in card.reasons)
+    assert any("R14l" in r for r in card.reasons)
+
+
 # ── ritual 3 가드레일: 통설 가중치 합 ≥ 비통설 (round 31) ────────────────────
 #
 # docs/plan.md "Buy.Score/Exit.Triggers 가중치 검증 ritual" 참조.

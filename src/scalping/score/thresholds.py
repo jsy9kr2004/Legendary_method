@@ -187,6 +187,33 @@ UPPER_WICK_BEARISH_EXIT: float = 0.5        # Exit.Triggers C4 윗꼬리 50%↑ 
 DIST_FROM_HIGH_MAX_PCT: float = -2.0        # 진입 필수조건: 당일고점 -2% 이내
 
 
+# ── R14k 일중 최고점 거리 페널티 (2026-05-21) ────────────────────────────────────────
+#
+# 사용자 의도: "차트의 매수 포인트가 너무 고점에서 찾아옴" (2026-05-21).
+# 5/20 매매일지 §H7 (주성 4·5차, 오텍 2차 정점 직후 진입) + backtest_user_trades
+# 시뮬 (5/20 매매 15건 중 B_정점직후 3건 100% 차단) 검증.
+# 통설: namu.wiki 상따 "고점 추격 매수 회피", Bollinger mean reversion (proposal §3.3).
+#
+# 진입 필수조건 (DIST_FROM_HIGH_MAX_PCT = -2%) 과 별개 — 페널티 방식. 필수조건은
+# AND hard cut, R14k 는 점진 음수 가산. -2% 이내 진입은 필수조건에서 이미 차단되지만
+# -2~-5% 구간은 R14k -1 페널티로 점수만 차감.
+DIST_FROM_HIGH_VERY_NEAR_PENALTY_PCT: float = -2.0   # >= -2% (정점 직전 — 필수조건과 겹침)
+DIST_FROM_HIGH_NEAR_PENALTY_PCT: float = -5.0        # >= -5% (정점 근접)
+WEIGHT_DIST_FROM_HIGH_VERY_NEAR: float = -2.0
+WEIGHT_DIST_FROM_HIGH_NEAR: float = -1.0
+
+
+# ── R14l 횡보 정점 페널티 (2026-05-21) ────────────────────────────────────────────────
+#
+# 일중 +15% 이상 도달 + 정점 5% 이내 횡보 구간 매수 회피. 수젠텍 5/20 케이스 -
+# 09:32 +16.93% 고점 후 횡보 → 사용자 매수 시점 (09:42/09:48/10:04) 모두 dist 0~3%
+# 횡보. backtest_user_trades 시뮬에서 4건 중 2건 차단 검증.
+# 통설: i-whale "+15% 도달 후 횡보 micro fluctuation 매매 회피".
+SIDEWAYS_PEAK_DAILY_RETURN_PCT: float = 15.0   # 일중 ret ≥ 15%
+SIDEWAYS_PEAK_DIST_FROM_HIGH_PCT: float = -5.0  # dist >= -5% (정점 5% 이내)
+WEIGHT_SIDEWAYS_PEAK: float = -1.5
+
+
 # ── Buy.Div 다이버전스 ─────────────────────────────────────────────────────────────
 
 DIVERGENCE_PRICE_WINDOW_MINUTES: int = 5    # 가격 변화 측정 윈도우

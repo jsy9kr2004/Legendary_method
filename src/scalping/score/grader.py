@@ -25,6 +25,8 @@ from src.scalping.score.candle import (
 from src.scalping.score.thresholds import (
     BID_ASK_RATIO_THRESHOLD,
     DIST_FROM_HIGH_MAX_PCT,
+    DIST_FROM_HIGH_NEAR_PENALTY_PCT,
+    DIST_FROM_HIGH_VERY_NEAR_PENALTY_PCT,
     GRADE_NEUTRAL,
     GRADE_STRONG,
     GRADE_WATCH,
@@ -32,6 +34,8 @@ from src.scalping.score.thresholds import (
     LIMIT_UP_EARLY_MM,
     LIMIT_UP_MID_HH,
     LIMIT_UP_MID_MM,
+    SIDEWAYS_PEAK_DAILY_RETURN_PCT,
+    SIDEWAYS_PEAK_DIST_FROM_HIGH_PCT,
     VOL_ACCEL_1M_DRAIN,
     VOL_ACCEL_1M_STRONG,
     VOL_ACCEL_1M_VERY_STRONG,
@@ -47,6 +51,9 @@ from src.scalping.score.thresholds import (
     VP_BALANCED,
     VWAP_ABOVE_THRESHOLD_PCT,
     VWAP_BELOW_THRESHOLD_PCT,
+    WEIGHT_DIST_FROM_HIGH_NEAR,
+    WEIGHT_DIST_FROM_HIGH_VERY_NEAR,
+    WEIGHT_SIDEWAYS_PEAK,
 )
 from src.scalping.score.divergence import DivergenceState
 from src.scalping.score.vp import is_vp_strong, is_vp_weak
@@ -106,6 +113,10 @@ class GraderSnapshot:
     # Buy.Score.d 거래량 비율 (round 28, P2-2) — 오늘누적 / 전일.
     # 호출자가 일봉 데이터 조회해서 채움. NaN 이면 무가산.
     volume_ratio_vs_prev_day: float = float("nan")
+
+    # Buy.Score.l 일중 등락률 (2026-05-21, R14l 횡보 정점 페널티용).
+    # snap_row.daily_return (KIS API prdy_ctrt) 그대로. NaN 이면 무가산.
+    daily_return_pct: float = float("nan")
 
 
 @dataclass
@@ -248,6 +259,30 @@ def calculate_buy_score(snap: GraderSnapshot) -> ScoreCard:
         elif VOLUME_RATIO_NORMAL_MIN <= vr <= VOLUME_RATIO_NORMAL_MAX:
             score += 0.5
             reasons.append(f"+0.5 거래량 {vr:.1f}배 (정상)")
+
+    # ── R14k 일중 최고점 거리 페널티 (2026-05-21) ─────────────────────────────
+    # 사용자 의도: "차트의 매수 포인트가 너무 고점에서 찾아옴" — 5/20 매매일지
+    # §H7 + backtest_user_trades.py 검증. 정점 직후 + 횡보 정점 매수 회피.
+    # 통설: namu.wiki 상따 "고점 추격 매수 회피" + Bollinger mean reversion.
+    dist = snap.dist_from_intraday_high_pct
+    if dist == dist:  # not NaN
+        if dist >= DIST_FROM_HIGH_VERY_NEAR_PENALTY_PCT:  # -2% 이내 (정점 직전)
+            score += WEIGHT_DIST_FROM_HIGH_VERY_NEAR  # -2
+            reasons.append(f"{WEIGHT_DIST_FROM_HIGH_VERY_NEAR:+.0f} 정점 {dist:+.1f}% (R14k 정점근접)")
+        elif dist >= DIST_FROM_HIGH_NEAR_PENALTY_PCT:  # -5% 이내
+            score += WEIGHT_DIST_FROM_HIGH_NEAR  # -1
+            reasons.append(f"{WEIGHT_DIST_FROM_HIGH_NEAR:+.0f} 정점근접 {dist:+.1f}% (R14k)")
+
+    # ── R14l 횡보 정점 페널티 (2026-05-21) ────────────────────────────────────
+    # 일중 상승률 ≥ 15% + 정점 5% 이내 = 폭등 후 횡보 micro fluctuation.
+    # 수젠텍 케이스 (5/20 backtest 차단 효과 확인). 통설: i-whale "+15% 후 횡보 회피".
+    dr = snap.daily_return_pct
+    if dr == dr and dist == dist and abs(dr) <= 200:  # NaN/잡음 가드
+        if dr >= SIDEWAYS_PEAK_DAILY_RETURN_PCT and dist >= SIDEWAYS_PEAK_DIST_FROM_HIGH_PCT:
+            score += WEIGHT_SIDEWAYS_PEAK  # -1.5
+            reasons.append(
+                f"{WEIGHT_SIDEWAYS_PEAK:+.1f} 횡보고점 ret={dr:+.1f}% dist={dist:+.1f}% (R14l)"
+            )
 
     # 진입 필수조건 (등급과 별도)
     required = _check_required(snap)

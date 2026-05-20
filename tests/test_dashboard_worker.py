@@ -295,9 +295,11 @@ def test_rising_funnel_passes_strong_candidate():
 
     snap = {
         "rank": 3, "code": "091340", "name": "대한광통신",
-        "price": 91300, "intraday_high": 91500,
+        # R14k 페널티 회피: dist = (91300-95000)/95000 = -3.89% → -5% 페널티 (-1)
+        # R14l 회피: daily_return = 10% < 15% → 무발화
+        "price": 91300, "intraday_high": 95000,
         "turnover": 12.0, "trading_value": 80_000_000_000,
-        "daily_return": 15.0,
+        "daily_return": 10.0,
     }
     snap_by_code = {"091340": snap}
     stage1 = [{"code": "091340", "name": "대한광통신", "themes": ["AI"],
@@ -440,9 +442,11 @@ def test_rising_funnel_passes_when_vp_data_missing():
 
     snap = {
         "rank": 3, "code": "091340", "name": "대한광통신",
-        "price": 91300, "intraday_high": 91500,
+        # R14k 페널티 회피: dist = (91300-95000)/95000 = -3.89% → -5% 페널티 (-1)
+        # R14l 회피: daily_return = 10% < 15% → 무발화
+        "price": 91300, "intraday_high": 95000,
         "turnover": 12.0, "trading_value": 80_000_000_000,
-        "daily_return": 15.0,
+        "daily_return": 10.0,
     }
     snap_by_code = {"091340": snap}
     stage1 = [{"code": "091340", "name": "대한광통신", "themes": ["AI"],
@@ -481,9 +485,11 @@ def test_rising_funnel_low_vp_alone_no_longer_hard_drops():
 
     snap = {
         "rank": 3, "code": "091340", "name": "대한광통신",
-        "price": 91300, "intraday_high": 91500,
+        # R14k 페널티 회피: dist = (91300-95000)/95000 = -3.89% → -5% 페널티 (-1)
+        # R14l 회피: daily_return = 10% < 15% → 무발화
+        "price": 91300, "intraday_high": 95000,
         "turnover": 12.0, "trading_value": 80_000_000_000,
-        "daily_return": 15.0,
+        "daily_return": 10.0,
     }
     snap_by_code = {"091340": snap}
     stage1 = [{"code": "091340", "name": "대한광통신", "themes": ["AI"],

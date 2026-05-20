@@ -349,6 +349,19 @@ if price_vs_ma5 ≤ -0.3 and price_vs_ma20 ≤ -0.3:              score -= 1  # 
 # 기준. 도달 안 했으면 None (무가산).
 if limit_up_hit_time < 09:30:                                 score += 1
 elif limit_up_hit_time < 10:30:                               score += 0.5
+
+# R14k 일중 최고점 거리 페널티 (2026-05-21) — 정점 진입 회피
+# 사용자 의도 (2026-05-21): "차트의 매수 포인트가 너무 고점에서 찾아옴".
+# 5/20 매매일지 §H7 + backtest_user_trades 검증 (5/20 사용자 매매 7건 차단,
+# 누적 +5.24% → +12.21%). 통설: namu.wiki 상따 "고점 추격 회피".
+if dist_from_intraday_high_pct >= -2.0:                       score -= 2  # 정점 2% 이내
+elif dist_from_intraday_high_pct >= -5.0:                     score -= 1  # 정점 5% 이내
+
+# R14l 횡보 정점 페널티 (2026-05-21) — 폭등 후 횡보 micro fluctuation
+# 수젠텍 5/20 케이스 — 일중 +18% 도달 후 횡보 → 사용자 매수 시점 모두 dist 0~3%.
+# 통설: i-whale "+15% 도달 후 횡보 micro fluctuation 매매 회피".
+if daily_return_pct >= 15 and dist_from_intraday_high_pct >= -5.0:
+    score -= 1.5
 ```
 
 **등급:**
@@ -484,6 +497,7 @@ entry_bar_low    = 진입 직전 1분봉 저점
 
 | Round | 잘못 알았던 것 | 정정 |
 |---|---|---|
+| 2026-05-21 R14k/R14l 정점 회피 도입 ★ | 사용자 발화 (2026-05-21): "image/0520 의 차트들을 보면 매수 포인트가 너무 고점에서 찾아오는 느낌". 본질: Buy.Score 의 lagging indicator 9개가 동시 발화하는 시점 = 폭등 막바지 = 정점 매수. cutoff 변경 (q5_inv_6) 으로는 본질 해결 X — 점수 높을수록 정점에 더 가까움. | R14k (일중 최고점 거리 페널티 -2/-1) + R14l (횡보 정점 페널티 -1.5) 신설. backtest_user_trades 검증: 5/20 사용자 매매 15건 중 7건 차단 (B_정점직후 3/3 + C_횡보고점 2/4 + 시초 정점 2/8). 누적 손익 +5.24% → +12.21% (133% 증가). 통설: namu.wiki 상따 + i-whale + Bollinger mean reversion. 회귀: test_grader.py 에 9개 신규 테스트 (R14k 4 + R14l 4 + 사용자 매매 케이스 2). 917 passed. **선행 조건 (해결됨)**: tick_log.intraday_high 컬럼 backtest 시 0 박힘 — 운영 grader 는 bars.high.max() fallback (worker.py:766) 으로 정상 작동 확인. |
 | 2026-05-21 명명 마이그레이션 | docs/jongbae-strategy.md 한 파일에 단타 (R9~R15) + 종배 (R1~R8) 룰이 R 번호로 섞임. src/jongbae/ 디렉토리에도 단타 8 파일이 들어있어 디렉토리 이름과 내용 불일치. 사용자 (Zeta) 가 매매일지 작성 시 두 시스템 혼동 발생 보고. | 명명 재설계 + 시스템 분리: ①R 번호 → Buy.*/Exit.*/Theme.* 의미있는 이름. 약식 알파벳 (B/E/T/etc). ②매도 트리거 알파벳 B→P (Profit), C→E (Exit-signal). A는 그대로 Auto-stop. ③docs/scalping-strategy.md (본 문서) 신설 + docs/eod-strategy.md (종배) 분리. ④src/jongbae/ → src/scalping/{score,exit}/ + src/overnight/ + src/common/ 재구성. ⑤tick_log parquet 컬럼명 trigger_b1_* → trigger_p1_*, trigger_c1_* → trigger_e1_* 마이그레이션 (5/18~5/20 변환). ⑥CLAUDE.md "현재 종배만 구현 중" 표현 정정 — 두 시스템 명시 + prefix 표 추가. |
 | 2026-05-21 A1 손절 통일 | A1 손절 임계 -1.5% (코드) vs 사용자 룰 -2% 불일치. 사용자는 -2% 시 손절 의도. | A1 임계 -1.5% → -2% 통일. config_thresholds.py STOP_LOSS_PCT -1.5 → -2.0. 테스트 fixture 98_500 → 98_000. |
 | 40 | tick 길어졌다는 사용자 인지 — 처음엔 캐시 + 주기 분리(funnel 5초 주기) 로 풀려고 했음. 사용자(Zeta) 정정: "체결강도/거래대금/거래량/봉형태 stale 되면 의미 없음 — 캐시 X, fetch 병렬화로 fresh 유지". | round 40: parallel_fetch.py 신설 + dashboard_tick 흐름 재설계 + 캐시 정책 (tick 안 buffer 만, tick 간 cache X). |

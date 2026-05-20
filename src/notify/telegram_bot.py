@@ -325,8 +325,10 @@ def _apply_sell(code: str, session: MonitoringSession) -> str:
     name = session.monitored[code].name if code in session.monitored else code
 
     # Phase 1: 매도 이벤트 jsonl 기록.
-    from datetime import datetime as _dt
-    now = _dt.now()
+    # round 40 fix (2026-05-21): naive datetime → now_kst() — 5/18~5/20 trades 의
+    # sell ts 일부가 KST 미부착 (matches buy ts +9h 가 어긋나는 버그 원인).
+    from src.config import now_kst
+    now = now_kst()
     sell_price = session.last_prices.get(code)
     append_trade_event(
         TradeEvent(

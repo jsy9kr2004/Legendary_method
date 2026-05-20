@@ -273,6 +273,12 @@ def _evaluate_rising_funnel(
             vol_ratio = float("nan")
 
         accel_1m_val = cache.get("accel_1m", float("nan"))
+        # 일중 등락률 (R14l 횡보 정점 페널티용) — snap_row.daily_return
+        daily_return_raw = snap.get("daily_return")
+        daily_return_for_grade = (
+            float(daily_return_raw) if daily_return_raw is not None and daily_return_raw == daily_return_raw
+            else float("nan")
+        )
         gsnap = GraderSnapshot(
             volume_turnover_rank=int(snap.get("rank") or 0) or None,
             vol_accel_1m=accel_1m_val if accel_1m_val == accel_1m_val else float("nan"),
@@ -292,6 +298,7 @@ def _evaluate_rising_funnel(
             limit_up_hit_time=(
                 limit_up_hit_times.get(code) if limit_up_hit_times else None
             ),
+            daily_return_pct=daily_return_for_grade,
         )
         score_card = calculate_buy_score(gsnap)
         if score_card.score < RISING_MIN_SCORE:
@@ -794,6 +801,9 @@ def dashboard_tick(
             vol_ratio_g = float("nan")
         # rank 가 0/None 이면 None — grader 의 회전율 가산 (+1) 만 skip, 다른 시그널 정상 평가.
         rank_for_grade = int(snap_row_d.get("rank") or 0) or None
+        # 일중 등락률 (R14l) — snap_row.daily_return
+        dr_raw = snap_row_d.get("daily_return")
+        dr_for_grade = float(dr_raw) if dr_raw is not None and dr_raw == dr_raw else float("nan")
         grade_snap = GraderSnapshot(
             volume_turnover_rank=rank_for_grade,
             vol_accel_1m=accel_1m if accel_1m == accel_1m else float("nan"),
@@ -809,6 +819,7 @@ def dashboard_tick(
             price_vs_ma20_pct=ma20_pct_g,
             volume_ratio_vs_prev_day=vol_ratio_g,
             limit_up_hit_time=session.limit_up_hit_times.get(code),
+            daily_return_pct=dr_for_grade,
         )
         sc = calculate_buy_score(grade_snap)
         monitored.buy_score = sc.score
