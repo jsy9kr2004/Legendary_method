@@ -43,7 +43,7 @@
 - [x] 종목 현재가/일중 고가/등락률 조회 — `fetch_quote` / `fetch_quotes_bulk` (TR: FHKST01010100). (2026-05-06)
 - [x] 4시점 스냅샷 자동 수집 (11:00, 13:00, 14:00, 14:50) — `src/data/snapshot.py` + `src/scheduler.py`. (2026-05-06)
 - [x] Rate limit 핸들링 (초당 20회) — M0 완료
-- [x] 상한가 진입 감지 (실시간 또는 짧은 주기 폴링) — `src/jongbae/limit_up.py` `detect_new_limit_up`, 스케줄러 60초 폴링. (2026-05-06)
+- [x] 상한가 진입 감지 (실시간 또는 짧은 주기 폴링) — `src/common/limit_up.py` `detect_new_limit_up`, 스케줄러 60초 폴링. (2026-05-06)
 
 **완료 기준:** 장중 정해진 시점에 거래대금 30위와 각 종목의 시세가 자동으로 DB에 저장됨.
 
@@ -51,11 +51,11 @@
 
 **목표:** 수집된 데이터로 종배 후보를 식별하고 historical 갭상 통계를 계산한다.
 
-- [x] 주도테마 식별 알고리즘 — `src/jongbae/leading_theme.py` (거래대금 top 30, 테마 카운트 ≥3). (2026-05-06)
-- [x] 종배 후보 필터 — `src/jongbae/candidates.py` (주도테마 + 일봉 +20%↑, 우선순위 limit_up/high_pull/normal/excluded). (2026-05-06)
-- [x] Historical 유사 사례 매칭 — `src/jongbae/historical.py` Layer 1~3 구현. **Layer 4는 분봉 히스토리 부재로 v1 연기**. (2026-05-06)
+- [x] 주도테마 식별 알고리즘 — `src/common/theme.py` (거래대금 top 30, 테마 카운트 ≥3). (2026-05-06)
+- [x] 종배 후보 필터 — `src/overnight/candidates.py` (주도테마 + 일봉 +20%↑, 우선순위 limit_up/high_pull/normal/excluded). (2026-05-06)
+- [x] Historical 유사 사례 매칭 — `src/overnight/gap_stats.py` Layer 1~3 구현. **Layer 4는 분봉 히스토리 부재로 v1 연기**. (2026-05-06)
 - [x] 갭상 확률 / 평균 갭 / 중앙값 / 표준편차 계산 — `historical._gap_metrics`. (2026-05-06)
-- [x] 사이징 계산 (균등 / Kelly / Sharpe) — `src/jongbae/sizing.py`. (2026-05-06)
+- [x] 사이징 계산 (균등 / Kelly / Sharpe) — `src/overnight/sizing.py`. (2026-05-06)
 - [x] 표본 부족 시 보수적 처리 — Kelly: n<5 제외, n<10 ×0.3, n<20 ×0.6, n≥20 ×0.8 (Half Kelly), 캡 25%. (2026-05-06)
 
 **완료 기준:** 임의 시점의 시장 데이터에 대해 종배 후보 종목과 통계가 계산됨.
@@ -99,13 +99,13 @@
 
 ### Milestone 5.5: 주도섹터/주도주 정의 재정립 (Week 6~7)
 
-**배경:** Sonnet이 만든 "거래대금 30위 ≥3종목" 단일 룰은 대형주(하이닉스/삼전) 편향이 심해 단타 주도주 판별로 부적합. 한국 단타 실무 통설(테마별 상승률 + 시총 대비 회전율 + breadth)에 맞춰 재정립한다. R3, R3'(신설) 참고.
+**배경:** Sonnet이 만든 "거래대금 30위 ≥3종목" 단일 룰은 대형주(하이닉스/삼전) 편향이 심해 단타 주도주 판별로 부적합. 한국 단타 실무 통설(테마별 상승률 + 시총 대비 회전율 + breadth)에 맞춰 재정립한다. Theme, Theme.Leader(신설) 참고.
 
 - [ ] **시총 데이터 적재** — KIS mst part2 추가 필드 파싱. `src/data/master.py` 확장. 회전율(거래대금/시총) 계산용 필수
 - [ ] **ETF/ETN/리츠/스팩/펀드 필터** — KIS 종목분류 코드 + 종목명 패턴(`KODEX`/`TIGER`/`KBSTAR`/`ARIRANG` 등) + 코드 패턴(`1XXXXX` 펀드, `5XXXXX` 스팩). `src/data/master.py` `is_tradable_for_jongbae()`. 기존 `100030` 펀드 누락 이슈 같이 해소
-- [ ] **주도섹터 정의 변경** — 단순 "30위 내 ≥3종목" → 테마별 (a) breadth(테마 내 +5%/+10% 종목 수) + (b) 평균 상승률(동일가중) + (c) 회전율 합계 z-score 합산. `src/jongbae/leading_theme.py` `score_themes()`. 임계값/가중치는 운영 튜닝 항목
+- [ ] **주도섹터 정의 변경** — 단순 "30위 내 ≥3종목" → 테마별 (a) breadth(테마 내 +5%/+10% 종목 수) + (b) 평균 상승률(동일가중) + (c) 회전율 합계 z-score 합산. `src/common/theme.py` `score_themes()`. 임계값/가중치는 운영 튜닝 항목
 - [ ] **주도주 정의 변경** — 주도섹터 내 **회전율 1위** = 주도주. 거래대금 절대값 X (대형주 자동 배제). 상승률/거래대금은 표시만. `identify_early_morning_leaders` 시그니처 변경
-- [ ] **주도주 교체 상태 머신** — `NORMAL` / `TRANSITION` (교체 가능성) / `GRACE` (실제 교체 후 5분 유예). `src/dashboard/state.py`. 임계값 R3' 참고
+- [ ] **주도주 교체 상태 머신** — `NORMAL` / `TRANSITION` (교체 가능성) / `GRACE` (실제 교체 후 5분 유예). `src/dashboard/state.py`. 임계값 Theme.Leader 참고
 - [ ] **plan/jongbae-strategy/data-infra/report-spec/CLAUDE 메타 갱신** ← 본 작업 시작 전 선행
 
 **완료 기준:** 데모 모드(2025-05-04 제룡전기 케이스)에서 새 정의로 주도섹터="전기/전선", 주도주="제룡전기"가 정상 식별. 하이닉스/삼전이 (단타용) 주도주에 안 잡힘.
@@ -116,58 +116,58 @@
 
 **[Fetcher / 기본 인프라]**
 
-- [ ] **분봉 fetcher** — KIS API `FHKST03010200`. 5분봉/1분봉 OHLC + 거래대금 시계열. `src/data/intraday.py` `fetch_minute_bars()` (R11 가속 / R12 봉패턴 공용)
-- [ ] **체결강도 fetcher** — KIS API `inquire-ccnl`. 매수체결/매도체결 비율 → R10 VP. `fetch_ccnl_strength()`
-- [ ] **호가잔량 fetcher** — KIS API `inquire-asking-price-exp-ccn`. 매수/매도 호가 잔량 (R10 보조 강등). `fetch_asking_price()`
-- [x] **투자자별 순매수 fetcher** — KIS API `inquire-investor`. 외국인/기관/프로그램 순매수. `fetch_investor_flow()`. round 22 정정으로 카드에서 제거 → round 36 응답 list 파싱 안전화 (`out[0]` → 시간 필드 max 행 채택) + 모두 0 응답 DEBUG 로그 + 카드/PWA/14:50 결정 레포트 라인 부활 (R14 점수 합산 X, 표시만). 진단 스크립트 `scripts/diag_investor_flow.py` 동봉. (2026-05-17)
-- [ ] **거래대금 가속배율 계산** — 현재 5분봉 거래대금 / 직전 30분 평균 (R3' 주도주 교체용). `src/jongbae/momentum.py`. 양수→치고 올라옴 / 음수→자금 이탈
+- [ ] **분봉 fetcher** — KIS API `FHKST03010200`. 5분봉/1분봉 OHLC + 거래대금 시계열. `src/data/intraday.py` `fetch_minute_bars()` (Buy.Accel 가속 / Buy.Candle 봉패턴 공용)
+- [ ] **체결강도 fetcher** — KIS API `inquire-ccnl`. 매수체결/매도체결 비율 → Buy.VP VP. `fetch_ccnl_strength()`
+- [ ] **호가잔량 fetcher** — KIS API `inquire-asking-price-exp-ccn`. 매수/매도 호가 잔량 (Buy.VP 보조 강등). `fetch_asking_price()`
+- [x] **투자자별 순매수 fetcher** — KIS API `inquire-investor`. 외국인/기관/프로그램 순매수. `fetch_investor_flow()`. round 22 정정으로 카드에서 제거 → round 36 응답 list 파싱 안전화 (`out[0]` → 시간 필드 max 행 채택) + 모두 0 응답 DEBUG 로그 + 카드/PWA/14:50 결정 레포트 라인 부활 (Buy.Score 점수 합산 X, 표시만). 진단 스크립트 `scripts/diag_investor_flow.py` 동봉. (2026-05-17)
+- [ ] **거래대금 가속배율 계산** — 현재 5분봉 거래대금 / 직전 30분 평균 (Theme.Leader 주도주 교체용). `src/scalping/score/accel.py`. 양수→치고 올라옴 / 음수→자금 이탈
 - [ ] **상태 머신** (M5.5와 공유) — 종목 추가/제거/유예기 카운트다운
 
-**[R10~R15 매수 점수/매도 트리거 신규]**
+**[Buy.VP~Exit.Triggers 매수 점수/매도 트리거 신규]**
 
-- [ ] **R10 체결강도(VP)** — `src/jongbae/volume_power.py`. VP + 5MA/20MA. KIS `inquire-ccnl` `체결강도` 필드 직접 사용. 메모리 deque 시계열
-- [ ] **R11 다중 윈도우 거래대금 가속** — `momentum.py` 확장. `vol_accel_1m` (분모 5분), `vol_accel_5m` (분모 20분). 기존 30분 분모 가속배율은 유지
-- [ ] **R12 봉 패턴 분석** — `src/jongbae/candle.py`. 5분봉 OHLC → bullish/bearish/doji + upper_wick/lower_wick 비율
-- [ ] **R12.5 위치/맥락** — 당일 고점 / 시초 / 전일 종가 거리 %. VI 발동은 v0 휴리스틱(분봉 ±10% 1분 내), v1 정밀
-- [ ] **R13 가격-체결강도 다이버전스** — `src/jongbae/divergence.py`. bearish/bullish 자동 감지
-- [ ] **R14 매수 점수 grader** — `src/jongbae/grader.py`. score 계산 + 등급(STRONG/WATCH/NEUTRAL/AVOID) + 사유 텍스트 + 필수조건 체크
-- [ ] **R15 매도 트리거 + 상태 머신** — `src/jongbae/exit_triggers.py`. 감시/보유 모드, 트리거 A/B/C, 멱등성(B1/B2 1회만)
+- [ ] **Buy.VP 체결강도(VP)** — `src/scalping/score/vp.py`. VP + 5MA/20MA. KIS `inquire-ccnl` `체결강도` 필드 직접 사용. 메모리 deque 시계열
+- [ ] **Buy.Accel 다중 윈도우 거래대금 가속** — `momentum.py` 확장. `vol_accel_1m` (분모 5분), `vol_accel_5m` (분모 20분). 기존 30분 분모 가속배율은 유지
+- [ ] **Buy.Candle 봉 패턴 분석** — `src/scalping/score/candle.py`. 5분봉 OHLC → bullish/bearish/doji + upper_wick/lower_wick 비율
+- [ ] **Buy.Position 위치/맥락** — 당일 고점 / 시초 / 전일 종가 거리 %. VI 발동은 v0 휴리스틱(분봉 ±10% 1분 내), v1 정밀
+- [ ] **Buy.Div 가격-체결강도 다이버전스** — `src/scalping/score/divergence.py`. bearish/bullish 자동 감지
+- [ ] **Buy.Score 매수 점수 grader** — `src/scalping/score/grader.py`. score 계산 + 등급(STRONG/WATCH/NEUTRAL/AVOID) + 사유 텍스트 + 필수조건 체크
+- [ ] **Exit.Triggers 매도 트리거 + 상태 머신** — `src/scalping/exit/triggers.py`. 감시/보유 모드, 트리거 A/B/C, 멱등성(B1/B2 1회만)
 - [ ] **보유 상태 영속화** — `data/state/holdings.json` atomic write. `/buy`/`/sell` 명령 시 갱신, worker 재시작 시 로드
-- [ ] **R10/R12 메모리 시계열** — `src/dashboard/state.py` 확장. `intraday_series[code]` deque 구조 (data-infra.md 참조)
+- [ ] **Buy.VP/Buy.Candle 메모리 시계열** — `src/dashboard/state.py` 확장. `intraday_series[code]` deque 구조 (data-infra.md 참조)
 
 **[Telegram 봇 / 메시지 인프라]**
 
 - [x] **Telegram 양방향 봇** — long polling으로 incoming 메시지 수신 (24h 상시, round 18). 명령어: `/on`(=`/start`), `/off`(=`/pause`), `/list`, `/clear`, 6자리 숫자(토글), **`/buy CODE [PRICE] [TIME_STOP_MIN]`** (round 20 — 가격 생략 시 최근 시세 자동 보충), **`/sell CODE`**, **`/status CODE`**. `src/notify/telegram_bot.py`
 - [ ] **메시지 편집 인프라** — `editMessageText`로 종목당 메시지 1개 유지 갱신. 종목 1~2개=2초, 3~5개=3초, 6~10개=5초 동적 간격. `src/notify/telegram.py` 확장
 - [x] **알림 통합 — 카드 외 푸시 폐기 + 부상 후보 TTL 폐지 (round 19)** — round 17 정책 실코드 반영. `worker._send_alert` 함수 + 호출 5곳 제거 (RISING 신규 / 강한 부상 / 자금 이탈 / 1분봉 부상·급감 / 호가 역전 / step_tracker TRANSITION·REPLACEMENT). 카드 재배치(reposition) 로직 제거 — alert 가 없으니 카드가 위로 밀려나지 않음. `MonitoredStock.expires_at` + `prune_expired` 제거, RISING 동기화는 풀-이탈 즉시 제거로 전환 (시간 만료 없이 자연 교체). `step_tracker` 반환형 `None` 로 변경, TRANSITION/GRACE 는 `render_monitor_message(transition_info=...)` 로 a1 카드 헤더에 통합 표시. 5분봉/1분봉 가속 라인에 strong_rise/exit_signal/one_min_rise/one_min_exit 임계 도달 시 ⚡/⚠ 마크 강조. (2026-05-14)
-- [x] **부상 후보 다단계 funnel — R14 매수 점수 기반 재정의 (round 21)** — `identify_rising_candidates` 가 회전율 상위 5 → 15 로 확장(Stage 1). worker 에 `_evaluate_rising_funnel` 신설 — Stage 2 (minute_bars + vol_accel + is_weak_candle) → Stage 3 (ccnl + VP) → Stage 4 (asking + investor + `calculate_buy_score`) 깔때기. tick_cache 로 통과 종목 fetch 결과 보관해 카드 렌더에서 재사용. `MonitoredStock.buy_score/buy_grade/buy_reasons` 필드 추가, render 헤더에 등급 이모지 + 점수 + 사유 한 줄 표시. 흥아해운류는 Stage 2 모멘텀 임계에서 drop (회귀 테스트 `test_rising_funnel_filters_heunga_haewoon` 통과). 평균 ~33 KIS req/3sec tick (한도 60의 55%). worker docstring 5초 → 3초 정정. (2026-05-14)
+- [x] **부상 후보 다단계 funnel — Buy.Score 매수 점수 기반 재정의 (round 21)** — `identify_rising_candidates` 가 회전율 상위 5 → 15 로 확장(Stage 1). worker 에 `_evaluate_rising_funnel` 신설 — Stage 2 (minute_bars + vol_accel + is_weak_candle) → Stage 3 (ccnl + VP) → Stage 4 (asking + investor + `calculate_buy_score`) 깔때기. tick_cache 로 통과 종목 fetch 결과 보관해 카드 렌더에서 재사용. `MonitoredStock.buy_score/buy_grade/buy_reasons` 필드 추가, render 헤더에 등급 이모지 + 점수 + 사유 한 줄 표시. 흥아해운류는 Stage 2 모멘텀 임계에서 drop (회귀 테스트 `test_rising_funnel_filters_heunga_haewoon` 통과). 평균 ~33 KIS req/3sec tick (한도 60의 55%). worker docstring 5초 → 3초 정정. (2026-05-14)
 - [x] **감시/보유 카드 렌더러 통합 (round 22)** — `render_monitor_message` 에 `holding / trigger_states / vp_5ma / vp_1ma / divergence` 인자 추가. 보유 모드: `[보유]` prefix (source emoji 중복 제거), 합쳐진 시각/가격 라인 (`시각 (+경과초) 현재가(오늘%)/매수가(손익%)`), 청산 시그널 섹션 (C1~C5 각각 ❌/✅ + 현재 수치). worker.dashboard_tick 매 tick `load_holdings()` + `evaluate_triggers()` 호출. `MonitoringSession.vp_series` 신설로 종목별 VP 시계열 메모리 유지, `ma_1/ma_5/ma_20` 산출. 체결강도 라인에 5MA + 1MA 동시 표시. 외국인/기관/프로그램 라인 제거 (데이터 신뢰도 낮음). 초보자용 가이드 `docs/monitoring-guide.md` 신규 작성. (2026-05-14)
 - [x] **자동 운영 시간 (round 18 정책 변경)** — 평일 09:00 자동 ON 유지. 10:30 자동 OFF **폐지** — `/off` 로만 종료. 사용자가 임의 시점에 `/on`/`/off` 토글 (24h 허용). 휴장일/주말 `/on` 도 허용하되 KIS 시세 변동 X 로 카드는 정적 유지
 - [ ] **장 시간 외 안내** — 시간 외 사용자 입력 시 "장 시간 외입니다" 안내 한 줄
-- [ ] **임계값 설정** — `src/jongbae/config_thresholds.py`. R10~R15 임계값 일괄 관리. 운영 중 사용자 피드백으로 튜닝
+- [ ] **임계값 설정** — `src/scalping/score/thresholds.py`. Buy.VP~Exit.Triggers 임계값 일괄 관리. 운영 중 사용자 피드백으로 튜닝
 
 **[테스트]**
 
 - [ ] **상태 전이 / 명령 파싱 / 임계 트리거 / rate limit 핸들링** (기존)
-- [x] **R14 회귀 — 흥아해운 시나리오** — `tests/test_grader.py`. 입력(거래대금 1316억 1위, 회전율 +19.4%, vol_accel_5m=0.8, vol_accel_1m=0.4, 호가 5.3배, 윗꼬리 음봉, VP=95, VP_5MA=98) → 점수 ≤ -3, 등급 🔴 AVOID
-- [x] **R14 회귀 — STRONG 케이스** — 제룡전기 상한가 모멘텀(VP=142, vol_accel_5m=1.6, 장대양봉) → 점수 ≥ 5
-- [x] **R15 트리거 멱등성** — B1 익절 1차는 1회만 발화, A1 손절선은 매 tick 발화 가능
-- [x] **R12 봉 패턴 경계** — 윗꼬리 30%/40%/50% 경계, doji
+- [x] **Buy.Score 회귀 — 흥아해운 시나리오** — `tests/test_grader.py`. 입력(거래대금 1316억 1위, 회전율 +19.4%, vol_accel_5m=0.8, vol_accel_1m=0.4, 호가 5.3배, 윗꼬리 음봉, VP=95, VP_5MA=98) → 점수 ≤ -3, 등급 🔴 AVOID
+- [x] **Buy.Score 회귀 — STRONG 케이스** — 제룡전기 상한가 모멘텀(VP=142, vol_accel_5m=1.6, 장대양봉) → 점수 ≥ 5
+- [x] **Exit.Triggers 트리거 멱등성** — B1 익절 1차는 1회만 발화, A1 손절선은 매 tick 발화 가능
+- [x] **Buy.Candle 봉 패턴 경계** — 윗꼬리 30%/40%/50% 경계, doji
 - [ ] **추가 회귀 케이스 5~10건** (사용자 과거 사례 입력 필요 — TODO, ritual 1 참조)
 
-**[round 23~30 — 통설 검색 기반 R14/R15 보강 (2026-05-14)]**
+**[round 23~30 — 통설 검색 기반 Buy.Score/Exit.Triggers 보강 (2026-05-14)]**
 
-- [x] **R14a VWAP 시그널** (round 23, P0-1) — `momentum.compute_vwap` + `price_vs_vwap_pct`. `GraderSnapshot.price_vs_vwap_pct`. ±0.3% 임계. test_grader 7 + test_momentum 9 케이스
-- [x] **R14b 5/20 이평 시그널** (round 24, P0-2) — `momentum.compute_minute_ma` + `price_vs_ma_pct`. `GraderSnapshot.price_vs_ma5_pct/ma20_pct`. 정/역배열 ±1. test 8 + 9
-- [x] **R14c 상한가 진입 시간 가산** (round 25, P1-1) — `GraderSnapshot.limit_up_hit_time: dt.time | None`. 09:30 이전 +1 / 10:30 이전 +0.5. test 7
-- [x] **R15 A5 EOD 컷오프** (round 26, P1-2) — 14:45 이후 가격<MA AND 음봉 → 강제 청산. test 6
-- [x] **R13 다이버전스 ±2 → ±1 강등** (round 27, P2-1) — 통설 외 약신호. test 2
-- [x] **R14d 거래량 비율 검증** (round 28, P2-2) — 전일 대비 1~3배 +0.5 / 10배↑ -1. test 8
-- [x] **R29 거래원 분석 KIS API 가용성 조사** (round 29, P3-1) — fetch_investor_flow 가용성 확인, R14 가산은 검증 후 결정 (`data-infra.md` "투자자별 순매수 R14 추가 가능성" 섹션)
-- [x] **R7' 종배 청산 시초가 룰** (round 30, P3-2) — 신규 모듈 `src/jongbae/jongbae_exit.py`. ≤+1% 전량 / +1%~+6% 익절 / ≥+6% 40% 분할. test 13
+- [x] **Buy.Score.a VWAP 시그널** (round 23, P0-1) — `momentum.compute_vwap` + `price_vs_vwap_pct`. `GraderSnapshot.price_vs_vwap_pct`. ±0.3% 임계. test_grader 7 + test_momentum 9 케이스
+- [x] **Buy.Score.b 5/20 이평 시그널** (round 24, P0-2) — `momentum.compute_minute_ma` + `price_vs_ma_pct`. `GraderSnapshot.price_vs_ma5_pct/ma20_pct`. 정/역배열 ±1. test 8 + 9
+- [x] **Buy.Score.c 상한가 진입 시간 가산** (round 25, P1-1) — `GraderSnapshot.limit_up_hit_time: dt.time | None`. 09:30 이전 +1 / 10:30 이전 +0.5. test 7
+- [x] **Exit.Triggers A5 EOD 컷오프** (round 26, P1-2) — 14:45 이후 가격<MA AND 음봉 → 강제 청산. test 6
+- [x] **Buy.Div 다이버전스 ±2 → ±1 강등** (round 27, P2-1) — 통설 외 약신호. test 2
+- [x] **Buy.Score.d 거래량 비율 검증** (round 28, P2-2) — 전일 대비 1~3배 +0.5 / 10배↑ -1. test 8
+- [x] **R29 거래원 분석 KIS API 가용성 조사** (round 29, P3-1) — fetch_investor_flow 가용성 확인, Buy.Score 가산은 검증 후 결정 (`data-infra.md` "투자자별 순매수 Buy.Score 추가 가능성" 섹션)
+- [x] **Eod.Exit' 종배 청산 시초가 룰** (round 30, P3-2) — 신규 모듈 `src/overnight/exit.py`. ≤+1% 전량 / +1%~+6% 익절 / ≥+6% 40% 분할. test 13
 - [x] **wiring: worker → grader** (round 32) — funnel 에서 VWAP/MA5/MA20 자동 계산 + `volume_ratio_vs_prev_day` (`_prev_day_volume` 헬퍼 + daily_ohlcv 인자) + `limit_up_hit_time` (`session.limit_up_hit_times` dict 경유). scheduler 의 상한가 감지 2 지점에서 시각 저장
 - [x] **wiring: scheduler → jongbae_exit** (round 32) — `_send_jongbae_open_exit_recommendation` 09:01 cron + `Dispatcher.send_jongbae_open_exit`. holdings.json 비면 no-op
-- [x] **ritual 2 자동화: paper_trade 기록기** (round 32) — `src/jongbae/paper_trade.py` 신규. `PaperTradeRecord` dataclass + `record_decision/record_open_result/load_records/compute_summary` (Spearman ρ 자체 구현). atomic write. test 15
+- [x] **ritual 2 자동화: paper_trade 기록기** (round 32) — `src/scalping/paper_trade.py` 신규. `PaperTradeRecord` dataclass + `record_decision/record_open_result/load_records/compute_summary` (Spearman ρ 자체 구현). atomic write. test 15
 - [x] **ritual 3 자동화: 통설 가중치 invariant** (round 32) — `test_grader.py::test_invariant_consensus_weights_dominate_positive/negative` + `_divergence_weight_capped_at_one` 3 케이스
 - [ ] **wiring: 14:50 결정 → paper_trade.record_decision** — 결정 레포트에서 STRONG/WATCH 자동 저장 (호출 한 줄)
 - [ ] **wiring: 09:30 모닝 → paper_trade.record_open_result** — 보유 종목 + 14:50 후보들 시초가/오전고가 추가 (호출 한 줄)
@@ -177,7 +177,7 @@
 
 **완료 기준 (round 18):** 24h 봇 명령 polling 상시 가동. 사용자 `/on` 시점부터 `/off` 까지 주도주 1~2개 + 사용자 임의 종목 모니터링 + 보유 종목 손절/익절 카드 표시. 평일 09:00 자동 ON, 10:30 자동 OFF 폐지. 카드 외 별도 푸시 알림 X (round 17). 푸시는 M6 외부 이벤트(상한가 진입, 자동 주도주 첫 추가, 정기 레포트)만.
 
-**정책 확인 (CLAUDE.md `자동 매매 절대 금지`):** R15 매도 트리거는 카드 표시 전용. 텔레그램 별도 푸시 X, KIS 실주문 자동 등록 X. 손절 자동화 / 분할 익절 자동화는 영구 미지원.
+**정책 확인 (CLAUDE.md `자동 매매 절대 금지`):** Exit.Triggers 매도 트리거는 카드 표시 전용. 텔레그램 별도 푸시 X, KIS 실주문 자동 등록 X. 손절 자동화 / 분할 익절 자동화는 영구 미지원.
 
 ### Milestone 7: PWA 대시보드 (Week 8~)
 
@@ -195,7 +195,7 @@
 
 - [x] **FastAPI 서버 셋업** — `src/dashboard/api.py` `create_app(session, broadcast_interval_sec=1.0)`. WS `/ws/monitor` (snapshot on connect + payload_ts 변경 시 tick broadcast), REST `/api/health` `/api/snapshot` `/api/holdings` (buy/sell) `/api/session` (on/off) `/api/watchlist` (toggle/clear). 정적 `/static/*` + `/` → index.html. `tests/test_dashboard_api.py` 16 케이스. (2026-05-14)
 - [x] **카드 JSON 페이로드 생성** — `src/dashboard/render.py` `build_monitor_payload()`. NaN/Inf → None sanitize, DivergenceState.bearish/bullish → kind 문자열, LeaderState enum → value. `MonitoringSession.last_payloads` 필드에 worker tick 마다 갱신, stale 종목 자동 정리. (2026-05-14)
-- [x] **trigger_lines 페이로드 + 청산 시그널 카드 표시** — `build_trigger_lines()` 헬퍼로 텔레그램/PWA 공용. C1~C5 텍스트 줄 list (현재 VP/가속 수치 포함). PWA 가 코드명 (`C1_vp_below_100`) 만 보여주던 문제 해결, 텔레그램과 동일 인지 정보 (2026-05-15)
+- [x] **trigger_lines 페이로드 + 청산 시그널 카드 표시** — `build_trigger_lines()` 헬퍼로 텔레그램/PWA 공용. C1~C5 텍스트 줄 list (현재 VP/가속 수치 포함). PWA 가 코드명 (`E1_vp_below_100`) 만 보여주던 문제 해결, 텔레그램과 동일 인지 정보 (2026-05-15)
 - [x] **수동 전환 / 해제 버튼** — 자동/부상 카드 `[→ 수동]`, 수동 카드 `[× 해제]`, 보유 카드 `[✕ 청산]`. 모두 기존 `apply_command` (`toggle_code` / `sell`) 핸들러 재사용 (2026-05-15)
 - [x] **그룹 컬럼 폐지** — 카드에 source 라벨 + 좌측 보더 색상 이미 있어 중복. 단일 그리드 + source priority sort (보유 → 자동 → 부상 → 수동) 후 점수 내림차순 (2026-05-15)
 - [x] **WebSocket broadcast** — `session.last_payload_ts` 변경 감지 polling 1초 (worker tick 3초 + 1초 lag). 변경 시 전체 snapshot 송신 (diff 미구현, 페이로드 작아 OK)
@@ -224,10 +224,10 @@
 **[Phase 4: UX 개선 — 선택]**
 
 - [ ] **종목 그룹 컬럼** — 자동(주도주) / 부상(RISING) / 보유(HOLD) / 수동(MANUAL) 4 컬럼. 가로 화면 그리드
-- [ ] **카드 클릭 → 상세 펼침** — R14 사유 전체, R15 트리거 A/B/C 상세, 시계열 미니차트
+- [ ] **카드 클릭 → 상세 펼침** — Buy.Score 사유 전체, Exit.Triggers 트리거 A/B/C 상세, 시계열 미니차트
 - [ ] **시계열 미니차트** — 가격 / VP / 회전율 / accel sparkline. 초안: 텍스트 sparkline (의존성 0). 정밀: lightweight-charts CDN (Phase 4 후반)
 - [ ] **음소거된 푸시 (opt-in)** — 새 STRONG 등급 진입 시 Web Notifications. 기본 OFF
-- [ ] **R15 트리거 강조** — 청산 시그널 발화 시 카드 빨간 펄스
+- [ ] **Exit.Triggers 트리거 강조** — 청산 시그널 발화 시 카드 빨간 펄스
 - [ ] **세션 토글 UI** — `/on` / `/off` 버튼 상단 고정. 현재 세션 상태(ON/OFF + 활성 종목 수) 항상 표시
 
 **[Phase 5: 운영 안정성]**
@@ -306,7 +306,7 @@
 
 매직 넘버 튜닝 인프라의 1단계. 사용자(Zeta) 비전: "수익률·승률 높이는 매직 넘버를
 데이터로 찾는다, 당분간 과도하더라도 최대한 많이 남긴다". 자세한 정정 이력은
-`docs/jongbae-strategy.md` row 38.
+`docs/scalping-strategy.md` row 38.
 
 - [x] `src/data/tick_log.py` — TickLogRow dataclass (40+ 컬럼) + append jsonl + TradeEvent
 - [x] `src/data/tick_log_compact.py` — jsonl → parquet 변환 CLI
@@ -329,27 +329,27 @@
 - [ ] `data/journal/YYYY-MM-DD.md` 디렉토리 운영 — 매매일지 누적 (사용자가 Claude
   출력 검토 + 보완 후 저장)
 - [ ] 매매일지 N건(20+) 누적 후 메타 분석 — 반복 등장하는 튜닝 후보 추출 → ritual
-  통과 시 R14 가중치 / R15 임계 정식 변경
+  통과 시 Buy.Score 가중치 / Exit.Triggers 임계 정식 변경
 
 ## Phase 2 확장 — sensitivity backtest (데이터 1~3개월 후)
 
-- [ ] R14 가중치 sensitivity — 기존 매매일지의 시그널을 다른 가중치로 재평가 시
+- [ ] Buy.Score 가중치 sensitivity — 기존 매매일지의 시그널을 다른 가중치로 재평가 시
   매수 결정이 어떻게 달라지나? 그 결과는 어땠나?
-- [ ] R15 트리거 임계 sensitivity — 트리거 발화 시점을 가중치별로 시뮬레이션 →
+- [ ] Exit.Triggers 트리거 임계 sensitivity — 트리거 발화 시점을 가중치별로 시뮬레이션 →
   사용자 매도 시점과 비교
 - [ ] funnel 통과 종목 vs 탈락 종목의 다음날 결과 분포 — Stage 0~4 컷오프 재검토
 
 ## Phase 3 (장기) — 종목별 파라미터 DB
 
 운전수 가설 (`memory/project_long_term_vision.md`): 한국 증시는 종목마다 운전수
-운용법이 다름 (양봉 누적형 / 개미털기형 등). 종목별 R14 가중치 / R15 임계가 조금씩
+운용법이 다름 (양봉 누적형 / 개미털기형 등). 종목별 Buy.Score 가중치 / Exit.Triggers 임계가 조금씩
 달라야 한다는 가설. 데이터 충분 (1년+) + Phase 2 메타 분석 통과 후 진입.
 
 - [ ] 운전수 가설 시그니처 정량화 — 종목별 (a) 갭상 빈도, (b) +30% 도달 시각 분포,
   (c) 분봉 자기상관, (d) 거래대금 spike 후 회복 시간 등 marker 계산 + 군집화
 - [ ] 같은 시그니처 군집의 가중치 sensitivity — 군집별 글로벌 가중치 도입 (개별
   종목 fitting 은 과적합 위험으로 보류)
-- [ ] `data/params/CODE.json` 종목별 R14 가중치 / R15 임계 override (1년+ 데이터
+- [ ] `data/params/CODE.json` 종목별 Buy.Score 가중치 / Exit.Triggers 임계 override (1년+ 데이터
   + 군집 패턴 안정화 후)
 - [ ] grader / exit_triggers 가 `params/CODE.json` fallback 로직 추가
 
@@ -357,8 +357,8 @@
 
 코드 작성하면서 발견되는 것 누적:
 
-- [x] **R4 v2 backtest 재실행 (round 41 후속 3, 2026-05-19)** — `scripts/backtest_r4v2.py` 신규. daily_ohlcv 기반 거래대금 universe top 30 vs 50 비교. **round 41 본문 backtest 가 처음부터 정확했음 확인** (최대 LG전자 +17.97% / 최악 엑스게이트 -4.88% 둘 다 일치). 결과: 4영업일 top 30 N=20 P=80.0% 평균+2.96% / top 50 N=30 P=70.0% 평균+2.04%. 다양성 vs 신호 강도 trade-off. 결과 데이터: `data/backtest/` (CSV 4 + summary.md). docs/jongbae-strategy.md v2 결과 표 "무효화" → "정확성 재확인" 으로 정정 + 30 vs 50 비교 + KIS 운영 universe 와의 관계 명시.
-- [ ] **R4 v2 universe 의사결정: 30 vs 50** — 현재 코드 50 채택 (운영 ∩ backtest 일치 + 후보 다양성). 단 backtest 상 30 이 평균 +2.96% / P 80% 로 강한 시그널. 다음 영업일부터 누적 운영 데이터 5일~ 후 실제 운영 환경 alpha 비교 후 결정 (운영 5/20~ 누적 5일 backtest 결과 보고 30 으로 축소할지 또는 다른 컷 추가할지).
+- [x] **Eod.Pick v2 backtest 재실행 (round 41 후속 3, 2026-05-19)** — `scripts/backtest_r4v2.py` 신규. daily_ohlcv 기반 거래대금 universe top 30 vs 50 비교. **round 41 본문 backtest 가 처음부터 정확했음 확인** (최대 LG전자 +17.97% / 최악 엑스게이트 -4.88% 둘 다 일치). 결과: 4영업일 top 30 N=20 P=80.0% 평균+2.96% / top 50 N=30 P=70.0% 평균+2.04%. 다양성 vs 신호 강도 trade-off. 결과 데이터: `data/backtest/` (CSV 4 + summary.md). docs/scalping-strategy.md v2 결과 표 "무효화" → "정확성 재확인" 으로 정정 + 30 vs 50 비교 + KIS 운영 universe 와의 관계 명시.
+- [ ] **Eod.Pick v2 universe 의사결정: 30 vs 50** — 현재 코드 50 채택 (운영 ∩ backtest 일치 + 후보 다양성). 단 backtest 상 30 이 평균 +2.96% / P 80% 로 강한 시그널. 다음 영업일부터 누적 운영 데이터 5일~ 후 실제 운영 환경 alpha 비교 후 결정 (운영 5/20~ 누적 5일 backtest 결과 보고 30 으로 축소할지 또는 다른 컷 추가할지).
 - [x] **KIS volume-rank 30 → 50 확장 (round 41 후속 2 후속, 2026-05-19)** — 진단: ctx 페이지네이션 X (`ctx_area_fk*` 없음 + `tr_cont=None`), `FID_COND_MRKT_DIV_CODE` 시장 분리 X (J 외 INVALID), **가격 범위 분할 O** (`FID_INPUT_PRICE_1/_2` 작동 확인). 구현: `_PRICE_BUCKETS = [(0,10k), (10001,100k), (100001,~)]` 3회 호출 → 합집합 (중복 시 trading_value 큰 쪽 채택) → trading_value desc top_n 컷 → rank 글로벌 재부여. `top_n ≤ 30` 은 기존 단일 호출 모드 유지. 회귀 테스트 5건 (가격 버킷 / 단일 호출 / 중복 제거 / 부분 실패 / master 필터). 906 pass. 진단 결과: 1위 삼성전자(8.4조) ~ 50위 대우건설(2,195억) cover. KIS 호출 1→3회, dual key rate limit (~40 req/s) 한도 안.
 - [ ] **무결성 체크: snapshot 정렬축 일치 검증 자동화** — `data/intraday/snapshots/.../HH_MM.parquet` 의 rank 가 정말 trading_value desc 와 일치하는지 매일 적재 직후 검증. 회귀 발생 시 텔레그램 에러 알림. `src/data/integrity_check.py` 에 케이스 추가.
 - [x] KIS API 토큰 만료 (24시간) 자동 갱신 — `src/kis/auth.py` 만료 5분전 갱신
@@ -370,7 +370,7 @@
 - [ ] **`100030` 등 1XXXXX 주권형 펀드/리츠** — KIS 그룹코드 'S' 에 포함되어 보통주 필터로 안 걸러짐. 종목명 패턴 또는 part2 필드 분기 필요
 - [ ] **WICS / 네이버 테마 크롤러** — M2 진입 직전 작업
 - [x] **무결성 체크 알림 채널** — `python -m src.data.integrity_check --send` 옵션 추가. FAIL/WARN 항목 텔레그램 에러 알림으로 발송 (Dispatcher.telegram_error). cron 통합 가능. (2026-05-10)
-- [ ] **R5 Layer 4 (고점 도달 시각 매칭)** — 분봉 히스토리 부재로 v0 미구현. 매일 분봉 적재 후 v1에서 구현
+- [ ] **Eod.GapStats Layer 4 (고점 도달 시각 매칭)** — 분봉 히스토리 부재로 v0 미구현. 매일 분봉 적재 후 v1에서 구현
 - [x] **종배 시그널 통합 파이프라인** — `src/pipeline.py` `run_pipeline()`. demo 모드 (--demo), 저장 (--save), 발송 (--send). `src/demo_fixtures.py` 제룡전기 2025-05-04 mock. `tests/test_pipeline.py` 13개 E2E 테스트. (2026-05-06)
 - [x] **09:00~10:00 장 초반 고주파 모니터링** — `src/scheduler.py` `_early_morning_check`. 1시간 동안 60초 간격. 주도섹터(테마) 변화 + 주도주 변화 감지. (2026-05-06)
   - 고주파용 주도주 정의 (사용자 명시, pre-limit-up): 주도섹터 내 **거래대금 상위** OR **상승률 상위** 종목. 한 테마에 여러 주도주, 한 종목이 여러 테마에 걸칠 수 있음 (1:1 매핑 X). 구현은 `identify_early_morning_leaders()`.
@@ -382,16 +382,16 @@
 - [x] ~~WICS 섹터 매핑 크롤러~~ — 완료 (M0 체크리스트 참조). 중분류(WI 28개)는 v1로 미룸.
 - [ ] **수정주가 일관성** — daily fetcher `adjusted=True` 일관 사용 검증
 - [ ] **종목 코드 변경(액면분할/합병) 처리** — historical 통계 단절 회피
-- [x] **고주파 monitoring tick 실효 갱신 주기 측정·최적화 (round 40, 2026-05-18)** — 2026-05-18 운영 로그 측정: 3,807 tick **100% 가 2초 interval 초과** (정규장 평균 12.9초, 최대 19.9초, funnel 단계 평균 7.3초). 보틀넥 = funnel 의 4×N KIS 호출 직렬. fix: ①`src/dashboard/parallel_fetch.py` 신설 — `fetch_stock_bundle` (한 종목 4 API 직렬 + 예외 격리) + `fetch_bundles_parallel` (종목 N개 ThreadPoolExecutor fan-out, max_workers=12). ②`dashboard_tick` 에서 funnel 후보 ∪ monitored ∪ holdings 합집합을 batch fetch 1회로 처리, tick_cache prefill. funnel(`_evaluate_rising_funnel`)은 fetch 제거 → R14 score 계산만 (CPU only). ③KIS rate limit 은 듀얼 키 합산 ~40 req/s, `src/kis/rate_limit.py:36` lock 으로 동시 호출 자연 throttle. httpx.Client 도 thread-safe. ④계측 라벨 재설계: `[tick] total=X snap=Y fetch=Z (Nfetched종목) score=A monitored=B log=C`. fetch 시간 분리 측정 가능. ⑤캐시 정책: 단타 시그널 (체결강도/거래대금/봉형태) 의 fresh 정책 유지 — tick 안 1회용 buffer 만, tick 간 cache X. tests: `test_parallel_fetch.py` 7건 신규 (예외 격리 / 응답 매핑 / 호출 횟수 4×N 동일) + `test_dashboard_worker.py` 회귀 (`_evaluate_rising_funnel` 시그니처 client 제거, `_patch_bundles` 헬퍼 도입). 859 pass. **운영 검증 필요**: 데몬 재기동 후 정규장 1시간 `[tick]` 로그로 total 평균 ≤ 2,000ms 확인.
+- [x] **고주파 monitoring tick 실효 갱신 주기 측정·최적화 (round 40, 2026-05-18)** — 2026-05-18 운영 로그 측정: 3,807 tick **100% 가 2초 interval 초과** (정규장 평균 12.9초, 최대 19.9초, funnel 단계 평균 7.3초). 보틀넥 = funnel 의 4×N KIS 호출 직렬. fix: ①`src/dashboard/parallel_fetch.py` 신설 — `fetch_stock_bundle` (한 종목 4 API 직렬 + 예외 격리) + `fetch_bundles_parallel` (종목 N개 ThreadPoolExecutor fan-out, max_workers=12). ②`dashboard_tick` 에서 funnel 후보 ∪ monitored ∪ holdings 합집합을 batch fetch 1회로 처리, tick_cache prefill. funnel(`_evaluate_rising_funnel`)은 fetch 제거 → Buy.Score score 계산만 (CPU only). ③KIS rate limit 은 듀얼 키 합산 ~40 req/s, `src/kis/rate_limit.py:36` lock 으로 동시 호출 자연 throttle. httpx.Client 도 thread-safe. ④계측 라벨 재설계: `[tick] total=X snap=Y fetch=Z (Nfetched종목) score=A monitored=B log=C`. fetch 시간 분리 측정 가능. ⑤캐시 정책: 단타 시그널 (체결강도/거래대금/봉형태) 의 fresh 정책 유지 — tick 안 1회용 buffer 만, tick 간 cache X. tests: `test_parallel_fetch.py` 7건 신규 (예외 격리 / 응답 매핑 / 호출 횟수 4×N 동일) + `test_dashboard_worker.py` 회귀 (`_evaluate_rising_funnel` 시그니처 client 제거, `_patch_bundles` 헬퍼 도입). 859 pass. **운영 검증 필요**: 데몬 재기동 후 정규장 1시간 `[tick]` 로그로 total 평균 ≤ 2,000ms 확인.
 
 - [ ] **monitoring_interval_seconds 일관성** — `config_thresholds.monitoring_interval_seconds(n_codes)` (2→2s, 5→3s, 10→5s) 가 정의돼 있지만 scheduler 가 미사용. round 40 의 fetch 병렬화 후에도 종목 수에 따른 interval 동적 조정 필요한지 운영 측정 후 결정.
 
-- [x] **결정 레포트 수동 재실행 CLI (2026-05-19, fresh + from-saved)** — 사용자 보고: "오늘 기준 자료로 고친 건 못 받아?" + 후속 "스냅샷 로드 말고 지금 기준으로 새로 떠서 만드는 건 안 돼?". 14:50 cron 이 이미 돌고 fix 가 들어가도 다음 영업일 14:50 까지 대기 → fix 검증 사이클 너무 김. 추가: `src/rerun_decision.py` 신규 CLI — 두 모드: ①**fresh (기본)** — 호출 시점에 `fetch_volume_rank` 새로 호출, snap_dt=now. 정상 14:50 cron 과 동일 파이프라인이지만 호출 시각의 시장 상태로 동작. 장중 임의 시점 "지금 후보 뭐지?" 또는 fix 직후 즉시 재계산. ②`--from-saved` — 저장된 스냅샷 parquet 로드. 14:50 정시 스냅샷 그대로 후보 룰 변경 효과 검증. 공통: `scheduler._send_decision_report` 직접 호출 → R4 v2 (e) 컷, fetch_quote OHLCV 보강, market_stats fallback, 14:50 시그널 fetch — 모든 fix 자동 적용. `_dashboard_master_df` 는 모듈 attribute 로 접근해 `_load_dashboard_data` 후 업데이트 반영. preview 만 원하면 `DRY_RUN=1`. `./go decision-rerun [--from-saved]` 통합. ⚠ 주의: fresh 모드는 호출 시각의 거래대금 순위 + OHLCV. from-saved 모드도 fetch_quote 보강 / market_stats / 시그널 은 호출 시점 KIS 응답이라 14:50 당시 값과 미세 차이. 정시 cron 의 14:50_decision.md 저장본 덮어씀 (rerun 이 send_decision 호출하면 save_decision_report 도 호출되므로).
-- [x] **레포트 시장 국면 KOSPI change_rate / morning prev_close 미동기화 (2026-05-19)** — 사용자 보고 결정 레포트 `KOSPI 7312.47 (—)` 등락률 비어있음. 원인: KIS `inquire-index-price` 가 일부 응답에서 `prdy_ctrt` (등락률) 를 비워 줌 — fetch_volume_rank OHLCV 누락과 같은 패턴. 동시에 발견: 모닝 레포트 `build_morning_report` 가 `kospi_prev_close` 를 읽는데 `compute_market_stats` 는 `kospi_change_rate` 만 채움 → 모닝 시장 국면 항상 "N/A" 표시. fix: ①`src/data/index.py` `_compute_change_rate_fallback(quote)` 신규 — `change_rate` 가 NaN 이면 `current` / `prev_close` 로 직접 계산. `compute_market_stats` 가 KOSPI/KOSDAQ 양쪽에 적용. ②`src/report/morning.py` 가 `kospi_change_rate` 우선 사용 + `kospi_prev_close` fallback 유지 (구 인터페이스 호환). 둘 다 비어도 KOSPI 현재가만 있으면 `7312.47 (—)` 표시 (전체 N/A 회귀 방지). ③`src/report/decision.py` priority 라벨 `🟢 +20%↑` → `🟢 +10~27%` R4 v2 와 동기화. tests: `_compute_change_rate_fallback` 3건 (KIS 정상 / NaN→계산 fallback / 둘 다 없음 NaN) + morning report change_rate 사용 1건 = 4건 신규. 884 pass.
-- [x] **결정 레포트 거래량 노출 + Layer 설명 명시 (2026-05-19 round 41 후속)** — 사용자 보고 "거래대금 외에 거래량도 금액과 순위", "Layer 4 는 뭐고 왜 미구현이라고만 나와", "나머지 Layer 도 간략 설명". fix: ①`src/data/intraday.py` SNAPSHOT_COLUMNS 에 `volume_rank` 추가, fetch_volume_rank 가 universe 내 volume desc 순위 부여 (turnover_rank 와 같은 패턴). KIS volume-rank API 는 거래대금 절대 순위만 제공 — 거래량 절대 순위 별도 호출 필요해서 snapshot 내 상대 순위로 대체. ②`src/jongbae/candidates.py` CANDIDATE_COLUMNS 가 volume/trading_value/intraday_low/market_cap/turnover/volume_rank/turnover_rank 를 drop 하던 회귀 fix — production 은 fetch_quote 보강으로 회복했지만 demo 모드는 client 없어서 0 으로 표시됐던 케이스. ③`src/report/formatting.py` `fmt_volume` (5_000_000 → "500.0만주" / 9_999 → "9,999주") + `fmt_rank` (1 → "1위" / NaN → "—") 신규. ④`src/report/decision.py` _candidate_block — `거래대금: X억 (거래대금 N위)` / `거래량: X만주 (top50 내 M위)` 두 줄로 분리. Layer 라벨에 매칭 조건 명시: `Layer 1 (ret≥20% 모든 사례)` / `Layer 2 (상한가 ret≥29.5%)` / `Layer 3 (L2 + 종가위치 ±2% 일치)` / `Layer 3 + KOSPI 200ma 위 매칭` / `Layer 3 + 거래량비율 ±0.5배 매칭`. Layer 4 는 단순 "v1 미구현" 한 줄 → 2줄 명시: `(L3 + 고점도달 시각 매칭): ⚠ v1 — 오늘 고점 시각과 유사 사례 / 분봉 히스토리 적재 누적 후 구현 (현재 v0 미구현)`. ⑤`demo_fixtures.make_snapshot` 도 turnover_rank / volume_rank 부여. tests: fmt_volume/fmt_rank 4건 + 거래량 라인 1건 + Layer 라벨 설명 1건 + Layer 4 설명 1건 = 7건 신규. 896 pass.
-- [ ] **R4 v2 후보 누락 / KIS rank vs HTS 순위 mismatch 조사 (round 41 후속 2, 2026-05-19)** — 사용자 보고: (d)(f) soft 정정 후에도 후보가 주도섹터 종목만 나오고 그 종목들이 top 50 거래대금에 안 들어오며, 50위 안 ret=20 엑스게이트는 후보 선정 X. **본 round 처치**: ①MIN_DAILY_RETURN 10 → 5 (사용자 명시 요청 "ret 하한을 10에서 5로 낮춰줘") — 후보 풀 확보. ②`src/scheduler._send_decision_report` 진단 로깅 신규 — snapshot KIS rank 범위 + top 10 (rank/code/ret/거래대금) + 제외 종목 사유. 사용자가 `./go logs` 로 실측 확인 가능. **TODO 확인 필요**: (A) KIS `data_rank` vs HTS 순위 정의 차이 (KIS 가 ETF/펀드 포함 절대 순위 vs HTS 보통주만 별도 순위) (B) master_df 누락 — 엑스게이트 같은 신생/특수 종목 (C) KIS volume-rank API 가 한 호출에 30개만 반환하는 한계 (`top_n=50` 효과 없음) 가능성 — 페이지네이션 또는 다른 endpoint 필요. 사용자 진단 로그 결과 확인 후 별도 round.
+- [x] **결정 레포트 수동 재실행 CLI (2026-05-19, fresh + from-saved)** — 사용자 보고: "오늘 기준 자료로 고친 건 못 받아?" + 후속 "스냅샷 로드 말고 지금 기준으로 새로 떠서 만드는 건 안 돼?". 14:50 cron 이 이미 돌고 fix 가 들어가도 다음 영업일 14:50 까지 대기 → fix 검증 사이클 너무 김. 추가: `src/rerun_decision.py` 신규 CLI — 두 모드: ①**fresh (기본)** — 호출 시점에 `fetch_volume_rank` 새로 호출, snap_dt=now. 정상 14:50 cron 과 동일 파이프라인이지만 호출 시각의 시장 상태로 동작. 장중 임의 시점 "지금 후보 뭐지?" 또는 fix 직후 즉시 재계산. ②`--from-saved` — 저장된 스냅샷 parquet 로드. 14:50 정시 스냅샷 그대로 후보 룰 변경 효과 검증. 공통: `scheduler._send_decision_report` 직접 호출 → Eod.Pick v2 (e) 컷, fetch_quote OHLCV 보강, market_stats fallback, 14:50 시그널 fetch — 모든 fix 자동 적용. `_dashboard_master_df` 는 모듈 attribute 로 접근해 `_load_dashboard_data` 후 업데이트 반영. preview 만 원하면 `DRY_RUN=1`. `./go decision-rerun [--from-saved]` 통합. ⚠ 주의: fresh 모드는 호출 시각의 거래대금 순위 + OHLCV. from-saved 모드도 fetch_quote 보강 / market_stats / 시그널 은 호출 시점 KIS 응답이라 14:50 당시 값과 미세 차이. 정시 cron 의 14:50_decision.md 저장본 덮어씀 (rerun 이 send_decision 호출하면 save_decision_report 도 호출되므로).
+- [x] **레포트 시장 국면 KOSPI change_rate / morning prev_close 미동기화 (2026-05-19)** — 사용자 보고 결정 레포트 `KOSPI 7312.47 (—)` 등락률 비어있음. 원인: KIS `inquire-index-price` 가 일부 응답에서 `prdy_ctrt` (등락률) 를 비워 줌 — fetch_volume_rank OHLCV 누락과 같은 패턴. 동시에 발견: 모닝 레포트 `build_morning_report` 가 `kospi_prev_close` 를 읽는데 `compute_market_stats` 는 `kospi_change_rate` 만 채움 → 모닝 시장 국면 항상 "N/A" 표시. fix: ①`src/data/index.py` `_compute_change_rate_fallback(quote)` 신규 — `change_rate` 가 NaN 이면 `current` / `prev_close` 로 직접 계산. `compute_market_stats` 가 KOSPI/KOSDAQ 양쪽에 적용. ②`src/report/morning.py` 가 `kospi_change_rate` 우선 사용 + `kospi_prev_close` fallback 유지 (구 인터페이스 호환). 둘 다 비어도 KOSPI 현재가만 있으면 `7312.47 (—)` 표시 (전체 N/A 회귀 방지). ③`src/report/decision.py` priority 라벨 `🟢 +20%↑` → `🟢 +10~27%` Eod.Pick v2 와 동기화. tests: `_compute_change_rate_fallback` 3건 (KIS 정상 / NaN→계산 fallback / 둘 다 없음 NaN) + morning report change_rate 사용 1건 = 4건 신규. 884 pass.
+- [x] **결정 레포트 거래량 노출 + Layer 설명 명시 (2026-05-19 round 41 후속)** — 사용자 보고 "거래대금 외에 거래량도 금액과 순위", "Layer 4 는 뭐고 왜 미구현이라고만 나와", "나머지 Layer 도 간략 설명". fix: ①`src/data/intraday.py` SNAPSHOT_COLUMNS 에 `volume_rank` 추가, fetch_volume_rank 가 universe 내 volume desc 순위 부여 (turnover_rank 와 같은 패턴). KIS volume-rank API 는 거래대금 절대 순위만 제공 — 거래량 절대 순위 별도 호출 필요해서 snapshot 내 상대 순위로 대체. ②`src/overnight/candidates.py` CANDIDATE_COLUMNS 가 volume/trading_value/intraday_low/market_cap/turnover/volume_rank/turnover_rank 를 drop 하던 회귀 fix — production 은 fetch_quote 보강으로 회복했지만 demo 모드는 client 없어서 0 으로 표시됐던 케이스. ③`src/report/formatting.py` `fmt_volume` (5_000_000 → "500.0만주" / 9_999 → "9,999주") + `fmt_rank` (1 → "1위" / NaN → "—") 신규. ④`src/report/decision.py` _candidate_block — `거래대금: X억 (거래대금 N위)` / `거래량: X만주 (top50 내 M위)` 두 줄로 분리. Layer 라벨에 매칭 조건 명시: `Layer 1 (ret≥20% 모든 사례)` / `Layer 2 (상한가 ret≥29.5%)` / `Layer 3 (L2 + 종가위치 ±2% 일치)` / `Layer 3 + KOSPI 200ma 위 매칭` / `Layer 3 + 거래량비율 ±0.5배 매칭`. Layer 4 는 단순 "v1 미구현" 한 줄 → 2줄 명시: `(L3 + 고점도달 시각 매칭): ⚠ v1 — 오늘 고점 시각과 유사 사례 / 분봉 히스토리 적재 누적 후 구현 (현재 v0 미구현)`. ⑤`demo_fixtures.make_snapshot` 도 turnover_rank / volume_rank 부여. tests: fmt_volume/fmt_rank 4건 + 거래량 라인 1건 + Layer 라벨 설명 1건 + Layer 4 설명 1건 = 7건 신규. 896 pass.
+- [ ] **Eod.Pick v2 후보 누락 / KIS rank vs HTS 순위 mismatch 조사 (round 41 후속 2, 2026-05-19)** — 사용자 보고: (d)(f) soft 정정 후에도 후보가 주도섹터 종목만 나오고 그 종목들이 top 50 거래대금에 안 들어오며, 50위 안 ret=20 엑스게이트는 후보 선정 X. **본 round 처치**: ①MIN_DAILY_RETURN 10 → 5 (사용자 명시 요청 "ret 하한을 10에서 5로 낮춰줘") — 후보 풀 확보. ②`src/scheduler._send_decision_report` 진단 로깅 신규 — snapshot KIS rank 범위 + top 10 (rank/code/ret/거래대금) + 제외 종목 사유. 사용자가 `./go logs` 로 실측 확인 가능. **TODO 확인 필요**: (A) KIS `data_rank` vs HTS 순위 정의 차이 (KIS 가 ETF/펀드 포함 절대 순위 vs HTS 보통주만 별도 순위) (B) master_df 누락 — 엑스게이트 같은 신생/특수 종목 (C) KIS volume-rank API 가 한 호출에 30개만 반환하는 한계 (`top_n=50` 효과 없음) 가능성 — 페이지네이션 또는 다른 endpoint 필요. 사용자 진단 로그 결과 확인 후 별도 round.
 
-- [x] **R4 v2 결정 레포트 룰 코드 적용 (round 41, hard: a/b/c/e — soft: d/f, 2026-05-19)** — 사용자(Zeta) 5/19 사후 검증 후 새 룰 확정: `(a) 거래대금 50위 단일종목 + (b) 일봉 상승 + (c) 종가 고가-10% 이내 + (d) 52주 신고가 + (e) 10% ≤ ret ≤ 27% + (f) Layer 표본 ≥5`. 문서는 `docs/jongbae-strategy.md` R4 v2 + 정정 이력 round 41 에 박음. 코드 적용 진행 상황: ①**(e) 완료 (2026-05-19)** — `src/jongbae/candidates.py` `MIN_DAILY_RETURN`: 20.0 → 10.0, `MAX_DAILY_RETURN=27.0` 신규. 상한 컷이 우선 → 상한가(+30%≈) / 자리잡힘(+28~29.5%) 자동 제외. `STUCK_AT_28_RANGE` / `DEAD_PULL_THRESHOLD` 상수 삭제 (모두 컷 범위 밖). `PRIORITY_LIMIT_UP` 은 backward-compat 위해 상수만 유지, `classify_priority` 가 더는 반환 X. 사용자 보고 회귀 fix (진원생명과학 011000 +29.97%). 테스트 7건 갱신/신규 — `test_classify_excluded_limit_up_above_27` / `_normal_between_10_and_20` / `_excluded_below_10` / `_excluded_above_27_stuck_at_28` / `test_extract_candidates_excludes_user_reported_regression`. ②**(b) 일봉 상승** — (e) 의 ≥10% 컷이 strict 한 subset 이라 별도 룰 추가 불필요. classify_priority docstring 명시. ③**(a) 완료 (2026-05-19 후속)** — 사용자 보고 "주도섹터 한계 안 두기로 한 것도 문서만 반영?". `extract_candidates(snapshot_df, leading_theme_codes)` 시그너처에서 `leading_theme_codes` 를 `Optional[None]` 으로 변경 — `None` / 빈 list = R4 v2 기본 (주도섹터 우회, 전체 snapshot universe). list 가 주어지면 R4 v1 호환. `_send_decision_report` (`src/scheduler.py`) / `run_pipeline` (`src/pipeline.py`) 둘 다 `leading_theme_codes=None` 으로 호출 — 결정 후보 universe 가 거래대금 top 50 으로 확장. 주도테마는 레포트 헤더 표시용으로만 식별. `_WATCH_TOP_N` 기본 30 → 50 (R4 v2 (a) "거래대금 50위" 정확 반영). `LIMIT_UP_WATCH_TOP_N` 환경변수로 오버라이드 가능. 테스트 갱신: `test_extract_candidates_no_theme_filter_r4v2` (None/[] 동작 + 정확 1종목 accepted) + `test_extract_candidates_theme_filter_backward_compat` (list 주면 v1). 885 pass. ⚠ **운영 영향**: 폴링 watch 종목 30→50 (KIS 호출 67% 증가), 상한가 폴링 사이클 + dashboard tick 부하 상승. round 40 의 parallel_fetch 가 흡수 가능. 운영 후 `[tick]` 로그로 검증. ④**(c) hard + (d) soft 완료 (2026-05-19 후속)** — `src/jongbae/candidates.py` `apply_r4v2_post_filters(candidate_dicts, daily_ohlcv, today)` 신규. fetch_quote 보강 후 OHLCV 확정 단계에 적용. (c) `(high - close) / high ≤ 10%` (close=price), 위반 시 `priority=EXCLUDED + 사유 명시`. (d) `is_52w_high(daily_ohlcv, code, today, intraday_high)` — 직전 250거래일 종가 최대치 돌파 검사. lookback <60일 → None (통과). `_send_decision_report` / `run_pipeline` 모두 wiring — `accepted_candidates` 후 fetch_quote 보강 → post-filter 순. ⑤**(f) Layer 표본 soft 정정 (2026-05-19 후속)** — 초기엔 has_enough_samples hard cut 으로 적용했으나 사용자 정정 "(d)(f) 는 보조 지표로만 보여주고 hard cut 에서는 제외" — `_send_decision_report` / `run_pipeline` `continue` 제거. 후보 dict 의 `sample_sufficient` 키만 저장 → 카드에 ⚠ 표시. Kelly 만 None (sample factor n<5 = None) 으로 나오고 Sharpe/Equal 은 정상. ⑥**보조 지표 + 푸터 (2026-05-19 후속)** — `historical_ret10_gap_stats(daily_ohlcv, code, today, lookback=250)` `src/jongbae/historical.py` 신규. 1년 ret≥10 횟수 + 그중 갭상 횟수 + 비율 (next_open > close). 후보 dict 의 `historical_aux` 키에 저장 → `_candidate_block` 에 `📊 1년 ret≥10: N회 / 갭상 K회 (X%)` 라인 + `R4 v2: ✅ 종가 고가-10% 이내 / ✅ 52주 신고가` 통과 시그널 라인. 레포트 푸터에 "R4 v2 룰: (a)~(f)" 한 줄 명시. `demo_fixtures.make_daily_ohlcv` 후처리 — 075180/전기-전선 종목 target_date 가 52주 신고가가 되도록 과거 close cap. tests: `test_r4v2_post_filter_passes_when_close_at_high_and_52w_high` / `_excludes_close_drop_over_10pct_from_high` / `_excludes_when_not_52w_high` / `_passes_when_history_too_short` 4건 신규. 889 pass. ⑦누적 backtest — 1~3개월 v2 결과 `data/decisions/` 적재 후 갭상 확률 재측정 (별도 round).
+- [x] **Eod.Pick v2 결정 레포트 룰 코드 적용 (round 41, hard: a/b/c/e — soft: d/f, 2026-05-19)** — 사용자(Zeta) 5/19 사후 검증 후 새 룰 확정: `(a) 거래대금 50위 단일종목 + (b) 일봉 상승 + (c) 종가 고가-10% 이내 + (d) 52주 신고가 + (e) 10% ≤ ret ≤ 27% + (f) Layer 표본 ≥5`. 문서는 `docs/scalping-strategy.md` Eod.Pick v2 + 정정 이력 round 41 에 박음. 코드 적용 진행 상황: ①**(e) 완료 (2026-05-19)** — `src/overnight/candidates.py` `MIN_DAILY_RETURN`: 20.0 → 10.0, `MAX_DAILY_RETURN=27.0` 신규. 상한 컷이 우선 → 상한가(+30%≈) / 자리잡힘(+28~29.5%) 자동 제외. `STUCK_AT_28_RANGE` / `DEAD_PULL_THRESHOLD` 상수 삭제 (모두 컷 범위 밖). `PRIORITY_LIMIT_UP` 은 backward-compat 위해 상수만 유지, `classify_priority` 가 더는 반환 X. 사용자 보고 회귀 fix (진원생명과학 011000 +29.97%). 테스트 7건 갱신/신규 — `test_classify_excluded_limit_up_above_27` / `_normal_between_10_and_20` / `_excluded_below_10` / `_excluded_above_27_stuck_at_28` / `test_extract_candidates_excludes_user_reported_regression`. ②**(b) 일봉 상승** — (e) 의 ≥10% 컷이 strict 한 subset 이라 별도 룰 추가 불필요. classify_priority docstring 명시. ③**(a) 완료 (2026-05-19 후속)** — 사용자 보고 "주도섹터 한계 안 두기로 한 것도 문서만 반영?". `extract_candidates(snapshot_df, leading_theme_codes)` 시그너처에서 `leading_theme_codes` 를 `Optional[None]` 으로 변경 — `None` / 빈 list = Eod.Pick v2 기본 (주도섹터 우회, 전체 snapshot universe). list 가 주어지면 Eod.Pick v1 호환. `_send_decision_report` (`src/scheduler.py`) / `run_pipeline` (`src/pipeline.py`) 둘 다 `leading_theme_codes=None` 으로 호출 — 결정 후보 universe 가 거래대금 top 50 으로 확장. 주도테마는 레포트 헤더 표시용으로만 식별. `_WATCH_TOP_N` 기본 30 → 50 (Eod.Pick v2 (a) "거래대금 50위" 정확 반영). `LIMIT_UP_WATCH_TOP_N` 환경변수로 오버라이드 가능. 테스트 갱신: `test_extract_candidates_no_theme_filter_r4v2` (None/[] 동작 + 정확 1종목 accepted) + `test_extract_candidates_theme_filter_backward_compat` (list 주면 v1). 885 pass. ⚠ **운영 영향**: 폴링 watch 종목 30→50 (KIS 호출 67% 증가), 상한가 폴링 사이클 + dashboard tick 부하 상승. round 40 의 parallel_fetch 가 흡수 가능. 운영 후 `[tick]` 로그로 검증. ④**(c) hard + (d) soft 완료 (2026-05-19 후속)** — `src/overnight/candidates.py` `apply_r4v2_post_filters(candidate_dicts, daily_ohlcv, today)` 신규. fetch_quote 보강 후 OHLCV 확정 단계에 적용. (c) `(high - close) / high ≤ 10%` (close=price), 위반 시 `priority=EXCLUDED + 사유 명시`. (d) `is_52w_high(daily_ohlcv, code, today, intraday_high)` — 직전 250거래일 종가 최대치 돌파 검사. lookback <60일 → None (통과). `_send_decision_report` / `run_pipeline` 모두 wiring — `accepted_candidates` 후 fetch_quote 보강 → post-filter 순. ⑤**(f) Layer 표본 soft 정정 (2026-05-19 후속)** — 초기엔 has_enough_samples hard cut 으로 적용했으나 사용자 정정 "(d)(f) 는 보조 지표로만 보여주고 hard cut 에서는 제외" — `_send_decision_report` / `run_pipeline` `continue` 제거. 후보 dict 의 `sample_sufficient` 키만 저장 → 카드에 ⚠ 표시. Kelly 만 None (sample factor n<5 = None) 으로 나오고 Sharpe/Equal 은 정상. ⑥**보조 지표 + 푸터 (2026-05-19 후속)** — `historical_ret10_gap_stats(daily_ohlcv, code, today, lookback=250)` `src/overnight/gap_stats.py` 신규. 1년 ret≥10 횟수 + 그중 갭상 횟수 + 비율 (next_open > close). 후보 dict 의 `historical_aux` 키에 저장 → `_candidate_block` 에 `📊 1년 ret≥10: N회 / 갭상 K회 (X%)` 라인 + `Eod.Pick v2: ✅ 종가 고가-10% 이내 / ✅ 52주 신고가` 통과 시그널 라인. 레포트 푸터에 "Eod.Pick v2 룰: (a)~(f)" 한 줄 명시. `demo_fixtures.make_daily_ohlcv` 후처리 — 075180/전기-전선 종목 target_date 가 52주 신고가가 되도록 과거 close cap. tests: `test_r4v2_post_filter_passes_when_close_at_high_and_52w_high` / `_excludes_close_drop_over_10pct_from_high` / `_excludes_when_not_52w_high` / `_passes_when_history_too_short` 4건 신규. 889 pass. ⑦누적 backtest — 1~3개월 v2 결과 `data/decisions/` 적재 후 갭상 확률 재측정 (별도 round).
 
 - [x] **holdings.json 일일 자동 reset (round 40 후속, 2026-05-19)** — 사용자(Zeta) 5/18 매매일지 분석 중 발견: "005930 같은 경우 매매한 적도 없는데 매매되어있다고 표기 — 데모 때 누른 게 남아있거나 오전 reset 미동작". 단타 정책상 매일 빈 상태로 시작이 기본. fix: ①`src/jongbae/exit_triggers.maybe_reset_holdings(now)` 신규 — idempotent. `data/state/last_reset.txt` 로 마지막 reset 일자 추적, 같은 날 두 번째 호출은 skip (장중 재기동 시 보유 안전). 휴장일/주말 skip. 기존 holdings 는 `data/state/holdings.archive/YYYY-MM-DD.json` archive 백업 후 빈 dict 저장. ②`src/scheduler.py` 양쪽 wiring — `run()` 시작 직후 + 기존 `_reset_state` (08:30 CronTrigger 평일) 양쪽에서 호출. 데몬 첫 가동 시 무조건 보장 + 24h 가동 데몬은 cron 으로 정시 발화. ③테스트 `tests/test_exit_triggers.py` 4 신규 (첫 호출 archive+clear, 같은날 두번째 skip, 휴장일 skip, holdings 비었어도 last_reset 갱신). 863 pass. **사용자 의도 명시 반영**: 장중 코드 업데이트/재기동을 자주 함 — 그때마다 reset 되면 보유 종목 손실. idempotent 설계로 회피.
 - [x] **상한가 폴링 HTTP 5xx 격리 + 전 fetcher 일괄 적용 (2026-05-19)** — 사용자 보고: `Server error '500 Internal Server Error' for url '.../inquire-price?FID_INPUT_ISCD=229200'` 가 텔레그램 "⚠️ [에러] 시스템 장애 감지 / 컨텍스트: 상한가 폴링" 으로 발사됨. 원인: `src/data/intraday.py` `fetch_quote()` / `fetch_volume_rank()` 가 `KISApiError` (rt_cd != "0") 만 잡고 `httpx.HTTPStatusError` 는 미처리. KIS 서버 5xx 발생 → tenacity 3회 재시도 후 reraise → `fetch_quote` 통과 → `fetch_quotes_bulk` 통과 → `detect_new_limit_up` 통과 → `_poll_limit_up` 의 `@_business_day_only` 가 `except Exception` 으로 잡아 텔레그램 에러 알림 발사. **단일 종목 500 이 폴링 사이클 전체를 죽이고 푸시 폭주**. fix 1차: `src/data/intraday.py` 양 함수 `except httpx.HTTPError` 추가 (HTTPStatusError + TransportError + TimeoutException 의 부모) — 종목 단위 격리, `logger.warning` + None / 빈 DF 반환. fix 2차 (일괄 적용): 동일 패턴이 있는 모든 fetcher 에 같은 격리 추가 — `src/data/intraday_realtime.py` 의 `fetch_minute_bars` / `fetch_ccnl_strength` / `fetch_asking_price` / `fetch_investor_flow` (모니터링 tick), `src/data/index.py` 의 `fetch_index_quote` / `fetch_index_daily` / `fetch_index_daily_range` (모닝·결정·사후 레포트), `src/data/daily.py` 의 `_fetch_chunk` 호출부 (일봉 청크 — 종목 단위 break). `src/data/incremental_daily.py` / `init_daily.py` 는 이미 `except Exception` 후위가 있어 이중 보호되므로 제외. fix 3차 (safety net + 비주식 코드 필터): 사용자 후속 보고 — 12:17~13:00 사이 13건 5xx 가 사후 레포트 [알려진 이슈] 에 누적 (`086960`, `0167A0`, `0148J0`, `233740` 등 — letter 가 섞인 신주인수권/derivative + ETF 혼재). 두 가지 추가 처치: ①`src/scheduler.py` `_business_day_only` 데코레이터에 `except httpx.HTTPError` 먼저 → `logger.warning` 만 남기고 `record_error` / `telegram_error` 둘 다 skip. 미래 fetcher 회귀로 httpx 가 새도 데코레이터 레벨에서 노이즈 차단. KISApiError / KeyError 등 진짜 시스템 오류는 기존대로 fail-loud. ②`_collect_snapshot` 의 `fetch_volume_rank` 호출에 `master_df=_dashboard_master_df` 전달 → ETF/ETN/리츠/스팩/신주인수권 (letter 코드) 1차 필터. + `_watch_codes` 갱신 시 `c.isdigit() and len(c)==6` 으로 2차 방어 — letter 코드는 inquire-price 가 500 반환하니 원천 차단. tests: `test_intraday.py` 3건 + `test_intraday_realtime.py` 4건 + `test_index.py` 2건 + `test_daily.py` 1건 + `test_scheduler.py` 3건 = 총 13건 신규 회귀. 876 pass (theme_crawler bs4/lxml 환경 7건 제외). **운영 주의**: 데몬 재시작 (`./go stop && ./go start`) 안 하면 fix 무력화 — 기존 polling thread 가 이전 코드 보유.
@@ -418,7 +418,7 @@
 - [ ] **복기 도구 (post-mortem replay) — 새 세션에서 진행** (2026-05-14 컨셉만 박아둠)
   - **목적**: 사용자가 단타 초보로서 "이 때 들어갔어야 / 빠져나왔어야 / 어떤 지표를 봤어야"를 차분히 학습. 그날 매매 끝난 후 종목 + 날짜를 입력하면 분봉 타임라인 + 변곡점 + what-if + 놓친 시그널 분석을 생성.
   - **핵심 기능 4가지**:
-    1. 타임라인 (분봉 단위 가격/VP/회전율/accel + R14 점수 + R15 트리거 상태)
+    1. 타임라인 (분봉 단위 가격/VP/회전율/accel + Buy.Score 점수 + Exit.Triggers 트리거 상태)
     2. 변곡점 자동 추출 — 가격 +5%/-3% 5분 윈도우 + 그 직전 5분 지표 변화 ("VP가 가격을 5분 선행")
     3. What-if 시나리오 — "X시점 진입했다면 / Y시점 청산했다면" 자동 계산
     4. 놓친 시그널 분석 — 매도 트리거가 발화 안 한 이유 (임계 미달 폭) / 발화했으나 카드만 떠 있었던 시점
@@ -438,9 +438,9 @@
 
 ---
 
-## R14/R15 가중치 검증 ritual (round 23~30 후 도입)
+## Buy.Score/Exit.Triggers 가중치 검증 ritual (round 23~30 후 도입)
 
-배경: R14 매수 점수 가중치는 "한국 단타 통설 조합"이긴 하나 **검증 데이터 없는 추정치**.
+배경: Buy.Score 매수 점수 가중치는 "한국 단타 통설 조합"이긴 하나 **검증 데이터 없는 추정치**.
 백테스트가 분봉 히스토리 부재로 v0에서 불가하므로, **검증 가능한 대안 3단**을 ritual로
 박아 둔다. 가중치 변경 시 매번 통과시켜야 함.
 
@@ -449,7 +449,7 @@
 - 매주 1~2개씩 known-good / known-bad 케이스를 `tests/test_grader.py` 회귀에 추가
 - 입력 출처: ①사용자 경험 (제룡전기 STRONG / 흥아해운 AVOID 같은) ②14:50 결정 레포트에서 STRONG 받았다가 다음날 갭하락한 케이스 ③돌이켜 보니 진입했어야 했는데 점수 낮았던 케이스
 - 6개월 누적 목표 30~50개. 가중치 변경 시 **회귀 통과율 90% 이상** 가드레일
-- 신규 케이스 발견 시 즉시 docs/jongbae-strategy.md "검증 가능한 사용자 발화" 섹션에도 기록
+- 신규 케이스 발견 시 즉시 docs/scalping-strategy.md "검증 가능한 사용자 발화" 섹션에도 기록
 
 ### ritual 2: paper-trade 일일 검증 (round 32 자동화 완료)
 
@@ -460,7 +460,7 @@
   - **점수 ↔ 갭상 확률 상관계수** (Spearman ρ ≥ 0.3 가드레일)
   - **STRONG 등급의 평균 시초가 수익률** > 0%
   - **AVOID 권고된 종목 표본 추출 검증** (false positive 비율)
-- 구현 완료: `src/jongbae/paper_trade.py` (`PaperTradeRecord`, `record_decision`, `record_open_result`, `load_records`, `compute_summary`).
+- 구현 완료: `src/scalping/paper_trade.py` (`PaperTradeRecord`, `record_decision`, `record_open_result`, `load_records`, `compute_summary`).
   남은 wiring: 14:50 결정 레포트 + 09:30 모닝 레포트에서 호출 한 줄 (다음 라운드).
 
 ### ritual 3: 통설 제약 가드레일 (round 32 자동화 완료)
@@ -470,12 +470,12 @@
 ```
 sum(통설 가중치) ≥ sum(비통설 가중치) × 2
 
-통설(R3/R10/R11/R12/R14a/R14b/R14c/R14d): 회전율/VP/가속/봉/VWAP/이평/상한가시간/거래량비율
-비통설(R13 다이버전스): ±1 강등됨
+통설(Theme/Buy.VP/Buy.Accel/Buy.Candle/Buy.Score.a/Buy.Score.b/Buy.Score.c/Buy.Score.d): 회전율/VP/가속/봉/VWAP/이평/상한가시간/거래량비율
+비통설(Buy.Div 다이버전스): ±1 강등됨
 ```
 
 - 구현: `tests/test_grader.py::test_invariant_consensus_weights_dominate_positive/negative` + `_divergence_weight_capped_at_one`. 3 케이스.
-- 통설 양/음수 합산이 비통설의 2배 이상. R13 가중치를 통설 합산의 50% 이상으로 키우면 테스트 깨짐 → 의식적 결정 강제.
+- 통설 양/음수 합산이 비통설의 2배 이상. Buy.Div 가중치를 통설 합산의 50% 이상으로 키우면 테스트 깨짐 → 의식적 결정 강제.
 
 ### gate criteria — "가중치 추정치 → 운영 가중치" 전환 기준
 
@@ -485,7 +485,7 @@ sum(통설 가중치) ≥ sum(비통설 가중치) × 2
 - [ ] paper-trade 누적 ≥ 60 샘플, Spearman ρ ≥ 0.3 (ritual 2)
 - [ ] 통설 가드레일 invariant 통과 (ritual 3) — round 31 자동화 TODO
 
-미통과 시 폴백: 단순 룰 `VP < 100 AND vol_accel_1m < 0.5 → AVOID` 로 회귀 (`docs/jongbae-strategy.md` R14 본문 명시).
+미통과 시 폴백: 단순 룰 `VP < 100 AND vol_accel_1m < 0.5 → AVOID` 로 회귀 (`docs/scalping-strategy.md` Buy.Score 본문 명시).
 
 ---
 

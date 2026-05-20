@@ -11,12 +11,12 @@
 | 네이버 금융 테마 | 네이버 금융 크롤링 | 월 1회 (7일 신선도 체크) | 무료 |
 | 장중 거래대금 순위 | KIS API `FHPST01710000` | 정기 4회 + M6 `/on` 상태일 때 1~2초 | KIS 계좌 필요 |
 | 장중 종목 시세 | KIS API `FHKST01010100` | 정기 4회 + 상한가 폴링 + M6 `/on` 상태 1~2초 | KIS 계좌 필요 |
-| **분봉 시계열 OHLC** (M6, R12 봉 패턴 / R11 가속) | KIS API `FHKST03010200` | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
-| **체결강도 VP** (M6, R10) | KIS API `inquire-ccnl` `체결강도` 필드 | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
-| **호가잔량** (M6, R10 보조 강등) | KIS API `inquire-asking-price-exp-ccn` | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **분봉 시계열 OHLC** (M6, Buy.Candle 봉 패턴 / Buy.Accel 가속) | KIS API `FHKST03010200` | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **체결강도 VP** (M6, Buy.VP) | KIS API `inquire-ccnl` `체결강도` 필드 | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
+| **호가잔량** (M6, Buy.VP 보조 강등) | KIS API `inquire-asking-price-exp-ccn` | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
 | **투자자별 순매수** (M6) | KIS API `inquire-investor` | M6 `/on` 상태 모니터링 종목 1~2초 | KIS 계좌 필요 |
-| **VI 발동 시각** (M6, R12.5) | KIS endpoint 미확정 — v0 분봉 ±10% 휴리스틱, v1 정밀 | 이벤트 | KIS 계좌 필요 |
-| **매수가/보유 상태** (M6, R15) | 텔레그램 `/buy` 명령 → 메모리 + JSON 영속 | 명령 시점 | — |
+| **VI 발동 시각** (M6, Buy.Position) | KIS endpoint 미확정 — v0 분봉 ±10% 휴리스틱, v1 정밀 | 이벤트 | KIS 계좌 필요 |
+| **매수가/보유 상태** (M6, Exit.Triggers) | 텔레그램 `/buy` 명령 → 메모리 + JSON 영속 | 명령 시점 | — |
 | 시간외 단일가 | KIS API | 16:00~18:00 폴링 | KIS 계좌 필요 |
 | KRX 휴장일 | weekday 기반 (v0) → 정밀 (v1 TODO) | 연 1회 | 무료 |
 
@@ -41,7 +41,7 @@ KIS volume-rank (`FHPST01710000`) 는 `FID_BLNG_CLS_CODE` 파라미터로 정렬
 
 코드 진입점: `src/data/intraday._VOLUME_RANK_BLNG_CLS_TRADING_VALUE = "3"` 상수 박혀 있음. 회귀 테스트 `tests/test_intraday.test_fetch_volume_rank_sends_trading_value_sort_axis` 가 누가 임의로 `"0"` 으로 바꾸면 즉시 실패하도록 검증.
 
-**사고 이력 (2026-05-19 round 41 후속 2):** `"0"` 으로 잘못 박혀 있어 5/12~5/18 5일 연속 종배 후보 0종목. universe 1~5위가 KODEX 인버스류로 도배되고 삼성전자가 15위까지 밀림. round 41 의 R4 v2 backtest 결과 5일 17종목도 모두 거래량 universe 기준이라 무효화 → 거래대금 universe 로 재실행 필요 (plan.md 기술 부채).
+**사고 이력 (2026-05-19 round 41 후속 2):** `"0"` 으로 잘못 박혀 있어 5/12~5/18 5일 연속 종배 후보 0종목. universe 1~5위가 KODEX 인버스류로 도배되고 삼성전자가 15위까지 밀림. round 41 의 Eod.Pick v2 backtest 결과 5일 17종목도 모두 거래량 universe 기준이라 무효화 → 거래대금 universe 로 재실행 필요 (plan.md 기술 부채).
 
 ### KIS volume-rank 30개 상한 — 가격 분할로 우회 (round 41 후속 2 후속)
 
@@ -173,7 +173,7 @@ CREATE TABLE stock_themes (
                  - 호가잔량 (inquire-asking-price-exp-ccn)
                  - 투자자별 순매수 (inquire-investor)
                수집 → editMessageText로 텔레그램 메시지 갱신.
-               전체 거래대금 30위 (R3 v1: 50위) 갱신은 30~60초 주기.
+               전체 거래대금 30위 (Theme v1: 50위) 갱신은 30~60초 주기.
                봇 명령 polling thread 는 데몬 시작 시 1회 띄워 24h 상시.
                휴장일/주말 /on 도 허용되나 KIS 시세는 변동 없음 → 카드 정적.
 
@@ -332,7 +332,7 @@ https://www.wiseindex.com/Index/IndexList?ftype=WICS
 
 ## 장중 메모리 시계열 (M6 매수 점수/매도 트리거용)
 
-R10~R15 지표 계산에 필요한 장중 시계열은 **메모리 deque + JSON 스냅샷**으로 운영. 영구 적재(parquet)는 v1.
+Buy.VP~Exit.Triggers 지표 계산에 필요한 장중 시계열은 **메모리 deque + JSON 스냅샷**으로 운영. 영구 적재(parquet)는 v1.
 
 ### 메모리 캐시 (worker process)
 
@@ -368,11 +368,11 @@ data/state/holdings.json
 - `/buy` / `/sell` 시 atomic write (tmp file + rename)
 - worker 재시작 시 load → 메모리 복원. 시계열은 비어 있음 → 5MA/20MA는 워밍업 후 사용
 
-### KIS API 호출수 영향 (R10~R15 추가)
+### KIS API 호출수 영향 (Buy.VP~Exit.Triggers 추가)
 
-기존 M6 표(종목당 4지표)에 변화 없음. R10 체결강도/R12 분봉 OHLC/R10 호가잔량/투자자별 순매수 모두 기존 4 fetcher 결과 재사용. 추가 호출 X.
+기존 M6 표(종목당 4지표)에 변화 없음. Buy.VP 체결강도/Buy.Candle 분봉 OHLC/Buy.VP 호가잔량/투자자별 순매수 모두 기존 4 fetcher 결과 재사용. 추가 호출 X.
 
-### 투자자별 순매수 R14 추가 가능성 (round 29, P3-1 조사)
+### 투자자별 순매수 Buy.Score 추가 가능성 (round 29, P3-1 조사)
 
 **현황**:
 - 코드 `src/data/intraday_realtime.py:fetch_investor_flow` 이미 구현 (KIS `inquire-investor`, TR `FHKST01010900`).
@@ -383,23 +383,23 @@ data/state/holdings.json
 - 사용자 정정: "외국인/기관/프로그램 수치는 KIS 응답 신뢰도 낮음 (데이터 검증 안 됨)". 모니터링 카드에서 라인 제거됨.
 - 의심 사유: ①KIS 장중 추정치는 거래원 20여 개 합산이라 외국계 창구 누락/오집계 가능 (출처: KIS API 도움말). ②일자별 KRX 공시(t+1) 와 실시간 추정값 간 괴리 보고된 사례 존재.
 
-**R14 가산 도입 위험 분석**:
+**Buy.Score 가산 도입 위험 분석**:
 - 통설(한국경제, 키움 거래원 분석): "외국인 + 기관 동반 순매수 = 강한 매수 시그널". 그러나 이는 **종가 기준 일자별** 통설이며, 장중 1~2초 추정치 적용은 검증 필요.
 - 시간대 종속성: 9:00~9:30 누적 100주는 의미 없을 수 있음 (워밍업), 14:00 누적 100만주는 결정적. 가중치 단일화 어려움.
 - 함정: 세력 창구 분산 시 외인 창구로도 매도 위장 가능 (통설 함정).
 
 **P3-1 결론**:
 - ✅ **API 가용성 자체는 확보** — fetch_investor_flow 그대로 사용 가능, 추가 호출 비용 0.
-- ⚠️ **R14 가산 도입 전 검증 작업 필수**:
+- ⚠️ **Buy.Score 가산 도입 전 검증 작업 필수**:
   - (1) 종목 3~5개 × 5거래일 동안 fetch_investor_flow 1분 단위 로그 수집
   - (2) 익일 KRX 공시 (`finance.daum.net/domestic/influential_investors`) 일자별 외인/기관 합과 fetch 값 비교
   - (3) 괴리 ±10% 이내면 R14e 분기로 채택: 외인 + 기관 동시 양수 + 누적 거래대금 ≥ 임계 → +0.5
   - (4) 괴리 ±10% 초과면 v1 연기 (분봉 히스토리 누적과 같이)
-- 🚫 **현 단계 R14 가산 도입 X** — 검증 데이터 없이 가중치 추가는 CLAUDE.md "검증 안 된 자작 가중합 X" 원칙 위반.
+- 🚫 **현 단계 Buy.Score 가산 도입 X** — 검증 데이터 없이 가중치 추가는 CLAUDE.md "검증 안 된 자작 가중합 X" 원칙 위반.
 
 **대안 가벼운 적용 (v0)**:
 - 카드 표시는 회복 X (round 22 정정 유지).
-- 단, **R14 점수에 영향 주지 않는 "참고용 메타 라인"** 으로 fetch_investor_flow 결과를 reasons 외 별도 필드 (`ScoreCard.notes` 등) 로 노출 — 사용자가 카드에서 컨텍스트 정보로만 활용. 점수에 영향 X 라 신뢰도 검증 부담 없음.
+- 단, **Buy.Score 점수에 영향 주지 않는 "참고용 메타 라인"** 으로 fetch_investor_flow 결과를 reasons 외 별도 필드 (`ScoreCard.notes` 등) 로 노출 — 사용자가 카드에서 컨텍스트 정보로만 활용. 점수에 영향 X 라 신뢰도 검증 부담 없음.
 - 이 변경은 P3-1 범위 외, 추후 사용자 동의 시 별도 라운드.
 
 ---
@@ -445,7 +445,7 @@ data/state/holdings.json
 
 ## ETF/펀드/리츠 필터링 (M5.5)
 
-R2 강화 — 단타 유니버스에서 다음을 제외:
+Universe 강화 — 단타 유니버스에서 다음을 제외:
 
 ```
 1. 코드 패턴 차단:

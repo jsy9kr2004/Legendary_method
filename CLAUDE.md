@@ -31,10 +31,10 @@
 ### 작업 시작 전
 
 - 새 파일/모듈 만들기 전에 반드시 `docs/plan.md`의 현재 마일스톤과 체크리스트 확인
-- 매매 룰이 관련된 작업이면 `docs/jongbae-strategy.md`의 정량 룰(R1~R15) 재확인
+- **시스템 확인**: 작업이 단타(주도주 매매)인지 종배인지 먼저 명확화. 단타 = `docs/scalping-strategy.md` (Buy.Score, Exit.Triggers, Monitor 등) / 종배 = `docs/eod-strategy.md` (Eod.Market, Eod.Pick, Eod.GapStats 등)
 - 데이터 모듈 작업이면 `docs/data-infra.md` 재확인
-- 레포트 모듈 작업이면 `docs/report-spec.md` 재확인
-- 정정 이력(`docs/jongbae-strategy.md` 하단) 확인 — 같은 실수 반복 방지
+- 레포트 모듈 작업이면 `docs/report-spec.md` 재확인 (종배 14:50 레포트)
+- 정정 이력 확인 — 같은 실수 반복 방지. 단타 정정 이력은 `docs/scalping-strategy.md` 하단, 종배 정정 이력은 `docs/eod-strategy.md` 하단
 
 ### 작업 중
 
@@ -49,7 +49,7 @@
 
 - `docs/plan.md`의 해당 체크박스 업데이트 (`[ ]` → `[x]`)
 - 새로 발견한 기술 부채/TODO는 `docs/plan.md` 하단의 "기술 부채 / TODO 메모" 섹션에 기록
-- 매매 룰에서 정정/보강된 부분이 있으면 `docs/jongbae-strategy.md` "정정 이력" 표에 행 추가
+- 매매 룰에서 정정/보강된 부분이 있으면 해당 시스템 파일 "정정 이력" 표에 행 추가 (단타 → scalping-strategy.md / 종배 → eod-strategy.md)
 - 새 도메인 용어가 등장하면 본 파일(`CLAUDE.md`)의 "핵심 도메인 용어" 표에 추가
 
 ### 커밋 메시지 포맷
@@ -61,7 +61,7 @@
 - 변경 1
 - 변경 2
 
-Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
+Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md Eod.Pick (종배), docs/plan.md M1
 ```
 
 예시:
@@ -73,7 +73,7 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 
 - 매매 룰 함수는 반드시 unit test 작성 (`tests/` 디렉토리)
 - Historical 매칭, 사이징 같은 핵심 로직은 known input/output으로 검증
-- 검증 사례는 `docs/jongbae-strategy.md`의 "검증 가능한 사용자 발화" 활용 (예: 5/4 제룡전기)
+- 검증 사례는 해당 시스템 파일의 "검증 가능한 사용자 발화" 활용 — 단타 (`docs/scalping-strategy.md`: 5/19 메이슨캐피탈, 5/20 주성엔지니어링 등) / 종배 (`docs/eod-strategy.md`: 5/4 제룡전기 등)
 - 데이터 fetcher는 mock 응답으로 테스트 (실제 API 호출 X)
 
 ### 안전 제일
@@ -90,11 +90,61 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 3. 그래도 모호하면 코드 짜기 전에 Zeta에게 질문
 4. 임의로 가정해서 진행하지 X (특히 매매 룰)
 
+## 명명 체계 (2026-05-21 마이그레이션) ★
+
+옛 R 번호 → 의미있는 이름. 시스템 prefix 로 단타/종배 명확 분리.
+
+### 단타 (Scalping) — `src/scalping/`
+
+| 옛 | 새 (긴 / 약식) | 의미 |
+|---|---|---|
+| R3' | `Theme.Leader` / LDR | 단타 주도주 (주도섹터 내 회전율 1위) |
+| R9 | `Monitor` / M | M6 카드 시스템 |
+| R10 | `Buy.VP` / VP | Volume Power 체결강도 |
+| R11 | `Buy.Accel` / ACC | 거래대금 가속 |
+| R12 | `Buy.Candle` / CDL | 봉 패턴 |
+| R12.5 | `Buy.Position` / POS | 위치/맥락 |
+| R13 | `Buy.Div` / DIV | 다이버전스 |
+| R14 | `Buy.Score` / B | 매수 점수 + 등급 (메인) |
+| R15 | `Exit.Triggers` / E | 매도 트리거 + 상태 머신 (메인) |
+
+**Exit 하위 알파벳** (각 글자가 단어 의미):
+- **A**1~A5 = **A**uto-stop (자동 손절 — 가격/봉/이평/시간/EOD)
+- **P**1~P3 = **P**rofit-take (익절 — 1차/2차/트레일링). 옛 B1~B3 에서 변경
+- **E**1~E5 = **E**xit-signal (시그널 청산 — VP/Divergence/자금이탈/봉/VI). 옛 C1~C5 에서 변경
+
+### 종배 (Eod = End-of-day) — `src/overnight/`
+
+| 옛 | 새 (긴 / 약식) | 의미 |
+|---|---|---|
+| R1 | `Eod.Market` / MKT | 시장 강세 게이트 |
+| R4 | `Eod.Pick` / PICK | 종배 후보 추출 (v2) |
+| R5 | `Eod.GapStats` / GAP | 4-Layer 갭상 통계 |
+| R6 | `Eod.Sizing` / SIZ | Kelly/Sharpe/Equal |
+| R7 | `Eod.Exit` / OXE | 다음날 시초가 매도 |
+| R8 | `Eod.Exec` / EXE | 매매 실행 (사람) |
+
+### 공통 — `src/common/`
+
+| 옛 | 새 | 의미 |
+|---|---|---|
+| R2 | `Universe` | 종목 universe (KOSPI+KOSDAQ - ETF/etc) |
+| R3 | `Theme` | 주도섹터 식별 (네이버 테마 z-score) |
+
+### tick_log 컬럼명 (2026-05-21 마이그레이션)
+
+옛: `trigger_b1_take_profit_1`, `trigger_c1_vp_below_100`...
+새: `trigger_p1_take_profit_1`, `trigger_e1_vp_below_100`...
+
+5/18 ~ 5/20 기존 parquet 파일도 일괄 변환 (마이그레이션 스크립트 적용).
+
+---
+
 ## 핵심 도메인 용어
 
 | 용어 | 정의 |
 |---|---|
-| 종배 (jongbae) | 종가 베팅. 장 마감 직전 매수 → 다음날 시초 매도 |
+| 종배 (jongbae, Eod) | 종가 베팅. 장 마감 직전 매수 → 다음날 시초 매도 |
 | 주도테마(주도섹터) | (v0) 거래대금 30위 내 같은 테마 ≥3종목. (v1, M5.5) 테마별 breadth + 동일가중 평균상승률 + 회전율 합계의 z-score 합산 상위 N개 |
 | 주도주 (정통, 결정 레포트용) | 주도테마 내 first-mover 상한가 도달 종목. `identify_leading_stocks()` |
 | 주도주 (고주파, 09:00~10:30 모니터링용) | 주도테마 내 **회전율 1위** 종목. pre-limit-up 진입 후보. 상승률/거래대금 절대값은 표시만 (점수화 X). `identify_early_morning_leaders()` |
@@ -106,18 +156,18 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 | 분봉 거래대금 임계 | 분봉(1~5분) 거래대금 20억 이상 (실무 기준봉 임계, i-whale) |
 | TRANSITION | 주도주 교체 가능성 상태 — a2 가속 ≥ 5배 + 분봉거래대금 ≥ 20억 + a2 회전율 ≥ a1 × 0.6 |
 | GRACE | 실제 교체 후 5분 유예기 — a1, a2 함께 표시 (엎치락뒤치락 대비) |
-| 부상 후보 (RISING) | (round 21) "매수 점수 부상 후보". 회전율 단일 기준 surface 가 아니라 4단계 funnel (snapshot → 모멘텀 → VP → R14 풀스코어) 통과 + R14 점수 ≥ 2.0 (WATCH 이상). +29% 도달 종목은 Stage 0 에서 자동 제외 |
+| 부상 후보 (RISING) | (round 21) "매수 점수 부상 후보". 회전율 단일 기준 surface 가 아니라 4단계 funnel (snapshot → 모멘텀 → VP → Buy.Score 풀스코어) 통과 + Buy.Score 점수 ≥ 2.0 (WATCH 이상). +29% 도달 종목은 Stage 0 에서 자동 제외 |
 | 일봉 +20%↑ | 종가 기준 전일 대비 수익률 +20% 이상 |
 | 갭상 (gap up) | 다음날 시가가 전일 종가보다 높은 것 |
 | 상한가 | KOSPI/KOSDAQ +30%. 종배의 1순위 진입 시점 |
-| 체결강도 (VP, Volume Power) | 능동 매수체결량 / 능동 매도체결량 × 100. 100=균형. R10. 호가 잔량을 메인에서 강등하고 VP가 메인 |
+| 체결강도 (VP, Volume Power) | 능동 매수체결량 / 능동 매도체결량 × 100. 100=균형. Buy.VP. 호가 잔량을 메인에서 강등하고 VP가 메인 |
 | VP_5MA / VP_20MA | 체결강도 5분/20분 이동평균. 장중 메모리 시계열 |
-| vol_accel_1m / vol_accel_5m | R11 분당 거래대금 가속. 1m=최근1분/직전5분평균, 5m=최근5분/직전20분평균. R3' 30분 분모와는 별개 용도 |
-| 매수 점수 / 등급 | R14. 점수 합산 → 🟢STRONG(≥5)/🟡WATCH(≥2)/⚫NEUTRAL(≥-1)/🔴AVOID. 개별 시그널 색상 부여 폐기 후 도입 |
-| Bearish/Bullish Divergence | R13. 가격 변화와 VP_5MA 변화의 부호 반대. Bearish=고점 신호, Bullish=매집 신호 |
-| 감시 모드 / 보유 모드 | R15. 모니터링 종목의 두 상태. `/buy CODE PRICE`로 보유 전환, `/sell`로 복귀. TRANSITION/GRACE(주도주 교체)와는 다른 축 |
-| R15 매도 트리거 A/B/C | A=손절(가격/봉저점/이평/시간) / B=익절(1차/2차/트레일링) / C=시그널(VP이탈/Bearish/자금고갈/윗꼬리음봉/VI). OR 조건 |
-| 흥아해운 케이스 | 모멘텀 죽음 + 호가만 5.3배라 가짜 매수 신호 발생. R14 회귀 테스트 입력 |
+| vol_accel_1m / vol_accel_5m | Buy.Accel 분당 거래대금 가속. 1m=최근1분/직전5분평균, 5m=최근5분/직전20분평균. Theme.Leader 30분 분모와는 별개 용도 |
+| 매수 점수 / 등급 | Buy.Score. 점수 합산 → 🟢STRONG(≥5)/🟡WATCH(≥2)/⚫NEUTRAL(≥-1)/🔴AVOID. 개별 시그널 색상 부여 폐기 후 도입 |
+| Bearish/Bullish Divergence | Buy.Div. 가격 변화와 VP_5MA 변화의 부호 반대. Bearish=고점 신호, Bullish=매집 신호 |
+| 감시 모드 / 보유 모드 | Exit.Triggers. 모니터링 종목의 두 상태. `/buy CODE PRICE`로 보유 전환, `/sell`로 복귀. TRANSITION/GRACE(주도주 교체)와는 다른 축 |
+| Exit.Triggers 매도 트리거 A/P/E | **A**=Auto-stop 손절(가격/봉저점/이평/시간/EOD) / **P**=Profit-take 익절(1차/2차/트레일링) / **E**=Exit-signal 시그널(VP이탈/Bearish/자금고갈/윗꼬리음봉/VI). OR 조건. (2026-05-21 명명 변경: B→P, C→E) |
+| 흥아해운 케이스 | 모멘텀 죽음 + 호가만 5.3배라 가짜 매수 신호 발생. Buy.Score 회귀 테스트 입력 |
 
 ## 절대 헷갈리지 말 것
 
@@ -152,7 +202,7 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 
 ## 종배 매매 정량 룰 (간략)
 
-전체 정의는 [`docs/jongbae-strategy.md`](docs/jongbae-strategy.md). 핵심만:
+전체 정의는 [`docs/scalping-strategy.md`](docs/scalping-strategy.md). 핵심만:
 
 - **국면 필터**: KOSPI 200일 이평 위 (대세상승장) — Zeta가 직관 판단도 가능
 - **유니버스**: KOSPI + KOSDAQ 전종목 (ETF/ETN/리츠/스팩/펀드 제외)
@@ -222,9 +272,9 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 - 검증 안 된 자작 가중합 스코어 → 위험. 한국 단타 통설 그대로 따른다
 - 텔레그램에 1~2초마다 send → 푸시 폭주. **반드시 editMessageText**
 - ETF/ETN/리츠/스팩 미필터 시 KODEX/TIGER/`100030` 같은 종목이 후보로 잡힘
-- **호가 잔량 비율만으로 매수 판단 X** — 허매수/스푸핑 함정. 체결강도(VP) + 봉 패턴 + 모멘텀과 조합 점수(R14)로만 판단
-- **R15 매도 트리거 = 카드에만 표시 (별도 푸시 X)**. 자동 주문 코드 작성 절대 X. CLAUDE.md "자동 매매 절대 금지" 정책 유지 — 단타 시스템도 예외 아님
-- **M6 모니터링 카드 외 별도 푸시 X (정정 round 17)** — TRANSITION/GRACE/강한 부상/자금 이탈/AVOID/R15 트리거 모두 카드 색상·이모지·사유 한 줄로 통합. 1~2초 갱신만으로 사람이 직접 인지하는 워크플로우. 푸시는 M6 외부(상한가 진입/14:50 결정/16:00 사후 등)만
+- **호가 잔량 비율만으로 매수 판단 X** — 허매수/스푸핑 함정. 체결강도(VP) + 봉 패턴 + 모멘텀과 조합 점수(Buy.Score)로만 판단
+- **Exit.Triggers 매도 트리거 = 카드에만 표시 (별도 푸시 X)**. 자동 주문 코드 작성 절대 X. CLAUDE.md "자동 매매 절대 금지" 정책 유지 — 단타 시스템도 예외 아님
+- **M6 모니터링 카드 외 별도 푸시 X (정정 round 17)** — TRANSITION/GRACE/강한 부상/자금 이탈/AVOID/Exit.Triggers 트리거 모두 카드 색상·이모지·사유 한 줄로 통합. 1~2초 갱신만으로 사람이 직접 인지하는 워크플로우. 푸시는 M6 외부(상한가 진입/14:50 결정/16:00 사후 등)만
 - **봇 명령 polling 은 24h 상시 (round 18)** — 이전엔 09:00~10:30 cron 안에서만 polling 떠서 운영시간 외 명령은 응답조차 없음. 현재는 `scheduler.run()` 시작 시 polling thread 1회 띄움. `/on`/`/off` 24h 허용, `/start`=`/on` alias, `/pause`=`/off` alias. 10:30 자동 OFF 폐지 — 사용자 임의 시점에 켜고 끔
 - **PWA 대시보드 (M7) 도 모니터링 메타 데이터 input 만 허용** — `holdings.json` 토글 / 감시 종목 추가·제거 / `/on`·`/off` 만 POST 가능. **KIS 거래소 주문 영구 X**. PWA 의 buy/sell 버튼은 텔레그램 봇 `/buy`·`/sell` 명령과 **동일 핸들러 재사용** (이중 구현 X). 자세한 정책 매핑은 `docs/dashboard-pwa.md` §3·§6
 - **PWA 도 푸시 X** — Web Notifications 은 opt-in 강제, 기본 OFF. 텔레그램 `editMessageText` 정책과 동일 — 카드 1~3초 갱신만으로 사람이 직접 인지하는 워크플로우. 데이터 외부 클라우드 송신 X (집 데스크탑에서 직접 서빙)
@@ -234,7 +284,9 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 새 코드 작성 전 반드시 읽을 것:
 
 - 데이터 모듈 작성 시: `docs/data-infra.md`
-- 종배 분석 모듈 작성 시: `docs/jongbae-strategy.md`
+- 단타 (주도주 매매) 분석 모듈 작성 시: `docs/scalping-strategy.md`
+- 종배 분석 모듈 작성 시: `docs/eod-strategy.md`
+- Buy.Score 재설계 작업 시: `docs/buy-score-revision-proposal.md`
 - 레포트 모듈 작성 시: `docs/report-spec.md`
 - 실시간 모니터링 카드/funnel/매수 점수/매도 시그널 설명 (초보자용): `docs/monitoring-guide.md`
 - PWA 대시보드 (M7) 작성 시: `docs/dashboard-pwa.md`
@@ -250,12 +302,12 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
 
 ### ★ 매매일지 작성 전 반드시 기억 (2026-05-20 사용자 명시, `docs/trading-journal.md` §0)
 
-1. **사용자 매매 룰 (baseline 가정)**: 매수 = R14 🟢 STRONG (≥5.0) / 매도 = R15
+1. **사용자 매매 룰 (baseline 가정)**: 매수 = Buy.Score 🟢 STRONG (≥5.0) / 매도 = Exit.Triggers
    청산 시그널 1개라도 발화 OR 매수가 -2%. 사용자는 이 룰을 일관되게 지키려고
    노력. **"시그널 무시" / "룰 위반" / "결정 일관성 부족" 단정 평가 X**.
 2. **버튼-실거래 시간차 필수 고려**: trades 의 ts 는 사용자가 시그널 본 시점보다
    수초~수십초 늦음. 매매 ts 의 closest tick 단독으로 보지 X — **반드시
-   [-30s, +5s] 윈도우** 의 R14 max 등급 + R15 트리거 발화 history + 매수가 -2%
+   [-30s, +5s] 윈도우** 의 Buy.Score max 등급 + Exit.Triggers 트리거 발화 history + 매수가 -2%
    도달 여부 함께 확인. 윈도우 내 STRONG / 트리거 발화 있으면 사용자 룰 준수.
 3. **시스템 발전 ritual**: 매매일지에서 튜닝 후보 제시 시 — (a) 한국 단타 통설
    검색 (WebSearch / WebFetch) 으로 검증된 기법인지 확인 + (b) 현재 데이터로
@@ -270,7 +322,7 @@ Refs: docs/jongbae-strategy.md R3, docs/plan.md M1
   regret DATE`. 더 세밀한 분석은 직접 pandas 쿼리.
 
 출력 — Markdown 매매일지:
-- 매매 개요 표 / 종목별 분석 (매수·매도 결정 시점 시그널 breakdown / 보유 중 R15
+- 매매 개요 표 / 종목별 분석 (매수·매도 결정 시점 시그널 breakdown / 보유 중 Exit.Triggers
   트리거 timeline / 청산 결정 평가)
 - 시스템 시그널 vs 사용자 감 일치도
 - 튜닝 포인트 (단기 이번 매매 / 장기 과거 누적, 운전수 가설 시그니처 후보)

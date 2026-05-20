@@ -1,7 +1,7 @@
-# R14 매수 점수 재설계 제안 (Proposal)
+# Buy.Score 매수 점수 재설계 제안 (Proposal)
 
 > ⚠ **이건 제안 문서다.** Backtest 결과 보고 효과 없으면 일부/전체 폐기 가능.
-> 채택된 항목은 `docs/jongbae-strategy.md` R14 본문으로 이동 + 본 문서 삭제 또는
+> 채택된 항목은 `docs/scalping-strategy.md` Buy.Score 본문으로 이동 + 본 문서 삭제 또는
 > 정정 이력으로 축약. 폐기된 항목은 본 문서에 사유와 함께 보존.
 
 작성 배경: **2026-05-20 사용자 매매 4건 모두 음봉 직진 패턴**. 차트 분석 결과
@@ -13,12 +13,12 @@
 ## 0. TL;DR
 
 1. **문제**: 5/20 매매 4건(수젠텍/주성엔지니어링/현대모비스/오텍) 100% 정점 진입 직후 음봉. 추격매수 패턴.
-2. **원인**: R14 시그널 11개 중 9개가 lagging indicator. 동시 발화 = 폭등 막바지 정점 정렬.
+2. **원인**: Buy.Score 시그널 11개 중 9개가 lagging indicator. 동시 발화 = 폭등 막바지 정점 정렬.
 3. **제안**:
    - **P0** (작은 변경 — thresholds dict): Q1 1분 가속 완화 / Q3 VWAP/MA ramp / Q5 STRONG 5→4
-   - **P1** (중간 변경 — R14 신규 시그널): **R14e** 폭등 막바지 / **R14f** Bollinger 상단 / **R14g** 연속 양봉 후 / **R14h** 거래량 정점
+   - **P1** (중간 변경 — Buy.Score 신규 시그널): **R14e** 폭등 막바지 / **R14f** Bollinger 상단 / **R14g** 연속 양봉 후 / **R14h** 거래량 정점
    - **P2** (큰 변경 — 구조 재설계): 모멘텀 클러스터 max 묶기 (선택)
-4. **검증**: `scripts/backtest_grader.py` 신규 + tick_log raw 시그널 재계산 + STRONG 첫 도달 시점 / R15 트리거 OR -2% 손절 시뮬레이션.
+4. **검증**: `scripts/backtest_grader.py` 신규 + tick_log raw 시그널 재계산 + STRONG 첫 도달 시점 / Exit.Triggers 트리거 OR -2% 손절 시뮬레이션.
 5. **기대 효과** (4건 추정 시뮬):
    - 변경 전: 4건 평균 -3.7% 손실 (정점 진입)
    - P0 적용: 4건 평균 +0.8% (1~3분 일찍 진입)
@@ -82,7 +82,7 @@
 | `volume_ratio_vs_prev_day` | ~2.5 | 정상 매집 |
 | `dist_from_intraday_high_pct` | ~0 | 신고가 갱신 중 |
 
-**현재 R14 점수 합산**:
+**현재 Buy.Score 점수 합산**:
 ```
 회전율 +1 + 가속동반 +2 + 1m_very_strong 0(1.8<2.0 미달) + 양봉 +2 + VP +2
 + VWAP +1 + MA정배열 +1 + 거래량비율 +0.5 = +9.5
@@ -123,7 +123,7 @@
 | `price_vs_ma20_pct` | ~+7 | ~+10 |
 | `volume_ratio_vs_prev_day` | ~3.5 | ~4.0 |
 
-**현재 R14 점수 (09:28 시점)**:
+**현재 Buy.Score 점수 (09:28 시점)**:
 ```
 회전율 +1 + 가속동반 +2 + 1m_very_strong +1 + 양봉 +2 + VP +2
 + VWAP +1 + MA정배열 +1 + 거래량비율 0(3.5는 무가산 구간) = +10
@@ -132,7 +132,7 @@
 
 **09:30 시점도 STRONG +10** 유지 (윗꼬리 0.35 는 `is_weak_candle` 임계 0.4 미달 → 페널티 X).
 
-**문제**: 수직 폭등 종목은 어디서 진입해도 정점 부근 — 현재 R14 는 "이 종목 위험" 시그널 없음.
+**문제**: 수직 폭등 종목은 어디서 진입해도 정점 부근 — 현재 Buy.Score 는 "이 종목 위험" 시그널 없음.
 
 ---
 
@@ -164,7 +164,7 @@
 | `price_vs_ma20_pct` | ~+1.5 |
 | `volume_ratio_vs_prev_day` | ~1.8 (정상) |
 
-**현재 R14 점수 (10:12 시점)**:
+**현재 Buy.Score 점수 (10:12 시점)**:
 ```
 회전율 +1 + 가속동반 +2 + 양봉 +2 + VP +2 + VWAP +1 + MA정배열 +1
 + 거래량비율 +0.5 = +9.5
@@ -202,7 +202,7 @@
 | `price_vs_ma20_pct` | ~+4 |
 | `volume_ratio_vs_prev_day` | ~5 (무가산 구간) |
 
-**현재 R14 점수 (09:52 시점)**:
+**현재 Buy.Score 점수 (09:52 시점)**:
 ```
 회전율 +1 + 가속동반 +2 + 1m_very_strong +1 + 양봉 +2 + VP +2
 + VWAP +1 + MA정배열 +1 = +10
@@ -224,8 +224,8 @@
 | 정점 시각 | 10:06 | 09:32 | 10:15 | 09:54 |
 | 매수→정점 시간 | 6분 | 4분 | 3분 | 2분 |
 | 정점→현재 | -5.7% | -16.6% | -1.1% | -11.5% |
-| 현재 R14 점수 | +9.5 | +10 | +9.5 | +10 |
-| 현재 R14 등급 | STRONG | STRONG | STRONG | STRONG |
+| 현재 Buy.Score 점수 | +9.5 | +10 | +9.5 | +10 |
+| 현재 Buy.Score 등급 | STRONG | STRONG | STRONG | STRONG |
 | BB 상한 | 도달 | 돌파 | 도달 | 도달 |
 | RSI | ~75 | ~85 | ~75 | ~72 |
 
@@ -237,19 +237,19 @@
 
 ## 3. 원인 진단
 
-### 3.1 R14 시그널의 lagging 본질
+### 3.1 Buy.Score 시그널의 lagging 본질
 
 | 시그널 | 정의 | 본질적 지연 |
 |---|---|---|
-| R14a VWAP | 누적 (Σtypical×vol) / Σvol | **누적 — 가격 충분히 뜬 후 차이 발생** |
-| R14b MA5 | 1분봉 5개 close 평균 | **5분 lag** |
-| R14b MA20 | 1분봉 20개 close 평균 | **20분 lag** |
-| R10 VP_5MA | 체결강도 5분 평균 | **5분 lag** |
-| R11 vol_accel_5m | 최근 5분 / 직전 20분 평균 | **분모 20분 lag** |
-| R14d 거래량 비율 | 오늘 누적 / 전일 일봉 | **누적 — 장 초반 1배 미만** |
-| R12 candle | 5분봉 완성 후 판정 | **5분 lag** |
-| R10 VP | 누적 능동 매수 / 누적 능동 매도 | **누적** |
-| R14c 상한가 시각 | 도달 시각 | first-mover (예외) |
+| Buy.Score.a VWAP | 누적 (Σtypical×vol) / Σvol | **누적 — 가격 충분히 뜬 후 차이 발생** |
+| Buy.Score.b MA5 | 1분봉 5개 close 평균 | **5분 lag** |
+| Buy.Score.b MA20 | 1분봉 20개 close 평균 | **20분 lag** |
+| Buy.VP VP_5MA | 체결강도 5분 평균 | **5분 lag** |
+| Buy.Accel vol_accel_5m | 최근 5분 / 직전 20분 평균 | **분모 20분 lag** |
+| Buy.Score.d 거래량 비율 | 오늘 누적 / 전일 일봉 | **누적 — 장 초반 1배 미만** |
+| Buy.Candle candle | 5분봉 완성 후 판정 | **5분 lag** |
+| Buy.VP VP | 누적 능동 매수 / 누적 능동 매도 | **누적** |
+| Buy.Score.c 상한가 시각 | 도달 시각 | first-mover (예외) |
 
 총 11개 중 9개가 lagging. 한 시그널이 켜질 때쯤엔 가격이 이미 +1~3% 진행. 5개가 동시 켜지면 +3~5%.
 
@@ -274,7 +274,7 @@
 - RSI > 70 → 과매수 → 정점 신호 (전통 차트분석)
 - 윗꼬리 시작 → 매도 출회 → 정점 형성
 
-이 세 가지 모두 R14 에 미반영. 현재 R14 는 "오를 종목 식별" 만 하고 "지금 진입해도 안전한가" 는 평가 안 함.
+이 세 가지 모두 Buy.Score 에 미반영. 현재 Buy.Score 는 "오를 종목 식별" 만 하고 "지금 진입해도 안전한가" 는 평가 안 함.
 
 ---
 
@@ -460,9 +460,9 @@ total = momentum_score * 2 + auxiliary_score + penalty_score
 
 #### 5.1.1 수젠텍 (253840)
 
-| Variant | STRONG 첫 발화 시점 | 진입가 | 정점가 | 정점 시각 | 익절 시점 (R15 OR -2%) | 익절가 | 수익률 |
+| Variant | STRONG 첫 발화 시점 | 진입가 | 정점가 | 정점 시각 | 익절 시점 (Exit.Triggers OR -2%) | 익절가 | 수익률 |
 |---|---|---|---|---|---|---|---|
-| **현재** | 10:00 | 8,000 | 8,090 | 10:06 | 10:08 (R15 C4 윗꼬리) | 7,950 | **-0.6%** |
+| **현재** | 10:00 | 8,000 | 8,090 | 10:06 | 10:08 (Exit.Triggers C4 윗꼬리) | 7,950 | **-0.6%** |
 | **Q1** (1m_mild +0.5) | 09:55 | 7,950 | 8,090 | 10:06 | 10:08 | 7,950 | **0.0%** |
 | **Q3** (VWAP ramp) | 09:50 | 7,820 | 8,090 | 10:06 | 10:08 | 7,950 | **+1.7%** |
 | **Q1+Q3** | 09:48 | 7,800 | 8,090 | 10:06 | 10:08 | 7,950 | **+1.9%** |
@@ -485,7 +485,7 @@ total = momentum_score * 2 + auxiliary_score + penalty_score
 
 | Variant | STRONG 첫 발화 시점 | 진입가 | 정점가 | 익절 시점 | 익절가 | 수익률 |
 |---|---|---|---|---|---|---|
-| **현재** | 10:12 | 553,000 | 561,000 | 10:17 (R15 C4) | 555,000 | **+0.4%** |
+| **현재** | 10:12 | 553,000 | 561,000 | 10:17 (Exit.Triggers C4) | 555,000 | **+0.4%** |
 | **Q1+Q3** | 10:08 | 545,000 | 561,000 | 10:17 | 555,000 | **+1.8%** |
 | **P0+P1** | 10:08 + 10:15 부근 R14f BB -1 = 약 익절 시그널 | 545,000 | 561,000 | 10:15 (BB 돌파 익절) | 561,000 | **+2.9%** |
 
@@ -493,7 +493,7 @@ total = momentum_score * 2 + auxiliary_score + penalty_score
 
 | Variant | STRONG 첫 발화 시점 | 진입가 | 정점가 | 익절 시점 | 익절가 | 수익률 |
 |---|---|---|---|---|---|---|
-| **현재** | 09:52 | 4,100 | 4,160 | 09:54 (R15 C4) | 4,020 | **-2.0%** (-2% 손절) |
+| **현재** | 09:52 | 4,100 | 4,160 | 09:54 (Exit.Triggers C4) | 4,020 | **-2.0%** (-2% 손절) |
 | **Q1+Q3** | 09:48 | 4,000 | 4,160 | 09:54 | 4,020 | **+0.5%** |
 | **P1 R14e (-1)** | 09:48 STRONG, 09:52 부터 직전 5분 +5% R14e -1 → 09:52 시점 점수 STRONG 직전 약화 | 4,000 | 4,160 | 09:52 (R14e 페널티 인지 → 익절) | 4,100 | **+2.5%** |
 | **P0+P1** | 09:48 진입 + 09:52 BB 도달 → 익절 | 4,000 | 4,160 | 09:53 | 4,150 | **+3.8%** |
@@ -502,7 +502,7 @@ total = momentum_score * 2 + auxiliary_score + penalty_score
 
 | Variant | 수젠텍 | 주성엔 | 현대모비스 | 오텍 | **평균** | **개선 폭** |
 |---|---|---|---|---|---|---|
-| 현재 R14 | -0.6% | -2.0% | +0.4% | -2.0% | **-1.05%** | — |
+| 현재 Buy.Score | -0.6% | -2.0% | +0.4% | -2.0% | **-1.05%** | — |
 | Q1 단독 | 0.0% | -2.0% | +0.8% | -1.0% | **-0.55%** | +0.5%p |
 | Q3 단독 | +1.7% | -2.0% | +1.5% | 0.0% | **+0.3%** | +1.35%p |
 | Q5 단독 | +1.2% | -2.0% | +0.8% | -1.5% | **-0.38%** | +0.67%p (위양성 위험 큼) |
@@ -516,8 +516,8 @@ total = momentum_score * 2 + auxiliary_score + penalty_score
 
 - **진입 시점**: 차트 빨간 ↑ 와 BB 위치 + RSI 로 추정. 정확한 STRONG 발화 시각은 운영 머신 tick_log 가 있어야 검증 가능.
 - **시그널값**: 차트 패턴에서 추정. ±0.3 오차 가능.
-- **R15 트리거 발화 시점**: 운영 머신에선 tick_log 에 trigger_c1~c4 발화 시점이 박혀있어 정확. 본 시뮬은 차트 패턴(윗꼬리 음봉 등장 시점)으로 추정.
-- **익절가**: -2% 손절 정책 적용. R15 C4 (윗꼬리 음봉) 발화 시점도 추정.
+- **Exit.Triggers 트리거 발화 시점**: 운영 머신에선 tick_log 에 trigger_c1~c4 발화 시점이 박혀있어 정확. 본 시뮬은 차트 패턴(윗꼬리 음봉 등장 시점)으로 추정.
+- **익절가**: -2% 손절 정책 적용. Exit.Triggers C4 (윗꼬리 음봉) 발화 시점도 추정.
 
 → 실제 backtest 결과는 ±1~2%p 변동 가능. **방향성은 명확** (P0+P1 > Q1+Q3 > 현재).
 
@@ -592,7 +592,7 @@ def calculate_buy_score(
     score = 0.0
     reasons = []
 
-    # 기존 시그널 (R14a~d) — config 상수 → th.xxx 로 치환
+    # 기존 시그널 (Buy.Score.a~d) — config 상수 → th.xxx 로 치환
     ...
 
     # P1 신규 시그널 (default 가중치 0 — 무효과)
@@ -614,13 +614,13 @@ class GraderSnapshot:
     volume_peak_with_price_flat: bool = False          # R14h
 ```
 
-호출자(worker.py) 가 매 tick 계산해서 채움. `src/jongbae/momentum.py` 또는
+호출자(worker.py) 가 매 tick 계산해서 채움. `src/scalping/score/accel.py` 또는
 새 `src/jongbae/peak_signals.py` 에 helper 추가.
 
 ### 6.3 scripts/backtest_grader.py
 
 ```python
-"""tick_log 로 R14 variant 비교 backtest.
+"""tick_log 로 Buy.Score variant 비교 backtest.
 
 사용:
     python -m scripts.backtest_grader --since 2026-05-20 --until 2026-06-19 \
@@ -684,21 +684,21 @@ def find_exit(
     entry_price: float,
     stop_loss_pct: float,
 ) -> tuple[float, str, str]:
-    """R15 C1~C4 트리거 첫 발화 OR 진입가 대비 -2% 첫 도달."""
+    """Exit.Triggers C1~C4 트리거 첫 발화 OR 진입가 대비 -2% 첫 도달."""
     for _, row in ticks_after_entry.iterrows():
         price = row["price"]
         pnl = (price - entry_price) / entry_price * 100
 
         if pnl <= stop_loss_pct:
             return price, "stop_loss_-2%", row["ts"]
-        if row.get("trigger_c1_vp_below_100"):
-            return price, "C1_vp_below_100", row["ts"]
-        if row.get("trigger_c2_bearish_divergence"):
+        if row.get("trigger_e1_vp_below_100"):
+            return price, "E1_vp_below_100", row["ts"]
+        if row.get("trigger_e2_bearish_divergence"):
             return price, "C2_bearish_div", row["ts"]
-        if row.get("trigger_c3_vol_drain"):
-            return price, "C3_vol_drain", row["ts"]
-        if row.get("trigger_c4_bearish_candle"):
-            return price, "C4_bearish_candle", row["ts"]
+        if row.get("trigger_e3_vol_drain"):
+            return price, "E3_vol_drain", row["ts"]
+        if row.get("trigger_e4_bearish_candle"):
+            return price, "E4_bearish_candle", row["ts"]
 
     # 청산 트리거 없음 — 마지막 tick 으로 청산
     last = ticks_after_entry.iloc[-1]
@@ -830,7 +830,7 @@ def test_calculate_buy_score_default_thresholds_equivalent_to_pre_refactor():
 
 - 모든 폭등이 mean reversion 으로 가는 건 아님. 진성 first-mover 는 정점 후 잠시 횡보 후 추가 상승.
 - 종배 매매(다음날 시초 매도)는 정점 진입해도 다음날 갭상 익절 가능 — 본 문서는 당일 매수→당일 청산 가정.
-- P1 적용 시 종배 매매(14:50 결정 레포트) 대상 종목 식별이 약해질 위험. **R14 변경이 모니터링 카드 surface 에는 적용되지만 14:50 결정 레포트 후보 산출 (R4 v2)에는 미적용** — 두 시스템 분리 유지.
+- P1 적용 시 종배 매매(14:50 결정 레포트) 대상 종목 식별이 약해질 위험. **Buy.Score 변경이 모니터링 카드 surface 에는 적용되지만 14:50 결정 레포트 후보 산출 (Eod.Pick v2)에는 미적용** — 두 시스템 분리 유지.
 
 ### 9.4 운영 데이터 의존성
 
@@ -867,7 +867,7 @@ def test_calculate_buy_score_default_thresholds_equivalent_to_pre_refactor():
 ### 10.4 채택 결정
 
 8. **Step 7**: 통계적으로 유의미 + 회귀 통과 시 default thresholds 변경 PR.
-9. 본 문서를 `docs/jongbae-strategy.md` R14 본문에 통합 + 본 파일 삭제.
+9. 본 문서를 `docs/scalping-strategy.md` Buy.Score 본문에 통합 + 본 파일 삭제.
 10. 효과 미달 시 폐기 사유 본 문서 끝에 명시 + 보존 (학습 자료).
 
 ### 10.5 운영 머신 데이터 준비 (사용자)
@@ -878,7 +878,7 @@ def test_calculate_buy_score_default_thresholds_equivalent_to_pre_refactor():
 
 ---
 
-## 부록 A. R14 시그널 발화 시점 — 4건 비교
+## 부록 A. Buy.Score 시그널 발화 시점 — 4건 비교
 
 ```
 시각        수젠텍       주성엔        현대모비스    오텍
@@ -918,19 +918,19 @@ def test_calculate_buy_score_default_thresholds_equivalent_to_pre_refactor():
 
 이 변경은 다음 모듈에만 영향:
 
-- **변경**: `src/jongbae/grader.py`, `src/jongbae/grader_thresholds.py` (신규)
+- **변경**: `src/scalping/score/grader.py`, `src/jongbae/grader_thresholds.py` (신규)
 - **추가**: `src/jongbae/peak_signals.py` (신규, P1), `scripts/backtest_grader.py` (신규)
 - **호출자 영향**: `src/dashboard/worker.py` — GraderSnapshot 신규 필드(R14e~h) 채우는 코드 추가 필요. 기존 시그니처 유지.
 - **테스트**: `tests/test_grader.py` (기존 회귀 유지), `tests/test_backtest_grader.py` (신규)
 - **미영향**:
-  - `src/scheduler.py` 의 14:50 결정 레포트 — R4 v2 별도 룰 (jongbae 매매 후보)
-  - R15 청산 트리거 (`src/jongbae/exit_triggers.py`) — 본 변경은 R14 진입만
-  - M5.5 주도섹터 식별 (`src/jongbae/leading_theme.py`) — 별도 시그널
+  - `src/scheduler.py` 의 14:50 결정 레포트 — Eod.Pick v2 별도 룰 (jongbae 매매 후보)
+  - Exit.Triggers 청산 트리거 (`src/scalping/exit/triggers.py`) — 본 변경은 Buy.Score 진입만
+  - M5.5 주도섹터 식별 (`src/common/theme.py`) — 별도 시그널
   - PWA 대시보드 (`src/dashboard/`) — 카드 표시는 동일 (점수만 변경)
 
 ## 부록 C. 사용자 매매 4건 → 가설 검증 케이스로 영속화
 
-본 4건은 `docs/jongbae-strategy.md` "검증 가능한 사용자 발화" 표에 추가 가치:
+본 4건은 `docs/scalping-strategy.md` "검증 가능한 사용자 발화" 표에 추가 가치:
 
 ```
 | 2026-05-20 | 수젠텍 (253840) | 매수 추정 10:00 8,000원 | 정점 직후 음봉 -5.7% |

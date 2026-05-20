@@ -5,7 +5,7 @@
 수 있게 풀어 썼습니다.
 
 대상 시스템: M6 실시간 모니터링 워커 (`src/dashboard/worker.py`).
-관련 룰 문서: 더 깊은 정의는 [`docs/jongbae-strategy.md`](jongbae-strategy.md).
+관련 룰 문서: 더 깊은 정의는 [`docs/scalping-strategy.md`](scalping-strategy.md).
 
 ---
 
@@ -68,7 +68,7 @@
 - **5분봉가속 / 1분봉가속** — 자금이 얼마나 빨리 들어오고 있는지 (자세한 의미는 4장)
 - **체결강도** — 적극 매수 vs 적극 매도 비율 (100 = 균형)
 - **호가** — 호가창 매수/매도 잔량 비율 (참고용, 메인 X)
-- **수급** — 외국인/기관 당일 누적 순매수 금액 + 프로그램 순매수 수량 (KIS 가집계, 장 마감 후 확정). **참고용 — R14 매수 점수 합산 X** (round 29 ritual 검증 완료 전엔 표시만). 모두 0 이면 라인 자체 생략. round 36 부활.
+- **수급** — 외국인/기관 당일 누적 순매수 금액 + 프로그램 순매수 수량 (KIS 가집계, 장 마감 후 확정). **참고용 — Buy.Score 매수 점수 합산 X** (round 29 ritual 검증 완료 전엔 표시만). 모두 0 이면 라인 자체 생략. round 36 부활.
   - 헤더 옆 `(Δ47s)` — 마지막으로 수급 누적값이 바뀐 시점부터 지금까지의 경과 시간. KIS 가집계 갱신 주기 (추정 5분 단위 잠정치) **자동 추종** — 새 갱신이 오면 `Δ0s` 로 reset 되고 그 사이엔 elapsed 만 늘어남. 즉 카드의 elapsed 가 KIS 갱신 주기를 그대로 노출 (윈도우 1m/5m 고정 X).
   - 각 항목 옆 괄호 `(+3억)` — 그 항목의 마지막 변화량. 0 인 항목은 괄호 생략. 누계 자체가 안 바뀌었으면 헤더의 (Δ...) 자체 생략.
 
@@ -152,17 +152,17 @@
 
 → 15종목 남음. 여기까지 KIS API 호출 0번
 
-### Stage 2~4 통합 — R14 풀스코어 단일 평가 (round 37)
+### Stage 2~4 통합 — Buy.Score 풀스코어 단일 평가 (round 37)
 
-Stage 1 통과 15종목 모두에게 분봉/체결강도/호가/투자자 데이터를 받아서 **R14 종합 매수
+Stage 1 통과 15종목 모두에게 분봉/체결강도/호가/투자자 데이터를 받아서 **Buy.Score 종합 매수
 점수**를 계산하고, **점수 ≥ 2.0 (WATCH 등급)** 이상만 카드로 surface.
 
 round 21~33 까지는 Stage 2 (vol_accel ≤ 0.8 / 약한 봉) 와 Stage 3 (VP < 100) 에서
-hard-fail drop 했으나, **이 값들은 모두 R14 점수의 음수 가산 항목과 중복**:
+hard-fail drop 했으나, **이 값들은 모두 Buy.Score 점수의 음수 가산 항목과 중복**:
 
-- vol_accel 약함 → R11 음수 (-1~-3)
-- 약한 봉 → R12 음수 (-2)
-- VP < 100 → R10 음수 (-2)
+- vol_accel 약함 → Buy.Accel 음수 (-1~-3)
+- 약한 봉 → Buy.Candle 음수 (-2)
+- VP < 100 → Buy.VP 음수 (-2)
 
 → hard cliff 가 카드 깜빡임 + false negative 의 원인. 듀얼 키 인프라(2026-05-17 main)
 로 호출 한도 여유가 생긴 시점에 폐지. 약한 종목은 음수 합산으로 자연스럽게 점수
@@ -186,11 +186,11 @@ hard-fail drop 했으나, **이 값들은 모두 R14 점수의 음수 가산 항
 > "거래대금 1위 + 회전율 19.4% + 호가 매수가 매도의 5.3배"
 
 거래대금만 보면 매수 후보. 하지만:
-- 5분봉 가속 0.1배 (자금 식어감) → R11 음수 -3
-- 직전 1분봉이 윗꼬리 큰 음봉 → R12 음수 -2
-- VP < 100 → R10 음수 -2
+- 5분봉 가속 0.1배 (자금 식어감) → Buy.Accel 음수 -3
+- 직전 1분봉이 윗꼬리 큰 음봉 → Buy.Candle 음수 -2
+- VP < 100 → Buy.VP 음수 -2
 
-→ R14 점수 음수 합산 (회전율 +1 가산 후에도) → 2.0 미달 → **부상 후보 카드로 안 뜸**.
+→ Buy.Score 점수 음수 합산 (회전율 +1 가산 후에도) → 2.0 미달 → **부상 후보 카드로 안 뜸**.
 가짜 매수 신호 차단 (`tests/test_dashboard_worker.py::test_rising_funnel_filters_heunga_haewoon` 회귀, round 37 이후도 동일 결과).
 
 ---
@@ -305,7 +305,7 @@ hard-fail drop 했으나, **이 값들은 모두 R14 점수의 음수 가산 항
 
 ---
 
-## 5. 매수 점수 (R14) — 어떻게 매기나
+## 5. 매수 점수 (Buy.Score) — 어떻게 매기나
 
 부상 후보 카드의 **사유** 라인에 표시되는 점수.
 
@@ -338,7 +338,7 @@ hard-fail drop 했으나, **이 값들은 모두 R14 점수의 음수 가산 항
 
 ---
 
-## 6. 매도 시그널 (R15) — 보유 후 청산 판단
+## 6. 매도 시그널 (Exit.Triggers) — 보유 후 청산 판단
 
 `/buy` 한 뒤 보유 카드의 **─ 청산 시그널 ─** 섹션. 5가지가 ❌(미발화) / ✅(발화)
 로 매 tick 갱신.
@@ -374,7 +374,7 @@ hard-fail drop 했으나, **이 값들은 모두 R14 점수의 음수 가산 항
 
 ### 매수와 매도의 차이
 
-| 항목 | 매수 (R14) | 매도 (R15) |
+| 항목 | 매수 (Buy.Score) | 매도 (Exit.Triggers) |
 |---|---|---|
 | 논리 | AND (다수결 통과) | OR (하나만 발동) |
 | 임계값 | 보수적 (STRONG 5점 이상) | 공격적 (한 시그널만 떠도 검토) |
@@ -425,11 +425,11 @@ hard-fail drop 했으나, **이 값들은 모두 R14 점수의 음수 가산 항
 
 ## 9. 더 깊이 알고 싶다면
 
-- 매매 룰 전체 정의: [`docs/jongbae-strategy.md`](jongbae-strategy.md)
+- 매매 룰 전체 정의: [`docs/scalping-strategy.md`](scalping-strategy.md)
 - 데이터 인프라: [`docs/data-infra.md`](data-infra.md)
 - 레포트 스펙: [`docs/report-spec.md`](report-spec.md)
 - 진행 상황: [`docs/plan.md`](plan.md)
-- 정정 이력 / 시행착오: [`docs/jongbae-strategy.md`](jongbae-strategy.md) 하단
+- 정정 이력 / 시행착오: [`docs/scalping-strategy.md`](scalping-strategy.md) 하단
 
 ---
 
@@ -440,9 +440,9 @@ hard-fail drop 했으나, **이 값들은 모두 R14 점수의 음수 가산 항
 | 카드 렌더링 | `src/dashboard/render.py` |
 | Tick 본문 | `src/dashboard/worker.py` `dashboard_tick` |
 | 부상 후보 깔때기 | `src/dashboard/worker.py` `_evaluate_rising_funnel` |
-| R14 매수 점수 | `src/jongbae/grader.py` `calculate_buy_score` |
-| R15 매도 트리거 | `src/jongbae/exit_triggers.py` `evaluate_triggers` |
-| 체결강도 시계열 | `src/jongbae/volume_power.py` `VPSeries` |
+| Buy.Score 매수 점수 | `src/scalping/score/grader.py` `calculate_buy_score` |
+| Exit.Triggers 매도 트리거 | `src/scalping/exit/triggers.py` `evaluate_triggers` |
+| 체결강도 시계열 | `src/scalping/score/vp.py` `VPSeries` |
 | 봇 명령 파서 | `src/notify/telegram_bot.py` `parse_command` |
 | 보유 영속화 | `data/state/holdings.json` (자동 생성) |
-| 임계값 일괄 관리 | `src/jongbae/config_thresholds.py` |
+| 임계값 일괄 관리 | `src/scalping/score/thresholds.py` |
