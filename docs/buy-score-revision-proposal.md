@@ -8,6 +8,28 @@
 "한발 늦은 STRONG 발화 = 정점 진입 = 직후 음봉" 의 구조적 패턴 발견. 단순 가중치
 튜닝(Q1/Q3/Q5) 만으로는 부분 해결, 본질적으로 **"정점 회피" 시그널 신설** 필요.
 
+## 진행 상황 (2026-05-21 갱신) ★
+
+| 항목 | 상태 |
+|---|---|
+| **R14k** 일중 최고점 거리 페널티 (proposal 외 신규) | **✅ 채택 + 운영 적용** — commit `5b7358c` |
+| **R14l** 횡보 정점 페널티 (proposal 외 신규) | **✅ 채택 + 운영 적용** — commit `5b7358c` |
+| **A1 손절 -1.5% → -2%** (사용자 룰 통일) | **✅ 채택** — commit `fa5b248` |
+| **명명 마이그레이션** R 번호 → Buy.*/Exit.*/Eod.* | **✅ 완료** — Phase 1~6 모두 main 머지 |
+| R14e (최근 5분 +5/10% 폭등) | ⏳ 보류 — backtest 효과 작음 (단독 차단 0건), R14k/l 와 중복 가능성 |
+| R14f (BB 상한) | ⏳ 보류 — backtest win% 56.9% (variant 중 최고) 그러나 1분봉 변환 helper 필요 |
+| R14g (연속 양봉) | ❌ 폐기 — 단독 효과 없음 (차단 0건) |
+| R14h (거래량 정점) | ❌ 폐기 — 단독 효과 없음 |
+| Q1 (1m 가속 완화) | ⏳ 보류 — 5거래일 누적 후 재검증 |
+| Q3 (VWAP/MA ramp) | ⏳ 보류 — 5거래일 누적 후 재검증 |
+| **Q5 (cutoff 5→4 하향)** | ❌ **폐기** — median 음수 (-0.09), outlier 의존 |
+| **Q5_inverse (cutoff 5→6 상향, 5/20 일지 §H6)** | ❌ **폐기** — 본질 해결 X (점수 높을수록 정점에 더 가까움) |
+| **exclude_first_5min** (시초 5분 자제) | ❌ **폐기** — backtest -0.11% 악화 |
+| P2 모멘텀 클러스터 max | ⏳ 보류 — 큰 구조 변경, P1 효과 확정 후 재검토 |
+
+자세한 후속 작업은 §11 (Tier 2~4) 참조. 사용자 매매 차단 효과 + backtest 결과는
+별도 `data/backtest/buy_score_v2_summary.md`.
+
 ---
 
 ## 0. TL;DR
@@ -846,7 +868,115 @@ def test_calculate_buy_score_default_thresholds_equivalent_to_pre_refactor():
 
 ---
 
-## 10. 다음 단계
+## 11. 2026-05-21 후속 작업 정리 (Tier 2~4) ★
+
+본 §11 이 향후 운영 우선순위 — §10 (옛 plan) 은 §11 로 흡수됨.
+
+### 11.1 채택된 항목 (이미 운영 적용)
+
+**R14k 일중 최고점 거리 페널티** — proposal 외 신규 (사용자 의도 정합)
+- 사용자 발화 (2026-05-21): "차트의 매수 포인트가 너무 고점에서 찾아옴"
+- 구현: `src/scalping/score/grader.py` calculate_buy_score 분기 + `thresholds.py` 6 상수
+- 임계: `dist_from_intraday_high_pct >= -2% → -2`, `>= -5% → -1`
+- 통설 검증: namu.wiki 상따 "고점 추격 매수 회피", Bollinger mean reversion (§3.3)
+
+**R14l 횡보 정점 페널티** — proposal 외 신규 (수젠텍 케이스)
+- 일중 +15% 도달 후 정점 5% 이내 = 폭등 후 횡보 micro fluctuation
+- 임계: `daily_return >= 15% AND dist >= -5% → -1.5`
+- 통설 검증: i-whale "+15% 도달 후 횡보 micro fluctuation 매매 회피"
+
+**채택 효과 검증 (5/20 N=15 사용자 매매)**:
+- 차단 7건 (B_정점직후 3/3 + C_횡보고점 2/4 + 시초 정점 2/8)
+- 차단된 7건 평균 -1.00% (손실 케이스 정확 식별)
+- 누적 손익 **+5.24% → +12.21%** (133% 증가)
+
+### 11.2 폐기된 항목 (사유 보존)
+
+| 항목 | 폐기 사유 |
+|---|---|
+| Q5 cutoff 5→4 하향 | v1 backtest 평균 +0.35% (최고) 였으나 median -0.09 + 승률 42% (outlier 의존). 안정성 부적합 |
+| Q5_inverse cutoff 5→6 상향 (5/20 일지 §H6) | win% 56.4% 양호했으나 **본질 해결 X** — cutoff 상향은 점수 더 높은 신호만 보는 것 = lagging indicator 더 많이 발화 = 정점에 더 가까움. R14k/R14l 가 본질 해결 |
+| R14g 연속 양봉 페널티 | v2 backtest 단독 차단 0건, entry_5m 변화 없음. 시초 진입 케이스 많아 직전 5봉 부족 (1분봉 변환 후 재검토 가능) |
+| R14h 거래량 정점 페널티 | v2 backtest 단독 차단 0건. AND 조건이 운영 universe 에서 거의 발화 안 함 |
+| exclude_first_5min (5/20 일지 §튜닝 2) | v1 backtest -0.11% (current +0.40% 대비 악화). 가설 무력화 |
+
+### 11.3 보류 — 5거래일 (5/22~5/28) 누적 후 재검증
+
+**R14e 최근 5분 +5/10% 폭등 페널티** ⏳
+- v2 backtest 단독 차단 1건 (수젠텍 09:16 → 09:17)
+- R14k/R14l 와 일부 효과 중복 (정점 직후엔 두 시그널 모두 발화)
+- 5거래일 누적 후 R14k/R14l 와 별개 알파 있는지 측정
+
+**R14f BB 상한 페널티** ⏳ (가장 유망)
+- v2 backtest win% **56.9% (variant 중 최고)**, avg +0.33%, median +0.14%
+- 단 R14k/R14l 와 "정점 위치" 측정 중복 가능성
+- **필요 작업**: 1분봉 OHLCV 변환 helper
+  - 파일: `src/scalping/score/bar_helpers.py` 신설
+  - 함수: `tick → 1분 OHLCV resample` + `BB(20봉, 2σ) 계산`
+  - GraderSnapshot 에 `bb_position_pct` 필드 추가 + worker.py 호출 시 계산
+  - 작업 시간: **반나절** (코드 + 회귀 테스트)
+- 도입 시 가중치 (시작값): BB 도달 (≥0) → -1, 돌파 (≥+1%) → -2
+
+**Q1 1m 가속 완화 (+0.5 / 중간 단계)** ⏳
+- §4.1 Q1 정의 그대로
+- 5거래일 누적 후 효과 측정
+
+**Q3 VWAP/MA ramp (cliff → ramp)** ⏳
+- §4.1 Q3 정의 그대로
+- 도입 시 매매 시점이 좀 더 일찍 surface 효과 기대
+
+### 11.4 Tier 별 후속 트랙
+
+#### Tier 2 (5거래일 누적 후 — 5/27~)
+
+| 작업 | 작업량 | 위험 |
+|---|---|---|
+| **R14f BB 상한 도입** — 1분봉 변환 helper + grader 분기 | 2~3시간 | 작음 |
+| **Q1/Q3 가중치 튜닝** — thresholds dataclass 분리 (§4.1 + §6.1) | 1~2시간 | 작음 (역호환) |
+| **Exit.E1~E5 false positive 검증** — 사용자 매도 후 N분 가격 추적 시뮬 | 2~3시간 | 중간 (청산 룰 분석) |
+| **scripts/backtest_grader.py 정식 인프라** — proposal §6.3 (현재 임시 `backtest_buy_score.py`) | 3~4시간 | 작음 |
+
+#### Tier 3 (Tier 2 효과 확정 후)
+
+| 작업 | 작업량 | 위험 |
+|---|---|---|
+| **§P2 모멘텀 클러스터 max** — lagging 5개 시그널 max 묶기 (§4.3) | 5~8시간 | **큼** (구조 변경, 회귀 위험) |
+| **종목별 운전수 가설 시그니처** (memory long-term-vision Phase 3) | 누적 1~3개월 후 | — |
+| **대형주 카테고리별 Exit.E2 sensitivity** (5/20 매매일지 §H9) | 표본 5+ 누적 후 | 작음 |
+
+#### Tier 4 (인프라)
+
+| 작업 | 상태 |
+|---|---|
+| holdings.json 일일 reset | ✅ 이미 구현됨 (`maybe_reset_holdings`, scheduler.py:113) |
+| naive datetime fix (telegram_bot.py:329) | ✅ 완료 (commit `5b7358c`) |
+| replay.py:129 numpy array | ✅ 이미 try/except 처리됨 |
+| **시초 1분 데이터 잡음** (`daily_return` 비정상 ±200% 초과) | ⏳ `src/data/intraday._build_snapshot_record` prev_close 정상화 검토 |
+| **tick_log.intraday_high 컬럼 적재** (5/18~5/20 모두 0) | ⏳ backtest 편의용, 운영 grader 는 fallback 정상 작동 (worker.py:766) |
+
+### 11.5 5거래일 누적 후 사용자 매매 패턴 추적
+
+R14k/R14l 운영 적용 후 다음 4축 측정 (5/22~5/28 매매일지 누적):
+
+1. **사용자 매매 건수 변화** — 정점 진입 페널티로 STRONG 발화 차단 → 매매 빈도 감소 예상
+2. **매매 시점 dist_from_intraday_high 분포** — 평균 -3% → -5%+ 깊어지면 의도 달성
+3. **매매 손익 분포** — 차단된 정점 매매 (5/20 7건 평균 -1.00%) 제거 효과
+4. **사용자 메모 input** — R14k/R14l 페널티 카드에 표시될 때 사용자 인지 변화
+
+5거래일 누적 후 매매일지에서 위 4축 측정 → R14k/R14l 가중치 추가 튜닝 또는 Tier 2 도입 결정.
+
+### 11.6 회귀 안전망 (이미 추가됨)
+
+`tests/test_grader.py` 신규 10개:
+- R14k 4건 (very_near / near / far / NaN)
+- R14l 4건 (sideways_peak / dr_below_15 / dist_far / giganted_dr_ignored)
+- 5/20 사용자 매매 case 2건 (jusungeng_4th / sujentech_sideways)
+
+기존 흥아해운/제룡전기 회귀 + 위 신규 = **917 passed**.
+
+---
+
+## 10. 다음 단계 (옛 plan — §11 로 흡수됨, 보존용)
 
 ### 10.1 즉시 (사용자 확정 후)
 
