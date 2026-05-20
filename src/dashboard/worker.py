@@ -93,7 +93,7 @@ from src.notify.telegram_bot import apply_command, parse_command
 def _prev_day_volume(daily_ohlcv: pd.DataFrame | None, code: str) -> float:
     """종목별 가장 최근 일봉의 거래량 (round 32, P2-2 wiring).
 
-    R14d volume_ratio_vs_prev_day 분모. 데이터 없으면 NaN.
+    Buy.Score.d volume_ratio_vs_prev_day 분모. 데이터 없으면 NaN.
     """
     if daily_ohlcv is None or daily_ohlcv.empty:
         return float("nan")
@@ -195,13 +195,13 @@ def _evaluate_rising_funnel(
     daily_ohlcv: pd.DataFrame | None = None,
     limit_up_hit_times: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """부상 후보 R14 풀스코어 평가 — round 40 (병렬 fetch 분리 후).
+    """부상 후보 Buy.Score 풀스코어 평가 — round 40 (병렬 fetch 분리 후).
 
     Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N) 통과 후보 dict 리스트와, 호출자가
-    fetch_bundles_parallel 로 미리 채워둔 tick_cache 를 받아 R14 점수만 계산.
+    fetch_bundles_parallel 로 미리 채워둔 tick_cache 를 받아 Buy.Score 점수만 계산.
     score ≥ RISING_MIN_SCORE 통과 종목 반환.
 
-    round 37: Stage 2/3 hard-fail 폐지 — 모든 후보를 R14 풀스코어 단일 컷 통과.
+    round 37: Stage 2/3 hard-fail 폐지 — 모든 후보를 Buy.Score 풀스코어 단일 컷 통과.
     round 40: KIS fetch 가 본 함수 밖 fetch_bundles_parallel 로 이동. 본 함수는 순수
     CPU — score 계산만. tick_cache 가 bars/accel_5m/accel_1m/candle/ccnl/vp/asking/
     investor 키를 미리 가지고 있다고 가정 (없으면 NaN-safe 로 처리).
@@ -213,7 +213,7 @@ def _evaluate_rising_funnel(
             ccnl/vp/asking/investor 부분 가능. 부재 시 가산점 0.
 
     Returns:
-        R14 score ≥ RISING_MIN_SCORE 통과 종목 dict 리스트 (원 cand dict +
+        Buy.Score score ≥ RISING_MIN_SCORE 통과 종목 dict 리스트 (원 cand dict +
         "buy_score" / "buy_grade" / "buy_reasons" 키 추가). 점수 내림차순.
     """
     if not stage1_candidates:
@@ -236,7 +236,7 @@ def _evaluate_rising_funnel(
     if not scored_candidates:
         return []
 
-    # ── R14 풀스코어 평가 (호가 + 투자자 + 종합 점수) ───────────────────────
+    # ── Buy.Score 풀스코어 평가 (호가 + 투자자 + 종합 점수) ───────────────────────
     out: list[dict[str, Any]] = []
     for cand in scored_candidates:
         code = cand["code"]
@@ -248,7 +248,7 @@ def _evaluate_rising_funnel(
             v = asking.get("bid_ask_ratio")
             if v is not None and v == v:
                 bid_ask = float(v)
-        # 당일 고점 대비 거리 (필수조건 R12.5)
+        # 당일 고점 대비 거리 (필수조건 Buy.Position)
         price = float(snap.get("price") or 0)
         high = float(snap.get("intraday_high") or 0)
         dist_high_pct = (
@@ -388,7 +388,7 @@ def dashboard_tick(
     # 4구간으로 쪼개 보틀넥 파악: snapshot / funnel / monitored 루프 / 비-monitored 로깅.
     t_start = perf_counter()
 
-    # round 22: 보유 종목 메타데이터 로드 (R15 트리거 평가용).
+    # round 22: 보유 종목 메타데이터 로드 (Exit.Triggers 트리거 평가용).
     # /buy /sell 가 holdings.json 을 갱신하므로 매 tick 디스크 로드. 종목 수는
     # 단타 운영상 한 자릿수라 비용 무시 가능.
     holdings: dict[str, Holding] = load_holdings()
@@ -467,7 +467,7 @@ def dashboard_tick(
         }
     t_fetch = perf_counter()
 
-    # 2b) 부상 후보 R14 풀스코어 — fetch 결과 tick_cache 만 읽음 (CPU only).
+    # 2b) 부상 후보 Buy.Score 풀스코어 — fetch 결과 tick_cache 만 읽음 (CPU only).
     rising_scored = _evaluate_rising_funnel(
         rising_stage1, snap_by_code, tick_cache,
         daily_ohlcv=daily_ohlcv,
@@ -658,7 +658,7 @@ def dashboard_tick(
         )
         sparkline = short_trend_sparkline(bars, n_recent=6)
 
-        # round 22: VP 시계열 push + 5MA / 1MA / 20MA 산출 (체결강도 라인 보강 + R15 C1)
+        # round 22: VP 시계열 push + 5MA / 1MA / 20MA 산출 (체결강도 라인 보강 + Exit.Triggers C1)
         vp_now = float("nan")
         vp_1ma = float("nan")
         vp_5ma = float("nan")
@@ -689,7 +689,7 @@ def dashboard_tick(
         # 이 종목이 a1 (현재 주도주) 이면 TRANSITION/GRACE 부상 후보 정보 전달
         transition_info = tracker_info_by_a1.get(code)
 
-        # 청산 시그널 (R15 C 그룹) — 보유든 감시든 모든 카드에 표시.
+        # 청산 시그널 (Exit.Triggers C 그룹) — 보유든 감시든 모든 카드에 표시.
         # 매도 시그널이 켜진 종목은 매수 진입 회피해야 하므로 감시 모드도 노출.
         # 다이버전스 / 직전 봉 / 5분 이평은 시장 메트릭 — holding 여부와 무관하게 계산.
         minute_ma_5: float | None = None
@@ -724,14 +724,14 @@ def dashboard_tick(
                 vol_accel_1m_value=accel_1m if accel_1m == accel_1m else None,
             )
             for ev in events:
-                logger.info(f"[R15 트리거] {code} {ev.kind} — {ev.text}")
+                logger.info(f"[Exit.Triggers 트리거] {code} {ev.kind} — {ev.text}")
             # A/B/C 전체 표시는 triggers_fired (sticky) 기반.
             trigger_states = dict.fromkeys([
                 "A1_stop_price", "A2_stop_bar_low", "A3_stop_ma", "A4_stop_time",
                 "A5_eod_ma_break",
-                "B1_take_profit_1", "B2_take_profit_2", "B3_trailing",
-                "C1_vp_below_100", "C2_bearish_divergence", "C3_vol_drain",
-                "C4_bearish_candle", "C5_vi_failure",
+                "P1_take_profit_1", "P2_take_profit_2", "P3_trailing",
+                "E1_vp_below_100", "E2_bearish_divergence", "E3_vol_drain",
+                "E4_bearish_candle", "E5_vi_failure",
             ], False)
             for k in holding.triggers_fired:
                 trigger_states[k] = True
@@ -746,7 +746,7 @@ def dashboard_tick(
                 holding=None,
             )
 
-        # round 33/35: 모든 모니터링 모드(AUTO/MANUAL/HOLD/RISING) 에 R14 매수 점수 계산.
+        # round 33/35: 모든 모니터링 모드(AUTO/MANUAL/HOLD/RISING) 에 Buy.Score 매수 점수 계산.
         # round 33 에선 `if snap_row is not None:` 가드가 있어서 거래대금 50위 밖
         # 종목(주로 보유 / 수동)은 grade 계산 자체가 skip 됐다. 사용자 보고:
         # "보유/수동 모니터링 어느 경우든 등급 안 뜸". 가드 폐지 — snap_row 가 없어도
@@ -965,7 +965,7 @@ def dashboard_tick(
     # 다음 trigger 가 coalesce 되어 실효 갱신 주기가 길어진다는 신호.
     # round 40: funnel fetch 가 fetch_bundles_parallel 로 이동 → 라벨 재설계
     # (snap / fetch / score / monitored / log). fetch = 합집합 4×N KIS 호출 (병렬),
-    # score = funnel R14 풀스코어 CPU only.
+    # score = funnel Buy.Score 풀스코어 CPU only.
     t_end = perf_counter()
     tick_total = t_end - t_start
     dt_snapshot = t_snapshot - t_start

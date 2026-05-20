@@ -1,8 +1,8 @@
 """종배 청산 시초가 룰 (round 30, P3-2).
 
-`docs/jongbae-strategy.md` 종배 청산 정책 참조.
+`docs/scalping-strategy.md` 종배 청산 정책 참조.
 
-R15 (장중 보유 모니터링) 과 분리된 모듈 — 다음날 09:00 KRX 시초가 형성
+Exit.Triggers (장중 보유 모니터링) 과 분리된 모듈 — 다음날 09:00 KRX 시초가 형성
 직후 1회 판정용. 종배 매매 모델의 본질적 청산 시점.
 
 통설 (WikiDocs 종가베팅, brokdam 광전자 6/4 케이스):

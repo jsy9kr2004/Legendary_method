@@ -253,7 +253,7 @@ def test_rising_funnel_filters_heunga_haewoon():
 
     입력: 거래대금 1위 / 회전율 19.4% / 5분봉가속 0.1 / 음봉 윗꼬리 큰 봉 / VP 95.
     round 21~33: Stage 2 hard-fail 로 drop.
-    round 37 (현재): hard-fail 폐지 → R14 음수 합산 (vol_accel weak -3 + 음봉 -2 +
+    round 37 (현재): hard-fail 폐지 → Buy.Score 음수 합산 (vol_accel weak -3 + 음봉 -2 +
     VP_WEAK -2) 으로 RISING_MIN_SCORE=2.0 미달 → 자연 drop. 검증 결과는 동일.
     """
     from src.dashboard.worker import _evaluate_rising_funnel
@@ -285,7 +285,7 @@ def test_rising_funnel_filters_heunga_haewoon():
         ),
     }
     result = _evaluate_rising_funnel(stage1, snap_by_code, tick_cache)
-    # 약한 vol_accel + 음봉 윗꼬리 + VP_WEAK → R14 음수 합산으로 RISING_MIN_SCORE 미달
+    # 약한 vol_accel + 음봉 윗꼬리 + VP_WEAK → Buy.Score 음수 합산으로 RISING_MIN_SCORE 미달
     assert result == [], f"흥아해운이 funnel 통과해서 RISING 후보로 잡힘: {result}"
 
 
@@ -434,7 +434,7 @@ def test_rising_funnel_passes_when_vp_data_missing():
     문자열 → _to_float 가 NaN 반환. 이전 Stage 3 는 NaN 도 hard-fail 로 drop.
     fix: NaN/None 은 Stage 4 풀스코어로 통과시키고 VP 가산점만 0 처리.
 
-    여기서는 모멘텀/봉/거래대금이 강해 VP 가산 없이도 R14 ≥ 2.0 통과해야 함.
+    여기서는 모멘텀/봉/거래대금이 강해 VP 가산 없이도 Buy.Score ≥ 2.0 통과해야 함.
     """
     from src.dashboard.worker import _evaluate_rising_funnel
 
@@ -472,9 +472,9 @@ def test_rising_funnel_low_vp_alone_no_longer_hard_drops():
     """round 37: VP 85 (명시적 낮음) 도 다른 강한 시그널이면 통과 — false negative 회피.
 
     round 33/34: VP < 100 hard-fail drop.
-    round 37: hard-fail 폐지 → VP 약함은 R14 -2 만 음수 가산. 양봉 + 가속 5배 + 회전율
-    상위 등 다른 양수 시그널이 충분하면 R14 ≥ 2.0 으로 통과 가능. 사용자(Zeta) 통찰:
-    "Stage 2/3 값이 R14 에 이미 있으니 굳이 hard-fail 시킬 필요 없음" → false negative
+    round 37: hard-fail 폐지 → VP 약함은 Buy.Score -2 만 음수 가산. 양봉 + 가속 5배 + 회전율
+    상위 등 다른 양수 시그널이 충분하면 Buy.Score ≥ 2.0 으로 통과 가능. 사용자(Zeta) 통찰:
+    "Stage 2/3 값이 Buy.Score 에 이미 있으니 굳이 hard-fail 시킬 필요 없음" → false negative
     축소.
     """
     from src.dashboard.worker import _evaluate_rising_funnel

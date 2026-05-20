@@ -1,4 +1,4 @@
-"""주도테마/주도주 식별 (R3, R3').
+"""주도테마/주도주 식별 (Theme, Theme.Leader).
 
 v0 (Sonnet 1차 구현, 폐기 예정):
     "거래대금 30위 ≥ 3종목" — 대형주 편향으로 부적합.
@@ -13,7 +13,7 @@ v1 (M5.5, 한국 단타 통설):
        세 지표를 z-score 정규화 후 가중합 → theme_score
     4. theme_score 상위 LEADING_SECTOR_COUNT(=3) = 주도섹터
 
-주도주 (R3'):
+주도주 (Theme.Leader):
     (가) 정통 (post-limit-up, 결정 레포트용): 주도섹터 내 first-mover 상한가
         도달 종목. `identify_leading_stocks` (기존 유지).
     (나) 고주파 (pre-limit-up, M6 모니터링용): 주도섹터 내 **회전율 1위**.
@@ -220,7 +220,7 @@ def identify_early_morning_leaders(
         상한가는 거래정지(매수/매도 불가) 이므로, 상한가 도달 *전* 진입을
         노린다. 따라서 주도주 = 곧 상한가에 도달할 가능성이 높은 종목.
 
-    정의 (R3'(나) M5.5):
+    정의 (Theme.Leader(나) M5.5):
         (1) 주도섹터 내,
         (2) **회전율(거래대금/시총) 상위** top_per_theme 종목.
 
@@ -348,9 +348,9 @@ def identify_rising_candidates(
         Stage 1 (회전율 컷오프):
             - 회전율 내림차순 상위 top_n (기본 15)
 
-    Stage 2~4 (모멘텀 / 체결강도 / R14 풀스코어) 는 호출자 (worker.dashboard_tick)
+    Stage 2~4 (모멘텀 / 체결강도 / Buy.Score 풀스코어) 는 호출자 (worker.dashboard_tick)
     가 minute_bars / ccnl / asking / investor 를 단계별 호출하면서 추가로 추림.
-    본 함수는 Stage 4 의 R14 점수 매기기 전까지 후보 목록만 만든다.
+    본 함수는 Stage 4 의 Buy.Score 점수 매기기 전까지 후보 목록만 만든다.
 
     `identify_early_morning_leaders` 는 주도섹터 내 회전율 1위만 잡지만,
     그 단계 이전에 시총 대비 거래대금이 갑자기 늘어나는 종목도 보고 싶다는
@@ -427,7 +427,7 @@ def identify_rising_candidates(
     return out
 
 
-# ── R3 v1: 테마 z-score 합산 (M5.5) ──────────────────────────────────────────
+# ── Theme v1: 테마 z-score 합산 (M5.5) ──────────────────────────────────────────
 
 
 def _zscore(values: list[float]) -> list[float]:

@@ -167,7 +167,7 @@ def test_apply_on_works_24h_outside_business_hours():
     assert "ON" in msg
 
 
-# ── /buy /sell /status (R15) ─────────────────────────────────────────────────
+# ── /buy /sell /status (Exit.Triggers) ─────────────────────────────────────────────────
 
 
 def test_parse_buy_basic():
@@ -316,7 +316,7 @@ def test_apply_buy_code_only_uses_last_prices(tmp_path, monkeypatch):
 def test_apply_buy_code_only_without_last_price_registers_zero(tmp_path, monkeypatch):
     """round 35 정책: last_prices/last_payloads 둘 다 비어도 보유 등록 진행.
 
-    entry_price=0 으로 등록 — R15 트리거는 평가 skip (안전). 사용자가
+    entry_price=0 으로 등록 — Exit.Triggers 트리거는 평가 skip (안전). 사용자가
     `/buy CODE PRICE` 로 매수가 갱신 가능.
     """
     monkeypatch.setenv("DATA_DIR", str(tmp_path))

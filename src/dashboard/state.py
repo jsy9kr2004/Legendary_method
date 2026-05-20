@@ -9,7 +9,7 @@
 데이터 모델 (round 35):
     `MonitoredStock` 은 한 종목에 대한 카드. 4 상태 flag 가 동시에 켜질 수 있다:
         - is_auto: 시스템 — 주도섹터 회전율 1위. 매 tick 갱신
-        - is_rising: 시스템 — R14 score 통과 부상 후보. 매 tick 갱신
+        - is_rising: 시스템 — Buy.Score score 통과 부상 후보. 매 tick 갱신
         - is_manual: 사용자 핀 — 자동/후보 풀에서 빠져도 카드 유지
         - HOLD: holdings.json 에서 derived (state 에 저장 X — worker 가 매 tick 결정)
 

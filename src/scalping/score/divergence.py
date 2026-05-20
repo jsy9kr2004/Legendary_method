@@ -1,6 +1,6 @@
-"""가격-체결강도 다이버전스 (R13).
+"""가격-체결강도 다이버전스 (Buy.Div).
 
-`docs/jongbae-strategy.md` R13 참조.
+`docs/scalping-strategy.md` Buy.Div 참조.
 
 정의 (5분 윈도우):
     price_5m_change = (current - close_5m_ago) / close_5m_ago × 100
@@ -9,7 +9,7 @@
     bearish_divergence = price 상승 AND VP_5MA 하락 → 고점 신호
     bullish_divergence = price 하락 AND VP_5MA 상승 → 매집 신호
 
-R14 매수 점수 ±2, R15 매도 트리거 (Bearish 시 즉시 청산 시그널).
+Buy.Score 매수 점수 ±2, Exit.Triggers 매도 트리거 (Bearish 시 즉시 청산 시그널).
 
 pure 함수 — 입력은 모두 호출자가 준비한 스칼라.
 """

@@ -1,8 +1,8 @@
-"""봉 패턴 분석 (R12) — 5분봉 OHLC 기반.
+"""봉 패턴 분석 (Buy.Candle) — 5분봉 OHLC 기반.
 
-`docs/jongbae-strategy.md` R12 참조. 정정 이력 round 14.
+`docs/scalping-strategy.md` Buy.Candle 참조. 정정 이력 round 14.
 
-배경: R11 가속만으론 "양봉 정체"인지 "큰 음봉"인지 구분 못함. 봉 자체 형태를
+배경: Buy.Accel 가속만으론 "양봉 정체"인지 "큰 음봉"인지 구분 못함. 봉 자체 형태를
 별도 시그널로.
 
 기준: 최근 완성봉 (진행 중 봉 제외). 5분봉 권장.
@@ -28,7 +28,7 @@ EPS = 1e-9
 
 @dataclass(frozen=True)
 class CandleShape:
-    """봉 1개의 형태 요약 (R14 매수 점수 / R15 매도 트리거 입력)."""
+    """봉 1개의 형태 요약 (Buy.Score 매수 점수 / Exit.Triggers 매도 트리거 입력)."""
     type: CandleType
     open: float
     high: float
@@ -106,19 +106,19 @@ def latest_completed_candle(minute_bars: pd.DataFrame) -> CandleShape | None:
     return classify_candle(o, h, l, c)
 
 
-# ── R14 / R15 임계 판정 ────────────────────────────────────────────────────────
+# ── Buy.Score / Exit.Triggers 임계 판정 ────────────────────────────────────────────────────────
 
 
 def is_clean_bullish(shape: CandleShape) -> bool:
-    """R14 +2: 양봉 AND upper_wick < 0.3. 장대양봉 / 깨끗한 상승."""
+    """Buy.Score +2: 양봉 AND upper_wick < 0.3. 장대양봉 / 깨끗한 상승."""
     return shape.type == "bullish" and shape.upper_wick < UPPER_WICK_CLEAN
 
 
 def is_weak_candle(shape: CandleShape) -> bool:
-    """R14 -2: 음봉 OR upper_wick > 0.4. 약한 봉 / 매도 우위."""
+    """Buy.Score -2: 음봉 OR upper_wick > 0.4. 약한 봉 / 매도 우위."""
     return shape.type == "bearish" or shape.upper_wick > UPPER_WICK_LONG
 
 
 def is_bearish_exit_signal(shape: CandleShape) -> bool:
-    """R15 C4: 음봉 AND upper_wick > 0.5. 보유 모드 즉시 청산 신호."""
+    """Exit.Triggers C4: 음봉 AND upper_wick > 0.5. 보유 모드 즉시 청산 신호."""
     return shape.type == "bearish" and shape.upper_wick > UPPER_WICK_BEARISH_EXIT

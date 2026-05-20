@@ -59,7 +59,7 @@ def _candidate_block(c: dict[str, Any]) -> str:
     layers = c.get("layers", {})
     sizing_layer = c.get("sizing_layer", "")
 
-    # R4 v2 (e) round 41 — normal 범위 10~27% (이전 20%↑). limit_up 은 27% 상한
+    # Eod.Pick v2 (e) round 41 — normal 범위 10~27% (이전 20%↑). limit_up 은 27% 상한
     # 컷에 자동 제외되므로 더는 후보로 안 나오나 backward-compat 위해 라벨 유지.
     priority_label = {
         "limit_up": "🔴 상한가",
@@ -117,7 +117,7 @@ def _candidate_block(c: dict[str, Any]) -> str:
         # 기존 note 가 다른 사유로 채워졌으면 그것도 표시
         lines.append(f"          비고: {layer4_note}")
 
-    # R4 v2 보조 지표 — 1년 ret≥10 횟수 + 갭상 비율 (round 41 ④, 컷 X 표시만)
+    # Eod.Pick v2 보조 지표 — 1년 ret≥10 횟수 + 갭상 비율 (round 41 ④, 컷 X 표시만)
     aux = c.get("historical_aux") or {}
     n_ret10 = int(aux.get("n_ret10", 0) or 0)
     if n_ret10 > 0:
@@ -130,7 +130,7 @@ def _candidate_block(c: dict[str, Any]) -> str:
         else:
             lines.append(f"  📊 1년 ret≥10: {n_ret10}회 (갭상 데이터 없음)")
 
-    # R4 v2 hard cut 통과 + soft 지표 표시
+    # Eod.Pick v2 hard cut 통과 + soft 지표 표시
     # (c) hard cut 통과 시 ✅, (d) 신고가는 soft — pass/fail/unknown 모두 표시.
     # (f) Layer 표본 ≥5 도 soft — sample_sufficient False 면 ⚠ 경고만.
     chk = c.get("r4v2_check") or {}
@@ -149,7 +149,7 @@ def _candidate_block(c: dict[str, Any]) -> str:
     if sample_ok is False:
         chk_parts.append("⚠ Layer 표본 부족 (n<5) — Kelly 산출 불가, Sharpe/Equal/직관 활용")
     if chk_parts:
-        lines.append(f"  R4 v2: {' / '.join(chk_parts)}")
+        lines.append(f"  Eod.Pick v2: {' / '.join(chk_parts)}")
 
     # 14:50 시그널 (표시만, 점수화 X)
     signals = c.get("intraday_signals") or {}
@@ -343,8 +343,8 @@ def build_decision_report(
         "",
         sep("─"),
         "• 본 레포트는 14:50 기준. 종가 직전 상황 변동 가능",
-        "• R4 v2 hard cut: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 + (e) 10≤ret≤27%",
-        "• R4 v2 보조 지표 (표시만): (d) 52주 신고가 + (f) Layer 표본≥5 + 1년 ret≥10 갭상 비율",
+        "• Eod.Pick v2 hard cut: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 + (e) 10≤ret≤27%",
+        "• Eod.Pick v2 보조 지표 (표시만): (d) 52주 신고가 + (f) Layer 표본≥5 + 1년 ret≥10 갭상 비율",
         "• NXT 청산 가능 여부: v1 예정",
     ]
 

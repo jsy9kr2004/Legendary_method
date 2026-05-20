@@ -1,4 +1,4 @@
-"""4-Layer Historical 갭상 통계 (R5).
+"""4-Layer Historical 갭상 통계 (Eod.GapStats).
 
 각 종배 후보에 대해 lookback 252거래일(약 1년)의 일봉 데이터에서
 유사 사례를 4단계로 매칭하고 다음날 갭상 통계를 계산.
@@ -43,7 +43,7 @@ LAYER1_RETURN_THRESHOLD = 20.0
 LAYER2_RETURN_THRESHOLD = 29.5
 CLOSE_POSITION_TOLERANCE = 0.02   # ±2%
 LOOKBACK_TRADING_DAYS = 252
-MIN_SAMPLES_FOR_CANDIDATE = 5     # n<5 이면 후보 제외 (R4 (c))
+MIN_SAMPLES_FOR_CANDIDATE = 5     # n<5 이면 후보 제외 (Eod.Pick (c))
 MARKET_MA_WINDOW = 200            # KOSPI 200일 이평 (강세장 판정)
 VOLUME_AVG_WINDOW = 20            # 거래량 평균 윈도우 (배수 계산용)
 VOLUME_RATIO_TOLERANCE = 0.5      # ±0.5배 — Layer 매칭 폭
@@ -67,7 +67,7 @@ def historical_ret10_gap_stats(
     today: date,
     lookback: int = LOOKBACK_TRADING_DAYS,
 ) -> dict[str, Any]:
-    """R4 v2 보조 지표 — 1년 lookback 동안 ret≥10% 발생 횟수 + 그중 갭상 비율.
+    """Eod.Pick v2 보조 지표 — 1년 lookback 동안 ret≥10% 발생 횟수 + 그중 갭상 비율.
 
     plan.md round 41 ④: "historical 갭상 비율 (1년 ret≥10 횟수 + 그중 갭상 횟수 +
     비율) 은 카드 보조 정보로만 표시, 컷으로 사용 X". 단골 종배 종목 식별용
@@ -120,7 +120,7 @@ def is_52w_high(
     today_high: int | float,
     window: int = LOOKBACK_TRADING_DAYS,
 ) -> bool | None:
-    """R4 v2 (d) — 오늘 일중 고가가 직전 N거래일(기본 250 ≈ 52주) 종가 최고치를
+    """Eod.Pick v2 (d) — 오늘 일중 고가가 직전 N거래일(기본 250 ≈ 52주) 종가 최고치를
     돌파했는지.
 
     종가 기준 비교 (HTS 신고가 표시 관례). 일중 고가 데이터를 today_high 로 받음 —
@@ -388,7 +388,7 @@ def historical_4layer(
 
 
 def has_enough_samples(layer_stats: dict[str, Any], min_n: int = MIN_SAMPLES_FOR_CANDIDATE) -> bool:
-    """R4 (c): historical 사례 >= 5건 인지 검증."""
+    """Eod.Pick (c): historical 사례 >= 5건 인지 검증."""
     return layer_stats.get("n", 0) >= min_n
 
 

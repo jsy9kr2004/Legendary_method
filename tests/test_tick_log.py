@@ -65,8 +65,8 @@ def test_build_row_full_signals():
         vwap_pct=1.2, ma5_pct=0.8, ma20_pct=2.5,
         divergence=None,
         volume_ratio=3.5, limit_up_hit_time=None,
-        trigger_states={"C1_vp_below_100": False, "C2_bearish_divergence": False,
-                        "C3_vol_drain": False, "C4_bearish_candle": False},
+        trigger_states={"E1_vp_below_100": False, "E2_bearish_divergence": False,
+                        "E3_vol_drain": False, "E4_bearish_candle": False},
         funnel_evaluated=True,
     )
     assert row.code == "091340"
@@ -135,7 +135,7 @@ def test_build_row_holding_mode():
         ccnl=None, asking=None, investor=None, investor_delta=None,
         vwap_pct=float("nan"), ma5_pct=float("nan"), ma20_pct=float("nan"),
         divergence=None, volume_ratio=float("nan"), limit_up_hit_time=None,
-        trigger_states={"C1_vp_below_100": True},
+        trigger_states={"E1_vp_below_100": True},
         funnel_evaluated=False, holding=h,
     )
     assert row.is_holding is True
@@ -143,7 +143,7 @@ def test_build_row_holding_mode():
     assert row.holding_entry_time == entry.isoformat()
     assert row.holding_elapsed_sec == 12 * 60 + 18
     assert row.holding_pnl_pct is not None and row.holding_pnl_pct > 0
-    assert row.trigger_c1_vp_below_100 is True
+    assert row.trigger_e1_vp_below_100 is True
 
 
 # ── append_tick_log ──────────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ def test_append_trade_event_sell_with_trigger(tmp_data_dir):
     append_trade_event(
         TradeEvent(ts=now.isoformat(), code="091340", name="x", action="sell",
                    price=92500, source="command",
-                   trigger_fired="A1_stop_price,C1_vp_below_100"),
+                   trigger_fired="A1_stop_price,E1_vp_below_100"),
         now,
     )
     path = tmp_data_dir / "trades" / "2026-05-18.jsonl"

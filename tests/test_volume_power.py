@@ -1,4 +1,4 @@
-"""src.scalping.score.vp (R10) 단위 테스트."""
+"""src.scalping.score.vp (Buy.VP) 단위 테스트."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta

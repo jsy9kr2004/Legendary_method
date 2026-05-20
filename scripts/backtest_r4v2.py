@@ -1,4 +1,4 @@
-"""R4 v2 종배 룰 backtest — daily_ohlcv 기반 (round 41 후속 3, 2026-05-19).
+"""Eod.Pick v2 종배 룰 backtest — daily_ohlcv 기반 (round 41 후속 3, 2026-05-19).
 
 목적:
     round 41 본문이 "거래대금 top 50 universe 5/11~5/14 17종목 갭상 58.8%"
@@ -13,7 +13,7 @@
     - data/meta/stocks.parquet (master — code/name/market_cap, ETF/ETN/리츠/
       스팩 제외 jongbae_only 필터 통과 종목)
 
-룰 (R4 v2 hard cut):
+룰 (Eod.Pick v2 hard cut):
     (a) 거래대금 top N universe (단일종목 — master 통과)
     (b) ret > 0 — (e) 의 strict subset, 별도 코드 X
     (c) (high - close) / high ≤ 10%
@@ -38,7 +38,7 @@ import pandas as pd
 
 from src.config import load_settings
 
-# R4 v2 hard cut 임계값
+# Eod.Pick v2 hard cut 임계값
 MIN_RET = 10.0
 MAX_RET = 27.0
 MAX_DROP_FROM_HIGH_PCT = 10.0
@@ -76,7 +76,7 @@ def _apply_r4v2(
     top_n: int,
     tradable_codes: set[str],
 ) -> pd.DataFrame:
-    """그날 일봉에 R4 v2 (a)~(e) hard cut 적용 후 통과 종목 DF.
+    """그날 일봉에 Eod.Pick v2 (a)~(e) hard cut 적용 후 통과 종목 DF.
 
     Args:
         day_df: 한 날짜의 전종목 일봉 DF (open/high/low/close/trading_value).
@@ -153,7 +153,7 @@ def _backtest_for_topn(
     end: dt.date,
     top_n: int,
 ) -> pd.DataFrame:
-    """[start, end] 범위에서 R4 v2 백테스트 — top_n universe."""
+    """[start, end] 범위에서 Eod.Pick v2 백테스트 — top_n universe."""
     dates_sorted: list[dt.date] = sorted(ohlcv["date"].unique().tolist())
     result_frames: list[pd.DataFrame] = []
     for d in dates_sorted:

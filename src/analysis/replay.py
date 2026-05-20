@@ -1,6 +1,6 @@
-"""replay CODE DATE — 종목 1개의 그날 시그널 시계열 + R14 breakdown.
+"""replay CODE DATE — 종목 1개의 그날 시그널 시계열 + Buy.Score breakdown.
 
-매직 넘버 튜닝 목적: 사용자가 매수/매도 결정한 시점의 시그널 값과 R14 breakdown 을
+매직 넘버 튜닝 목적: 사용자가 매수/매도 결정한 시점의 시그널 값과 Buy.Score breakdown 을
 한눈에 보고 "이 항목 가중치가 너무 높았다 / 낮았다", "이 트리거가 너무 자주 발화했다"
 같은 판단을 직접 내림.
 
@@ -110,7 +110,7 @@ def replay_stock(
 
     # 시계열 표 헤더
     print(
-        "\n시각      가격         등급/점수    a5    a1    VP    R15(c1/c2/c3/c4)  사유"
+        "\n시각      가격         등급/점수    a5    a1    VP    Exit.Triggers(c1/c2/c3/c4)  사유"
     )
     print("─" * 100)
     for _, row in s.iterrows():
@@ -122,10 +122,10 @@ def replay_stock(
         a5 = row.get("vol_accel_5m")
         a1 = row.get("vol_accel_1m")
         vp = row.get("vp")
-        c1 = "✓" if row.get("trigger_c1_vp_below_100") else "·"
-        c2 = "✓" if row.get("trigger_c2_bearish_divergence") else "·"
-        c3 = "✓" if row.get("trigger_c3_vol_drain") else "·"
-        c4 = "✓" if row.get("trigger_c4_bearish_candle") else "·"
+        c1 = "✓" if row.get("trigger_e1_vp_below_100") else "·"
+        c2 = "✓" if row.get("trigger_e2_bearish_divergence") else "·"
+        c3 = "✓" if row.get("trigger_e3_vol_drain") else "·"
+        c4 = "✓" if row.get("trigger_e4_bearish_candle") else "·"
         reasons = row.get("buy_reasons") or []
         # parquet 의 list 컬럼 — numpy array 일 수도
         if not isinstance(reasons, (list, tuple)):
@@ -160,10 +160,10 @@ def replay_stock(
     )
     # 트리거 발화 빈도 — 청산 임계 튜닝용
     for c in (
-        ("trigger_c1_vp_below_100", "C1 VP<100"),
-        ("trigger_c2_bearish_divergence", "C2 Bearish"),
-        ("trigger_c3_vol_drain", "C3 자금고갈"),
-        ("trigger_c4_bearish_candle", "C4 윗꼬리음봉"),
+        ("trigger_e1_vp_below_100", "C1 VP<100"),
+        ("trigger_e2_bearish_divergence", "C2 Bearish"),
+        ("trigger_e3_vol_drain", "C3 자금고갈"),
+        ("trigger_e4_bearish_candle", "C4 윗꼬리음봉"),
     ):
         col, label = c
         if col in s.columns:

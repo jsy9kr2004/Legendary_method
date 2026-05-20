@@ -18,7 +18,7 @@
    사용 케이스: 14:50 정시 스냅샷 그대로 후보 필터 룰 변경 효과 검증.
 
 공통 동작 (`scheduler._send_decision_report` 직접 호출):
-    - R4 v2 (e) 컷, fetch_quote OHLCV 보강, market_stats fallback,
+    - Eod.Pick v2 (e) 컷, fetch_quote OHLCV 보강, market_stats fallback,
       14:50 시그널 fetch — 모든 fix 자동 적용.
     - 텔레그램 발송됨. preview 만 원하면 `DRY_RUN=1` 환경변수.
     - 정시 cron 저장본 (`data/reports/.../14_50_decision.md`) 을 덮어씀.

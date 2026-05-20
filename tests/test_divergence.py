@@ -1,4 +1,4 @@
-"""src.scalping.score.divergence (R13) 단위 테스트."""
+"""src.scalping.score.divergence (Buy.Div) 단위 테스트."""
 from __future__ import annotations
 
 from src.scalping.score.divergence import compute_divergence

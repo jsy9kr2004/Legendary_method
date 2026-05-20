@@ -1,4 +1,4 @@
-"""src.scalping.score.candle (R12) 단위 테스트."""
+"""src.scalping.score.candle (Buy.Candle) 단위 테스트."""
 from __future__ import annotations
 
 import pandas as pd
@@ -94,7 +94,7 @@ def test_latest_completed_candle_zero_price_returns_none():
     assert latest_completed_candle(df) is None
 
 
-# ── R14 / R15 임계 판정 ──────────────────────────────────────────────────────
+# ── Buy.Score / Exit.Triggers 임계 판정 ──────────────────────────────────────────────────────
 
 
 def test_is_clean_bullish_true():

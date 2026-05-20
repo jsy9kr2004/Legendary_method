@@ -1,7 +1,7 @@
 """tick-level 시그널 로깅 (Phase 1).
 
 매 2초 tick 마다 Stage 0 통과 50종목 + monitored 풀(auto/rising/manual/hold) 합집합에
-대해 모든 raw 시그널 + funnel 통과/탈락 + R14 점수 breakdown 을 jsonl 한 줄로 append.
+대해 모든 raw 시그널 + funnel 통과/탈락 + Buy.Score 점수 breakdown 을 jsonl 한 줄로 append.
 
 운영 흐름:
     운영 (매 tick):      data/tick_logs/raw/YYYY-MM-DD.jsonl 매 tick append
@@ -110,24 +110,24 @@ class TickLogRow:
     price_vs_ma5_pct: float | None = None
     price_vs_ma20_pct: float | None = None
 
-    # ── 다이버전스 (R13) ─────────────────────────────────────────────────
+    # ── 다이버전스 (Buy.Div) ─────────────────────────────────────────────────
     divergence_bearish: bool = False
     divergence_bullish: bool = False
     divergence_price_change_pct: float | None = None
     divergence_vp_5ma_delta: float | None = None
 
-    # ── 거래량 비율 (R14d) ───────────────────────────────────────────────
+    # ── 거래량 비율 (Buy.Score.d) ───────────────────────────────────────────────
     volume_ratio_vs_prev_day: float | None = None
 
-    # ── 상한가 도달 시각 (R14c) ──────────────────────────────────────────
+    # ── 상한가 도달 시각 (Buy.Score.c) ──────────────────────────────────────────
     limit_up_hit_time: str | None = None  # "HHMMSS" or None
 
-    # ── R14 매수 점수 ────────────────────────────────────────────────────
+    # ── Buy.Score 매수 점수 ────────────────────────────────────────────────────
     buy_score: float | None = None
     buy_grade: str | None = None          # STRONG / WATCH / NEUTRAL / AVOID
     buy_reasons: list[str] = field(default_factory=list)
 
-    # ── R15 청산 트리거 발화 상태 ─────────────────────────────────────────
+    # ── Exit.Triggers 청산 트리거 발화 상태 ─────────────────────────────────────────
     # 감시 모드: C1~C4 만 유효 (C5 는 보유 모드만)
     # 보유 모드: A1~A5, B1~B3, C1~C5 모두 유효
     trigger_a1_stop_price: bool = False
@@ -135,17 +135,17 @@ class TickLogRow:
     trigger_a3_stop_ma: bool = False
     trigger_a4_stop_time: bool = False
     trigger_a5_eod_ma_break: bool = False
-    trigger_b1_take_profit_1: bool = False
-    trigger_b2_take_profit_2: bool = False
-    trigger_b3_trailing: bool = False
-    trigger_c1_vp_below_100: bool = False
-    trigger_c2_bearish_divergence: bool = False
-    trigger_c3_vol_drain: bool = False
-    trigger_c4_bearish_candle: bool = False
-    trigger_c5_vi_failure: bool = False
+    trigger_p1_take_profit_1: bool = False
+    trigger_p2_take_profit_2: bool = False
+    trigger_p3_trailing: bool = False
+    trigger_e1_vp_below_100: bool = False
+    trigger_e2_bearish_divergence: bool = False
+    trigger_e3_vol_drain: bool = False
+    trigger_e4_bearish_candle: bool = False
+    trigger_e5_vi_failure: bool = False
 
     # ── funnel 통과 여부 ──────────────────────────────────────────────────
-    # Stage 0 통과 종목 중 R14 풀스코어 평가까지 갔는지. round 37 이후 단일 컷.
+    # Stage 0 통과 종목 중 Buy.Score 풀스코어 평가까지 갔는지. round 37 이후 단일 컷.
     funnel_evaluated: bool = False        # 분봉/체결강도/호가/투자자 fetch 됐는지
     funnel_passed_rising: bool = False    # RISING_MIN_SCORE 통과해서 RISING 풀에 들어갔는지
 
@@ -188,7 +188,7 @@ def _trade_log_path(date: datetime) -> Path:
 
 @dataclass
 class TradeEvent:
-    """매수/매도 이벤트 (사용자 직접 또는 R15 트리거).
+    """매수/매도 이벤트 (사용자 직접 또는 Exit.Triggers 트리거).
 
     tick_logs 와 timestamp 로 join 해서 매수/매도 시점 ± N분 시그널 분석 가능.
     CLAUDE.md "자동 매매 금지" 정책상 실주문은 사용자가 외부 HTS 에서 직접 —
@@ -200,7 +200,7 @@ class TradeEvent:
     action: str                   # "buy" / "sell"
     price: int | None = None      # /buy 시 명시 또는 자동 보충 (last_prices)
     source: str | None = None     # "command" (사용자 /buy) / "auto" / "manual"
-    trigger_fired: str | None = None  # R15 트리거 발화 사유 (sell 시)
+    trigger_fired: str | None = None  # Exit.Triggers 트리거 발화 사유 (sell 시)
     user_note: str | None = None  # 사용자 메모 ("감으로 버팀" 같은)
 
 
@@ -372,24 +372,24 @@ def build_tick_log_row(
         volume_ratio_vs_prev_day=_float_safe(volume_ratio),
         # 상한가
         limit_up_hit_time=lut_str,
-        # R14
+        # Buy.Score
         buy_score=_float_safe(getattr(monitored, "buy_score", None)),
         buy_grade=getattr(monitored, "buy_grade", None),
         buy_reasons=list(getattr(monitored, "buy_reasons", []) or []),
-        # R15 트리거
+        # Exit.Triggers 트리거
         trigger_a1_stop_price=bool(trigger_states.get("A1_stop_price", False)),
         trigger_a2_stop_bar_low=bool(trigger_states.get("A2_stop_bar_low", False)),
         trigger_a3_stop_ma=bool(trigger_states.get("A3_stop_ma", False)),
         trigger_a4_stop_time=bool(trigger_states.get("A4_stop_time", False)),
         trigger_a5_eod_ma_break=bool(trigger_states.get("A5_eod_ma_break", False)),
-        trigger_b1_take_profit_1=bool(trigger_states.get("B1_take_profit_1", False)),
-        trigger_b2_take_profit_2=bool(trigger_states.get("B2_take_profit_2", False)),
-        trigger_b3_trailing=bool(trigger_states.get("B3_trailing", False)),
-        trigger_c1_vp_below_100=bool(trigger_states.get("C1_vp_below_100", False)),
-        trigger_c2_bearish_divergence=bool(trigger_states.get("C2_bearish_divergence", False)),
-        trigger_c3_vol_drain=bool(trigger_states.get("C3_vol_drain", False)),
-        trigger_c4_bearish_candle=bool(trigger_states.get("C4_bearish_candle", False)),
-        trigger_c5_vi_failure=bool(trigger_states.get("C5_vi_failure", False)),
+        trigger_p1_take_profit_1=bool(trigger_states.get("P1_take_profit_1", False)),
+        trigger_p2_take_profit_2=bool(trigger_states.get("P2_take_profit_2", False)),
+        trigger_p3_trailing=bool(trigger_states.get("P3_trailing", False)),
+        trigger_e1_vp_below_100=bool(trigger_states.get("E1_vp_below_100", False)),
+        trigger_e2_bearish_divergence=bool(trigger_states.get("E2_bearish_divergence", False)),
+        trigger_e3_vol_drain=bool(trigger_states.get("E3_vol_drain", False)),
+        trigger_e4_bearish_candle=bool(trigger_states.get("E4_bearish_candle", False)),
+        trigger_e5_vi_failure=bool(trigger_states.get("E5_vi_failure", False)),
         # funnel
         funnel_evaluated=funnel_evaluated,
         funnel_passed_rising=bool(getattr(monitored, "is_rising", False)),

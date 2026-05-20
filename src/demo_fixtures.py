@@ -123,7 +123,7 @@ def make_daily_ohlcv(target_date: date, lookback_days: int = 260) -> pd.DataFram
         days.sort()
     days = days[-lookback_days:]
 
-    # 과거에도 충분한 강한 양봉 사례 삽입 (R4(c) n>=5 충족 + Layer 통계 의미있게)
+    # 과거에도 충분한 강한 양봉 사례 삽입 (Eod.Pick(c) n>=5 충족 + Layer 통계 의미있게)
     # Layer 1 cross-stock pool 이라 10종목 × 6건 = 60건 정도면 충분.
     historical_limit_up_days = [25, 60, 100, 140, 180, 220]
 
@@ -163,7 +163,7 @@ def make_daily_ohlcv(target_date: date, lookback_days: int = 260) -> pd.DataFram
                     df_vals.at[hist_idx, "close"] = int(prev_close * 1.21)
                     df_vals.at[hist_idx, "high"] = int(prev_close * 1.23)
 
-        # R4 v2 (d) 가드용 demo 후처리 — target_date 가 52주 신고가가 되도록
+        # Eod.Pick v2 (d) 가드용 demo 후처리 — target_date 가 52주 신고가가 되도록
         # 과거 close 가 target close 를 넘으면 (target_close - 1) 로 cap.
         # 075180 (특수 spike 종목) 과 전기/전선 강세 종목만 — 일반 종목은 그대로.
         if code == "075180" or code in ("001440", "229640", "010120", "267260"):

@@ -226,12 +226,12 @@ def is_recent_high(
 
 
 def vol_accel_1m(minute_bars: pd.DataFrame) -> float:
-    """R11 분당 거래대금 가속 — 1분 윈도우.
+    """Buy.Accel 분당 거래대금 가속 — 1분 윈도우.
 
     `vol_accel_1m = 최근 1분 거래대금 / 직전 5분 평균 분당거래대금`
 
-    R3' 30분 분모(`compute_accel_ratio`)와는 별개 용도 — R14 매수 점수 /
-    R15 매도 트리거 전용.
+    Theme.Leader 30분 분모(`compute_accel_ratio`)와는 별개 용도 — Buy.Score 매수 점수 /
+    Exit.Triggers 매도 트리거 전용.
     """
     return compute_accel_ratio(
         minute_bars,
@@ -241,7 +241,7 @@ def vol_accel_1m(minute_bars: pd.DataFrame) -> float:
 
 
 def vol_accel_5m(minute_bars: pd.DataFrame) -> float:
-    """R11 분당 거래대금 가속 — 5분 윈도우.
+    """Buy.Accel 분당 거래대금 가속 — 5분 윈도우.
 
     `vol_accel_5m = 최근 5분 거래대금 / 직전 20분 평균 5분 거래대금`
     """
@@ -259,7 +259,7 @@ def compute_vwap(minute_bars: pd.DataFrame) -> float:
     typical_price = (high + low + close) / 3
 
     단타 통설 (round 23, P0-1): VWAP 은 장중 세력 평단가의 근사. 가격이 VWAP
-    위면 매수 우위, 아래면 매도 우위 — R14 가산/감산용 입력값. 그날 데이터
+    위면 매수 우위, 아래면 매도 우위 — Buy.Score 가산/감산용 입력값. 그날 데이터
     누적이라 시각이 늦을수록 안정.
 
     Args:
@@ -309,7 +309,7 @@ def price_vs_vwap_pct(price: float, vwap: float) -> float:
 def compute_minute_ma(minute_bars: pd.DataFrame, window_minutes: int) -> float:
     """최근 N분 종가 단순이동평균 (round 24, P0-2).
 
-    1분봉 가정. 5분 이평 = 최근 5개 봉 close 평균. R15 A3 의 minute_ma_5 와
+    1분봉 가정. 5분 이평 = 최근 5개 봉 close 평균. Exit.Triggers A3 의 minute_ma_5 와
     동일 정의 (exit_triggers.py:213).
 
     Args:

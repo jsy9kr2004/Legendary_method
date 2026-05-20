@@ -1,4 +1,4 @@
-"""src.scalping.exit.triggers (R15) 단위 테스트.
+"""src.scalping.exit.triggers (Exit.Triggers) 단위 테스트.
 
 자동 매매 금지 정책 검증: 모든 트리거는 TriggerEvent (텔레그램 메시지)만 반환.
 실주문 코드 없음.
@@ -72,7 +72,7 @@ def test_trigger_text_no_push_prefix_for_C():
         h, now=now, current_price=100_500,
         vp_5ma_prev=105.0, vp_5ma_now=98.0,
     )
-    c1 = next(e for e in events if e.kind == "C1_vp_below_100")
+    c1 = next(e for e in events if e.kind == "E1_vp_below_100")
     assert "[매도 트리거]" not in c1.text
     assert "\n" not in c1.text
     assert "C1" in c1.text or "VP" in c1.text
@@ -221,59 +221,59 @@ def test_A4_no_trigger_above_required_profit():
 # ── 익절 (B1/B2) — 멱등 ──────────────────────────────────────────────────────
 
 
-def test_B1_take_profit_1_oneshot():
+def test_P1_take_profit_1_oneshot():
     h, now = _entry(100_000)
     events_1 = evaluate_triggers(h, now=now, current_price=102_500)
-    assert any(e.kind == "B1_take_profit_1" for e in events_1)
+    assert any(e.kind == "P1_take_profit_1" for e in events_1)
 
     # 동일 가격에서 다시 호출 → B1 발화 X (멱등)
     events_2 = evaluate_triggers(h, now=now, current_price=102_500)
-    assert not any(e.kind == "B1_take_profit_1" for e in events_2)
+    assert not any(e.kind == "P1_take_profit_1" for e in events_2)
 
 
-def test_B2_take_profit_2_oneshot():
+def test_P2_take_profit_2_oneshot():
     h, now = _entry(100_000)
     events = evaluate_triggers(h, now=now, current_price=104_000)
     kinds = [e.kind for e in events]
-    assert "B1_take_profit_1" in kinds
-    assert "B2_take_profit_2" in kinds
+    assert "P1_take_profit_1" in kinds
+    assert "P2_take_profit_2" in kinds
 
     events_2 = evaluate_triggers(h, now=now, current_price=104_000)
     kinds_2 = [e.kind for e in events_2]
-    assert "B1_take_profit_1" not in kinds_2
-    assert "B2_take_profit_2" not in kinds_2
+    assert "P1_take_profit_1" not in kinds_2
+    assert "P2_take_profit_2" not in kinds_2
 
 
 # ── 트레일링 (B3) — B1 발화 후 활성 ──────────────────────────────────────────
 
 
-def test_B3_trailing_inactive_before_B1():
+def test_P3_trailing_inactive_before_B1():
     h, now = _entry(100_000)
     # B1 미발화 — 트레일링 X
     events = evaluate_triggers(h, now=now, current_price=101_500)
-    assert not any(e.kind == "B3_trailing" for e in events)
+    assert not any(e.kind == "P3_trailing" for e in events)
 
 
-def test_B3_trailing_after_B1():
+def test_P3_trailing_after_B1():
     h, now = _entry(100_000)
     # 1) +2.5% 도달 → B1 발화, high=102_500
     evaluate_triggers(h, now=now, current_price=102_500)
     # 2) 잠시 후 102_000 — high × 0.985 = 100_962.5
     later = now + timedelta(seconds=30)
     events = evaluate_triggers(h, now=later, current_price=100_900)
-    assert any(e.kind == "B3_trailing" for e in events)
+    assert any(e.kind == "P3_trailing" for e in events)
 
 
 # ── C1 VP 5MA 100 하향 ───────────────────────────────────────────────────────
 
 
-def test_C1_vp_below_100_cross():
+def test_E1_vp_below_100_cross():
     h, now = _entry(100_000)
     events = evaluate_triggers(
         h, now=now, current_price=100_500,
         vp_5ma_prev=105.0, vp_5ma_now=98.0,
     )
-    assert any(e.kind == "C1_vp_below_100" for e in events)
+    assert any(e.kind == "E1_vp_below_100" for e in events)
 
 
 def test_C1_no_cross():
@@ -282,44 +282,44 @@ def test_C1_no_cross():
         h, now=now, current_price=100_500,
         vp_5ma_prev=95.0, vp_5ma_now=92.0,
     )
-    assert not any(e.kind == "C1_vp_below_100" for e in events)
+    assert not any(e.kind == "E1_vp_below_100" for e in events)
 
 
 def test_C1_oneshot():
     h, now = _entry(100_000)
     evaluate_triggers(h, now=now, current_price=100_500, vp_5ma_prev=105, vp_5ma_now=98)
     events = evaluate_triggers(h, now=now, current_price=100_500, vp_5ma_prev=98, vp_5ma_now=95)
-    assert not any(e.kind == "C1_vp_below_100" for e in events)
+    assert not any(e.kind == "E1_vp_below_100" for e in events)
 
 
 # ── C2 Bearish Divergence ────────────────────────────────────────────────────
 
 
-def test_C2_bearish_divergence():
+def test_E2_bearish_divergence():
     h, now = _entry(100_000)
     div = compute_divergence(price_now=101_000, price_5m_ago=100_000, vp_5ma_now=98, vp_5ma_5m_ago=110)
     events = evaluate_triggers(h, now=now, current_price=101_000, divergence=div)
-    assert any(e.kind == "C2_bearish_divergence" for e in events)
+    assert any(e.kind == "E2_bearish_divergence" for e in events)
 
 
 # ── C3 자금 고갈 (2분 지속) ──────────────────────────────────────────────────
 
 
-def test_C3_vol_drain_requires_persist():
+def test_E3_vol_drain_requires_persist():
     h, now = _entry(100_000)
     # 첫 tick — vol_accel_1m=0.3
     events_1 = evaluate_triggers(h, now=now, current_price=100_000, vol_accel_1m_value=0.3)
-    assert not any(e.kind == "C3_vol_drain" for e in events_1)
+    assert not any(e.kind == "E3_vol_drain" for e in events_1)
 
     # 1분 후 — 아직 미달
     t2 = now + timedelta(seconds=60)
     events_2 = evaluate_triggers(h, now=t2, current_price=100_000, vol_accel_1m_value=0.3)
-    assert not any(e.kind == "C3_vol_drain" for e in events_2)
+    assert not any(e.kind == "E3_vol_drain" for e in events_2)
 
     # 2분 후 — 발화
     t3 = now + timedelta(seconds=121)
     events_3 = evaluate_triggers(h, now=t3, current_price=100_000, vol_accel_1m_value=0.3)
-    assert any(e.kind == "C3_vol_drain" for e in events_3)
+    assert any(e.kind == "E3_vol_drain" for e in events_3)
 
 
 def test_C3_recovery_resets_counter():
@@ -331,7 +331,7 @@ def test_C3_recovery_resets_counter():
     # 다시 하락 → 재시작 (즉시 발화 X)
     t3 = now + timedelta(seconds=130)
     events = evaluate_triggers(h, now=t3, current_price=100_000, vol_accel_1m_value=0.3)
-    assert not any(e.kind == "C3_vol_drain" for e in events)
+    assert not any(e.kind == "E3_vol_drain" for e in events)
 
 
 # ── C4 윗꼬리 음봉 ───────────────────────────────────────────────────────────
@@ -342,20 +342,20 @@ def test_C4_bearish_long_upper_wick():
     # 음봉 + 윗꼬리 > 50%
     candle = classify_candle(o=110, h=130, l=100, c=105)
     events = evaluate_triggers(h, now=now, current_price=100_000, candle=candle)
-    assert any(e.kind == "C4_bearish_candle" for e in events)
+    assert any(e.kind == "E4_bearish_candle" for e in events)
 
 
 # ── C5 VI 재상승 실패 ────────────────────────────────────────────────────────
 
 
-def test_C5_vi_failure_after_5min():
+def test_E5_vi_failure_after_5min():
     h, now = _entry(100_000)
     vi_time = now - timedelta(seconds=400)  # 6분 40초 전 발동
     events = evaluate_triggers(
         h, now=now, current_price=100_000,
         vi_triggered_at=vi_time, vi_recovered=False,
     )
-    assert any(e.kind == "C5_vi_failure" for e in events)
+    assert any(e.kind == "E5_vi_failure" for e in events)
 
 
 def test_C5_no_failure_if_recovered():
@@ -365,7 +365,7 @@ def test_C5_no_failure_if_recovered():
         h, now=now, current_price=100_000,
         vi_triggered_at=vi_time, vi_recovered=True,
     )
-    assert not any(e.kind == "C5_vi_failure" for e in events)
+    assert not any(e.kind == "E5_vi_failure" for e in events)
 
 
 # ── compute_c_signal_states — 감시/보유 모드 분기 ────────────────────────────
@@ -384,11 +384,11 @@ def test_c_states_watch_all_off_when_quiet():
         holding=None,
     )
     assert states == {
-        "C1_vp_below_100": False,
-        "C2_bearish_divergence": False,
-        "C3_vol_drain": False,
-        "C4_bearish_candle": False,
-        "C5_vi_failure": False,
+        "E1_vp_below_100": False,
+        "E2_bearish_divergence": False,
+        "E3_vol_drain": False,
+        "E4_bearish_candle": False,
+        "E5_vi_failure": False,
     }
 
 
@@ -399,7 +399,7 @@ def test_c_states_watch_each_signal_lit():
         vp_5ma_prev=120.0, vp_5ma_now=95.0,
         divergence=None, vol_accel_1m=None, candle=None, holding=None,
     )
-    assert s1["C1_vp_below_100"] is True
+    assert s1["E1_vp_below_100"] is True
 
     # C2: Bearish Divergence (가격↑ / VP_5MA↓)
     div = compute_divergence(
@@ -411,14 +411,14 @@ def test_c_states_watch_each_signal_lit():
         vp_5ma_prev=140.0, vp_5ma_now=120.0,
         divergence=div, vol_accel_1m=None, candle=None, holding=None,
     )
-    assert s2["C2_bearish_divergence"] is True
+    assert s2["E2_bearish_divergence"] is True
 
     # C3: 1분 가속 < 0.5 (instantaneous, 지속 시간 무시)
     s3 = compute_c_signal_states(
         vp_5ma_prev=None, vp_5ma_now=None,
         divergence=None, vol_accel_1m=0.3, candle=None, holding=None,
     )
-    assert s3["C3_vol_drain"] is True
+    assert s3["E3_vol_drain"] is True
 
     # C4: 윗꼬리 50%↑ 음봉
     bearish_candle = classify_candle(o=110, h=130, l=100, c=105)
@@ -426,7 +426,7 @@ def test_c_states_watch_each_signal_lit():
         vp_5ma_prev=None, vp_5ma_now=None,
         divergence=None, vol_accel_1m=None, candle=bearish_candle, holding=None,
     )
-    assert s4["C4_bearish_candle"] is True
+    assert s4["E4_bearish_candle"] is True
 
 
 def test_c_states_watch_c5_always_off():
@@ -437,7 +437,7 @@ def test_c_states_watch_c5_always_off():
         candle=classify_candle(o=110, h=130, l=100, c=105),
         holding=None,
     )
-    assert states["C5_vi_failure"] is False
+    assert states["E5_vi_failure"] is False
 
 
 def test_c_states_hold_uses_triggers_fired():
@@ -447,8 +447,8 @@ def test_c_states_hold_uses_triggers_fired():
     holding 갱신했고 본 함수는 표시용 dict 만 만들어 줌.
     """
     h, _ = _entry(100_000)
-    h.triggers_fired.add("C1_vp_below_100")
-    h.triggers_fired.add("C4_bearish_candle")
+    h.triggers_fired.add("E1_vp_below_100")
+    h.triggers_fired.add("E4_bearish_candle")
     states = compute_c_signal_states(
         # instantaneous 입력은 다 False 상태로 줘도, holding 분기는 무시.
         vp_5ma_prev=200.0, vp_5ma_now=150.0,
@@ -456,11 +456,11 @@ def test_c_states_hold_uses_triggers_fired():
         candle=classify_candle(o=100, h=105, l=99, c=104),
         holding=h,
     )
-    assert states["C1_vp_below_100"] is True
-    assert states["C4_bearish_candle"] is True
-    assert states["C2_bearish_divergence"] is False
-    assert states["C3_vol_drain"] is False
-    assert states["C5_vi_failure"] is False
+    assert states["E1_vp_below_100"] is True
+    assert states["E4_bearish_candle"] is True
+    assert states["E2_bearish_divergence"] is False
+    assert states["E3_vol_drain"] is False
+    assert states["E5_vi_failure"] is False
 
 
 def test_c_states_watch_nan_inputs_safe():
@@ -482,7 +482,7 @@ def test_no_order_execution_in_module():
     src_code = Path(mod.__file__).read_text(encoding="utf-8")
     # 금지 키워드 — 실주문 관련
     for kw in ("place_order", "submit_order", "send_order", "execute_order"):
-        assert kw not in src_code, f"R15 정책 위반: {kw} 가 exit_triggers.py 에 있음"
+        assert kw not in src_code, f"Exit.Triggers 정책 위반: {kw} 가 exit_triggers.py 에 있음"
 
 
 # ── 영속화 ───────────────────────────────────────────────────────────────────
@@ -505,14 +505,14 @@ def test_save_load_holdings_roundtrip(tmp_path, monkeypatch):
         entry_bar_low=90_800,
         time_stop_minutes=10,
         high_since_entry=92_000,
-        triggers_fired={"B1_take_profit_1"},
+        triggers_fired={"P1_take_profit_1"},
     )
     et.save_holdings({"091340": h})
     loaded = et.load_holdings()
     assert "091340" in loaded
     assert loaded["091340"].entry_price == 91_300
     assert loaded["091340"].entry_bar_low == 90_800
-    assert "B1_take_profit_1" in loaded["091340"].triggers_fired
+    assert "P1_take_profit_1" in loaded["091340"].triggers_fired
 
 
 def test_load_holdings_missing_file(tmp_path, monkeypatch):

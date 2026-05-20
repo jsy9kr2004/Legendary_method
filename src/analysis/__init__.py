@@ -1,11 +1,11 @@
 """사후 분석 도구 (Phase 2) — tick_logs / trades 데이터 기반.
 
-매직 넘버 튜닝(R14 가중치 / R15 트리거 임계) 의도:
+매직 넘버 튜닝(Buy.Score 가중치 / Exit.Triggers 트리거 임계) 의도:
     Phase 1 에서 누적한 tick-level 시그널 + 매수/매도 이벤트를 사후에 쿼리해서
     "어느 항목이 매수 결정과 양의 상관이 있나" / "트리거 발화 후 사용자가 청산하기
     까지 얼마나 걸렸나" 같은 패턴을 사용자가 직접 보고 가중치/임계를 조정.
 
 명령:
-    replay CODE DATE   — 종목 1개의 그날 시그널 시계열 + R14 breakdown + 매수/매도 마커
+    replay CODE DATE   — 종목 1개의 그날 시그널 시계열 + Buy.Score breakdown + 매수/매도 마커
     regret DATE        — 그날 STRONG/WATCH 도달 종목 + 사용자 결정 매칭
 """

@@ -1,4 +1,4 @@
-"""src.scalping.score.grader (R14) 단위 테스트.
+"""src.scalping.score.grader (Buy.Score) 단위 테스트.
 
 가장 중요한 회귀 케이스:
     - 흥아해운: 모멘텀 죽음 + 호가만 5.3배 → 🔴 AVOID
@@ -6,7 +6,7 @@
 
 기타 경계/누락 입력 테스트.
 
-`docs/jongbae-strategy.md` R14 참조.
+`docs/scalping-strategy.md` Buy.Score 참조.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def test_regression_heungahaeun_avoid():
     """
     # 윗꼬리 ~ 52% 음봉
     candle = classify_candle(o=2850, h=2880, l=2820, c=2825)
-    # upper_wick = (2880-2850)/60 = 0.5 → R12 -2 / R15 C4 boundary
+    # upper_wick = (2880-2850)/60 = 0.5 → Buy.Candle -2 / Exit.Triggers C4 boundary
     # 더 확실한 음봉으로:
     candle = classify_candle(o=2860, h=2900, l=2820, c=2825)
     # total=80, upper=(2900-2860)/80 = 0.5, type=bearish
@@ -212,7 +212,7 @@ def test_bid_ask_ratio_only_gives_half_point():
     assert card.grade == "NEUTRAL"
 
 
-# ── R14a VWAP 위치 (round 23, P0-1) ─────────────────────────────────────────
+# ── Buy.Score.a VWAP 위치 (round 23, P0-1) ─────────────────────────────────────────
 
 
 def test_vwap_above_threshold_adds_one():
@@ -298,7 +298,7 @@ def test_vwap_compounds_with_heungahaeun_avoid():
     assert any("VWAP" in r and "아래" in r for r in card.reasons)
 
 
-# ── R14b 5/20분 이평 위치 (round 24, P0-2) ──────────────────────────────────
+# ── Buy.Score.b 5/20분 이평 위치 (round 24, P0-2) ──────────────────────────────────
 
 
 def test_ma_alignment_bullish_adds_one():
@@ -388,7 +388,7 @@ def test_ma_alignment_compounds_with_heungahaeun():
     assert any("역배열" in r for r in card.reasons)
 
 
-# ── R14c 상한가 진입 시간 가산 (round 25, P1-1) ─────────────────────────────
+# ── Buy.Score.c 상한가 진입 시간 가산 (round 25, P1-1) ─────────────────────────────
 
 
 def test_limit_up_early_before_0930_adds_one():
@@ -436,7 +436,7 @@ def test_limit_up_none_no_gain():
     assert not any("상한가" in r for r in card.reasons)
 
 
-# ── R13 다이버전스 강등 (round 27, P2-1) ─────────────────────────────────────
+# ── Buy.Div 다이버전스 강등 (round 27, P2-1) ─────────────────────────────────────
 
 
 def test_bearish_divergence_subtracts_one_not_two():
@@ -460,7 +460,7 @@ def test_bullish_divergence_adds_one_not_two():
     assert any("+1" in r and "Bullish" in r for r in card.reasons)
 
 
-# ── R14d 거래량 비율 검증 (round 28, P2-2) ──────────────────────────────────
+# ── Buy.Score.d 거래량 비율 검증 (round 28, P2-2) ──────────────────────────────────
 
 
 def test_volume_ratio_normal_adds_half():
@@ -522,13 +522,13 @@ def test_volume_ratio_nan_no_change():
 
 # ── ritual 3 가드레일: 통설 가중치 합 ≥ 비통설 (round 31) ────────────────────
 #
-# docs/plan.md "R14/R15 가중치 검증 ritual" 참조.
+# docs/plan.md "Buy.Score/Exit.Triggers 가중치 검증 ritual" 참조.
 # 가중치 변경 PR 마다 통설 우위 invariant 가 깨지지 않는지 자동 검증.
 #
-# 통설: R3(회전율) / R10(VP) / R11(가속) / R12(봉) / R14a~d(VWAP/MA/시간/거래량)
-# 비통설: R13(다이버전스) — 한국 단타 통설 검색에서 거의 안 나옴
+# 통설: Theme(회전율) / Buy.VP(VP) / Buy.Accel(가속) / Buy.Candle(봉) / Buy.Score.a~d(VWAP/MA/시간/거래량)
+# 비통설: Buy.Div(다이버전스) — 한국 단타 통설 검색에서 거의 안 나옴
 #
-# 가드레일: 통설 양/음수 합산이 비통설의 2배 이상. R13 가중치를 통설 합산의
+# 가드레일: 통설 양/음수 합산이 비통설의 2배 이상. Buy.Div 가중치를 통설 합산의
 # 50% 이상으로 키우면 테스트 깨짐 → 의식적 결정 강제.
 
 
@@ -556,7 +556,7 @@ def test_invariant_consensus_weights_dominate_positive():
 
     assert cs >= 2.0 * ns, (
         f"통설 양수 합 {cs} 가 비통설 {ns} 의 2배 미만. "
-        f"R13 가중치를 너무 키웠는지 가중치 변경 PR 점검."
+        f"Buy.Div 가중치를 너무 키웠는지 가중치 변경 PR 점검."
     )
 
 
@@ -581,7 +581,7 @@ def test_invariant_consensus_penalties_dominate_negative():
 
     assert cs <= 2.0 * ns, (
         f"통설 음수 합 {cs} 가 비통설 {ns} 의 2배 미달 (절댓값). "
-        f"R13 페널티 가중치를 너무 키웠는지 점검."
+        f"Buy.Div 페널티 가중치를 너무 키웠는지 점검."
     )
 
 

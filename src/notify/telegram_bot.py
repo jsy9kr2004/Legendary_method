@@ -6,7 +6,7 @@
     /list                        현재 모니터링 종목 출력
     /clear                       수동 추가분만 해제
     NNNNNN                       6자리 숫자 → 감시 모드 토글 추가/해제
-    /buy NNNNNN [PRICE] [MIN]    보유 모드 진입 (R15).
+    /buy NNNNNN [PRICE] [MIN]    보유 모드 진입 (Exit.Triggers).
                                  PRICE 생략 시 모니터링 최근 시세를 매수가로 사용.
                                  MIN 은 시간손절 N분(기본 10).
     /sell NNNNNN                 보유 모드 해제 (감시 모드 복귀)
@@ -207,7 +207,7 @@ def _apply_buy(
     monitored 에 없는 종목이면 entry 만 surface (is_manual 등 flag X — 보유는
     holdings 기반 derived). price 가 None 이면 last_prices → last_payloads.current
     순으로 fallback. 둘 다 없어도 entry_price=0 으로 등록 (사용자 정책: "그냥 보유
-    처리"). R15 트리거는 entry_price <= 0 일 때 평가 skip 으로 안전 처리됨.
+    처리"). Exit.Triggers 트리거는 entry_price <= 0 일 때 평가 skip 으로 안전 처리됨.
     사용자가 나중에 `/buy CODE PRICE` 로 가격 갱신 가능.
     """
     # 시세 fallback
@@ -226,7 +226,7 @@ def _apply_buy(
                     resolved_price = float(cur)
                     autofilled = True
 
-    # 사용자 정책: 시세 미확보여도 등록 진행. entry_price=0 → R15 트리거 skip.
+    # 사용자 정책: 시세 미확보여도 등록 진행. entry_price=0 → Exit.Triggers 트리거 skip.
     final_price = float(resolved_price) if (resolved_price and resolved_price > 0) else 0.0
 
     # monitored 에 surface — flag 는 안 켜고 entry 만. 보유 카드는 worker prune 이
@@ -271,7 +271,7 @@ def _apply_buy(
         return (
             f"🟡 {code} {name} — 보유 모드 진입 (매수가 미입력)\n"
             f"진입 {now.strftime('%H:%M:%S')}\n"
-            f"※ R15 손절/익절 트리거는 평가 X — `/buy {code} PRICE` 로 매수가 갱신 권장"
+            f"※ Exit.Triggers 손절/익절 트리거는 평가 X — `/buy {code} PRICE` 로 매수가 갱신 권장"
             f"{off_hours_note}"
         )
 
@@ -309,7 +309,7 @@ def _apply_sell(code: str, session: MonitoringSession) -> str:
     if code not in holdings:
         return f"⚠ {code} — 보유 모드 아님"
 
-    # Phase 1: pop 전에 R15 트리거 발화 사유 추출 — 사후 "어떤 트리거 발화 후
+    # Phase 1: pop 전에 Exit.Triggers 트리거 발화 사유 추출 — 사후 "어떤 트리거 발화 후
     # 사용자가 매도했는지" 분석용.
     holding_obj = holdings[code]
     triggers_fired_str: str | None = None

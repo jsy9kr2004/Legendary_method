@@ -58,7 +58,7 @@ def test_render_basic_fields():
     assert "거래대금: 1,247억  회전율: +18.30%" in msg
     assert "(위)" not in msg
     # 외인/기관/프로그램 수급 라인 round 36 부활 — round 22 에서 제거됐던 라인.
-    # R14 점수 합산은 round 29 ritual 통과 전엔 X, 카드 표시만.
+    # Buy.Score 점수 합산은 round 29 ritual 통과 전엔 X, 카드 표시만.
     assert "수급:" in msg
     assert "외인" in msg
     assert "기관" in msg
@@ -361,9 +361,9 @@ def test_render_holding_mode_basic():
         high_since_entry=92800,
     )
     triggers = {
-        "A1_stop_price": False, "C1_vp_below_100": False,
-        "C2_bearish_divergence": False, "C3_vol_drain": False,
-        "C4_bearish_candle": False, "C5_vi_failure": False,
+        "A1_stop_price": False, "E1_vp_below_100": False,
+        "E2_bearish_divergence": False, "E3_vol_drain": False,
+        "E4_bearish_candle": False, "E5_vi_failure": False,
     }
     div = DivergenceState(bearish=False, bullish=False,
                          price_change_pct=0.8, vp_5ma_delta=-3.0)
@@ -414,11 +414,11 @@ def test_render_holding_mode_with_fired_triggers():
     holding = Holding(code="091340", entry_price=91300, entry_time=entry,
                       high_since_entry=92800)
     triggers = {
-        "C1_vp_below_100": True,    # 발화
-        "C2_bearish_divergence": True,  # 발화
-        "C3_vol_drain": False,
-        "C4_bearish_candle": False,
-        "C5_vi_failure": False,
+        "E1_vp_below_100": True,    # 발화
+        "E2_bearish_divergence": True,  # 발화
+        "E3_vol_drain": False,
+        "E4_bearish_candle": False,
+        "E5_vi_failure": False,
     }
     msg = render_monitor_message(
         _stock(code="091340", name="대한광통신", source=Source.MANUAL),
@@ -482,9 +482,9 @@ def test_render_watch_mode_c3_label_no_sustain():
         now=datetime(2026, 5, 11, 9, 0),
         accel_ratio_1m=0.3, last_bar_value=100_000_000,
         trigger_states={
-            "C1_vp_below_100": False, "C2_bearish_divergence": False,
-            "C3_vol_drain": True, "C4_bearish_candle": False,
-            "C5_vi_failure": False,
+            "E1_vp_below_100": False, "E2_bearish_divergence": False,
+            "E3_vol_drain": True, "E4_bearish_candle": False,
+            "E5_vi_failure": False,
         },
     )
     assert "🚧 자금 고갈 (1분 가속 < 0.5)" in msg

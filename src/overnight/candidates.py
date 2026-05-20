@@ -1,12 +1,12 @@
-"""종배 후보 추출 (R4 v2 — round 41 → 2026-05-19 코드 적용).
+"""종배 후보 추출 (Eod.Pick v2 — round 41 → 2026-05-19 코드 적용).
 
-R4 v2 hard cut (탈락 조건):
+Eod.Pick v2 hard cut (탈락 조건):
     (a) 거래대금 50위 단일종목 — 호출부 universe (snapshot_df) 가 top 50.
     (b) 일봉 상승 — (e) 의 strict subset 이라 별도 코드 X.
     (c) 종가 고가-10% 이내 — apply_r4v2_post_filters 에서 hard cut.
     (e) 10% ≤ daily_return ≤ 27% — classify_priority 에서 hard cut.
 
-R4 v2 soft 보조 지표 (표시만, 탈락 X — 2026-05-19 정정):
+Eod.Pick v2 soft 보조 지표 (표시만, 탈락 X — 2026-05-19 정정):
     (d) 52주 신고가 — apply_r4v2_post_filters 에서 is_52w_high 만 저장.
         결정 레포트 카드에 ✓/✗/— 로 표시.
     (f) Layer 표본 ≥5 — has_enough_samples. 표본 부족 시 Kelly 만 None,
@@ -19,9 +19,9 @@ R4 v2 soft 보조 지표 (표시만, 탈락 X — 2026-05-19 정정):
 
 제외:
     - daily_return < 10%  → "+x.x% (<10%)"
-    - daily_return > 27%  → "+x.x% (>27%, R4 v2 상한 컷)" (상한가 / 자리잡힘 포함)
+    - daily_return > 27%  → "+x.x% (>27%, Eod.Pick v2 상한 컷)" (상한가 / 자리잡힘 포함)
     - 종가 고가 대비 -10% 초과 (apply_r4v2_post_filters (c))
-    - 주도섹터는 호출부 인자로 R4 v1 호환만 — R4 v2 기본은 None (필터 우회).
+    - 주도섹터는 호출부 인자로 Eod.Pick v1 호환만 — Eod.Pick v2 기본은 None (필터 우회).
 
 정정 이력:
     - 2026-05-19 round 41 (e) 코드 적용: MIN 20→10, MAX 추가 27. 사용자 보고
@@ -44,9 +44,9 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
-MIN_DAILY_RETURN = 5.0        # R4 v2 (e) 하한 (round 41 후속 2026-05-19: 10→5 사용자 정정 — 후보 폭 확보)
-MAX_DAILY_RETURN = 27.0       # R4 v2 (e) 상한 (round 41 신규)
-MAX_DROP_FROM_HIGH_PCT = 10.0  # R4 v2 (c) 종가 고가-10% 이내
+MIN_DAILY_RETURN = 5.0        # Eod.Pick v2 (e) 하한 (round 41 후속 2026-05-19: 10→5 사용자 정정 — 후보 폭 확보)
+MAX_DAILY_RETURN = 27.0       # Eod.Pick v2 (e) 상한 (round 41 신규)
+MAX_DROP_FROM_HIGH_PCT = 10.0  # Eod.Pick v2 (c) 종가 고가-10% 이내
 INTRADAY_HIGH_THRESHOLD = 28.0
 HIGH_PULL_RANGE = (20.0, 25.0)
 
@@ -73,7 +73,7 @@ def _intraday_high_pct(intraday_high: int, prev_close: int) -> float:
 
 
 def classify_priority(row: pd.Series) -> tuple[str, str | None]:
-    """단일 종목의 진입 우선순위 분류 (R4 v2 (e)).
+    """단일 종목의 진입 우선순위 분류 (Eod.Pick v2 (e)).
 
     Returns:
         (priority, exclusion_reason) — exclusion_reason은 priority가 EXCLUDED일 때만 채움.
@@ -81,11 +81,11 @@ def classify_priority(row: pd.Series) -> tuple[str, str | None]:
     daily_return = float(row.get("daily_return", 0.0))
     intraday_high_pct = float(row.get("intraday_high_pct", 0.0))
 
-    # R4 v2 (e) 상한 컷 — 상한가(+30%) / 자리잡힘(+28~29.5%) 모두 여기서 제외.
+    # Eod.Pick v2 (e) 상한 컷 — 상한가(+30%) / 자리잡힘(+28~29.5%) 모두 여기서 제외.
     if daily_return > MAX_DAILY_RETURN:
-        return PRIORITY_EXCLUDED, f"일봉 +{daily_return:.1f}% (>{MAX_DAILY_RETURN:.0f}%, R4 v2 상한 컷)"
+        return PRIORITY_EXCLUDED, f"일봉 +{daily_return:.1f}% (>{MAX_DAILY_RETURN:.0f}%, Eod.Pick v2 상한 컷)"
 
-    # R4 v2 (e) 하한 컷
+    # Eod.Pick v2 (e) 하한 컷
     if daily_return < MIN_DAILY_RETURN:
         return PRIORITY_EXCLUDED, f"일봉 +{daily_return:.1f}% (<{MIN_DAILY_RETURN:.0f}%)"
 
@@ -102,34 +102,34 @@ def extract_candidates(
     snapshot_df: pd.DataFrame,
     leading_theme_codes: list[str] | None = None,
 ) -> pd.DataFrame:
-    """R4 v2 종배 후보 추출 — 거래대금 50위 단일종목 + 10% ≤ ret ≤ 27% 컷.
+    """Eod.Pick v2 종배 후보 추출 — 거래대금 50위 단일종목 + 10% ≤ ret ≤ 27% 컷.
 
     Args:
         snapshot_df: 거래대금 순위 스냅샷 (intraday.SNAPSHOT_COLUMNS).
-            R4 v2 (a) 거래대금 50위 universe 는 호출부에서 `top_n=50` 으로
+            Eod.Pick v2 (a) 거래대금 50위 universe 는 호출부에서 `top_n=50` 으로
             fetch 한 스냅샷을 그대로 사용 (이 함수는 추가 rank 컷 X).
-        leading_theme_codes: R4 v1 호환 인자. **None / 빈 리스트 = R4 v2 (round 41)
-            기본 동작 — 주도섹터 필터 우회, 전체 universe 사용** (`docs/jongbae-strategy.md`
-            line 206: "결정 후보 universe 컷에서는 R4 v2 가 R3 를 우회").
-            list 가 주어지면 R4 v1 동작 — 그 코드들만 후보로 잡음 (backward-compat).
+        leading_theme_codes: Eod.Pick v1 호환 인자. **None / 빈 리스트 = Eod.Pick v2 (round 41)
+            기본 동작 — 주도섹터 필터 우회, 전체 universe 사용** (`docs/scalping-strategy.md`
+            line 206: "결정 후보 universe 컷에서는 Eod.Pick v2 가 Theme 를 우회").
+            list 가 주어지면 Eod.Pick v1 동작 — 그 코드들만 후보로 잡음 (backward-compat).
 
     Returns:
         CANDIDATE_COLUMNS 스키마 DataFrame.
         priority 별 정렬: high_pull → normal → excluded
-        (limit_up 은 R4 v2 (e) 상한 컷에 자동 제외 — round 41 이후 비활성)
+        (limit_up 은 Eod.Pick v2 (e) 상한 컷에 자동 제외 — round 41 이후 비활성)
         excluded 는 디버그/레포트 표시용으로 함께 반환.
     """
     if snapshot_df.empty:
         return pd.DataFrame(columns=CANDIDATE_COLUMNS)
 
     if leading_theme_codes:
-        # R4 v1 backward-compat: 주도섹터 필터 적용
+        # Eod.Pick v1 backward-compat: 주도섹터 필터 적용
         in_theme = snapshot_df[
             snapshot_df["code"].astype(str).isin(set(leading_theme_codes))
         ].copy()
     else:
-        # R4 v2 (a) 기본: 주도섹터 필터 우회 — 전체 스냅샷 universe (호출부가
-        # top 50 으로 잘라 넘김). docs/jongbae-strategy.md round 41.
+        # Eod.Pick v2 (a) 기본: 주도섹터 필터 우회 — 전체 스냅샷 universe (호출부가
+        # top 50 으로 잘라 넘김). docs/scalping-strategy.md round 41.
         in_theme = snapshot_df.copy()
 
     if in_theme.empty:
@@ -144,7 +144,7 @@ def extract_candidates(
     in_theme["priority"] = [p[0] for p in priorities]
     in_theme["exclusion_reason"] = [p[1] for p in priorities]
 
-    # R4 v2 (e) — 10% ≤ ret ≤ 27% 범위 외는 명시적으로 제외 (round 41)
+    # Eod.Pick v2 (e) — 10% ≤ ret ≤ 27% 범위 외는 명시적으로 제외 (round 41)
     in_theme.loc[
         (in_theme["daily_return"] < MIN_DAILY_RETURN)
         | (in_theme["daily_return"] > MAX_DAILY_RETURN),
@@ -186,7 +186,7 @@ def apply_r4v2_post_filters(
     daily_ohlcv: pd.DataFrame,
     today: Any,
 ) -> list[dict[str, Any]]:
-    """R4 v2 post-filter — fetch_quote 보강 후 OHLCV 확정 상태에서 적용.
+    """Eod.Pick v2 post-filter — fetch_quote 보강 후 OHLCV 확정 상태에서 적용.
 
     Hard cut (탈락):
         (c) 종가 고가-10% 이내 — `(intraday_high - price) / intraday_high <= 10%`.
@@ -231,7 +231,7 @@ def apply_r4v2_post_filters(
             if not check["close_within_10pct_high"]:
                 c["r4v2_check"] = check
                 c["exclusion_reason"] = (
-                    f"종가 고가 대비 -{drop_pct:.1f}% (R4 v2 (c) -10% 컷)"
+                    f"종가 고가 대비 -{drop_pct:.1f}% (Eod.Pick v2 (c) -10% 컷)"
                 )
                 c["priority"] = PRIORITY_EXCLUDED
                 continue
@@ -243,5 +243,5 @@ def apply_r4v2_post_filters(
         survived.append(c)
 
     if not survived:
-        logger.info("[R4 v2] post-filter (c) 통과 종목 없음")
+        logger.info("[Eod.Pick v2] post-filter (c) 통과 종목 없음")
     return survived

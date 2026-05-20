@@ -5,7 +5,7 @@
 2) ⭐ 주도주 TRANSITION (a1 카드 안에 부상 후보 a2 통합 표시)
 3) ⚡ 부상 후보 RISING (WATCH 등급, /add 안내)
 4) 🔵 수동 모니터링 (감시 모드)
-5) 보유 모드 (매수가/손익/R15 청산 시그널/Bearish Divergence)
+5) 보유 모드 (매수가/손익/Exit.Triggers 청산 시그널/Bearish Divergence)
 
 데모용 정적 fixture — 실제 시세 호출 없음.
 """
@@ -42,9 +42,9 @@ def _render_auto_normal(now: datetime) -> str:
     }
     # 모든 시그널 off — STRONG 등급의 깨끗한 진입 후보 예시.
     trigger_states = {
-        "C1_vp_below_100": False, "C2_bearish_divergence": False,
-        "C3_vol_drain": False, "C4_bearish_candle": False,
-        "C5_vi_failure": False,
+        "E1_vp_below_100": False, "E2_bearish_divergence": False,
+        "E3_vol_drain": False, "E4_bearish_candle": False,
+        "E5_vi_failure": False,
     }
     # round 36: 수급 라인 — STRONG 종목은 외인/기관 동반 매수 + 프로그램도 양수.
     investor = {
@@ -100,9 +100,9 @@ def _render_auto_transition(now: datetime) -> str:
     }
     # a1 카드 — 시그널 1개만 켬 (C2 Bearish): 모멘텀이 a2 로 옮겨가는 신호.
     trigger_states = {
-        "C1_vp_below_100": False, "C2_bearish_divergence": True,
-        "C3_vol_drain": False, "C4_bearish_candle": False,
-        "C5_vi_failure": False,
+        "E1_vp_below_100": False, "E2_bearish_divergence": True,
+        "E3_vol_drain": False, "E4_bearish_candle": False,
+        "E5_vi_failure": False,
     }
     # round 36: TRANSITION — 모멘텀이 a2 로 옮겨가는 중이라 기관이 먼저 빠짐.
     investor = {
@@ -154,9 +154,9 @@ def _render_rising(now: datetime) -> str:
     }
     # 부상 후보 — 시그널 모두 깨끗. /add 결정 가능 상태.
     trigger_states = {
-        "C1_vp_below_100": False, "C2_bearish_divergence": False,
-        "C3_vol_drain": False, "C4_bearish_candle": False,
-        "C5_vi_failure": False,
+        "E1_vp_below_100": False, "E2_bearish_divergence": False,
+        "E3_vol_drain": False, "E4_bearish_candle": False,
+        "E5_vi_failure": False,
     }
     # round 36: 부상 후보 — 외인 막 들어오기 시작, 프로그램 강한 양수 (저가주라 수량 큼).
     investor = {
@@ -206,9 +206,9 @@ def _render_manual(now: datetime) -> str:
     # 수동 추적 — 시그널 3개 켬 (C1 VP<100, C3 자금고갈, 모멘텀 식어가는 케이스).
     # "이 종목 사면 안 됨" 을 카드에서 바로 인지 가능한 예시.
     trigger_states = {
-        "C1_vp_below_100": True, "C2_bearish_divergence": False,
-        "C3_vol_drain": True, "C4_bearish_candle": False,
-        "C5_vi_failure": False,
+        "E1_vp_below_100": True, "E2_bearish_divergence": False,
+        "E3_vol_drain": True, "E4_bearish_candle": False,
+        "E5_vi_failure": False,
     }
     # round 36: 모멘텀 식어가는 종목 — 외인/기관/프로그램 동반 매도.
     investor = {
@@ -265,11 +265,11 @@ def _render_holding(now: datetime) -> str:
         high_since_entry=91_500.0,
     )
     trigger_states = {
-        "C1_vp_below_100": True,        # VP 5MA 95 < 100
-        "C2_bearish_divergence": True,   # 가격↑ / VP↓
-        "C3_vol_drain": False,
-        "C4_bearish_candle": False,
-        "C5_vi_failure": False,
+        "E1_vp_below_100": True,        # VP 5MA 95 < 100
+        "E2_bearish_divergence": True,   # 가격↑ / VP↓
+        "E3_vol_drain": False,
+        "E4_bearish_candle": False,
+        "E5_vi_failure": False,
     }
     divergence = DivergenceState(
         bearish=True, bullish=False,
@@ -325,7 +325,7 @@ def main() -> int:
         ("2. ⭐ 주도주 TRANSITION (a2 부상 후보 통합)", _render_auto_transition(now)),
         ("3. ⚡ 부상 후보 (RISING)", _render_rising(now)),
         ("4. 🔵 수동 모니터링", _render_manual(now)),
-        ("5. 보유 모드 (R15 청산 시그널)", _render_holding(now)),
+        ("5. 보유 모드 (Exit.Triggers 청산 시그널)", _render_holding(now)),
     ]
     for label, body in cards:
         text = f"━━ {label} ━━\n{body}"

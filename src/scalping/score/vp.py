@@ -1,6 +1,6 @@
-"""체결강도 (Volume Power, VP) — R10.
+"""체결강도 (Volume Power, VP) — Buy.VP.
 
-`docs/jongbae-strategy.md` R10 참조. 정정 이력 round 13.
+`docs/scalping-strategy.md` Buy.VP 참조. 정정 이력 round 13.
 
 정의:
     VP = 능동 매수체결량 / 능동 매도체결량 × 100   (당일 누적)
@@ -78,7 +78,7 @@ class VPSeries:
 
     def ma_1(self, now: datetime) -> float:
         """1분 이동평균. 카드 표시용 — 5MA 대비 더 빠른 약화 인지.
-        트리거(R15 C1)는 여전히 5MA 기준 — 1MA 는 노이즈 가능성으로 정보 표시용.
+        트리거(Exit.Triggers C1)는 여전히 5MA 기준 — 1MA 는 노이즈 가능성으로 정보 표시용.
         """
         return self.ma(now, 1)
 
@@ -89,25 +89,25 @@ class VPSeries:
         return self.ma(now, VP_MA_LONG_MINUTES)
 
 
-# ── 임계 판정 (R14 매수 점수 / R15 매도 트리거 입력) ─────────────────────────
+# ── 임계 판정 (Buy.Score 매수 점수 / Exit.Triggers 매도 트리거 입력) ─────────────────────────
 
 
 def is_vp_strong(vp: float, vp_5ma: float) -> bool:
-    """R14 +2: VP > 110 AND VP_5MA > 100. 강한 매수 체결 우세."""
+    """Buy.Score +2: VP > 110 AND VP_5MA > 100. 강한 매수 체결 우세."""
     if vp != vp or vp_5ma != vp_5ma:
         return False
     return vp > VP_STRONG_THRESHOLD and vp_5ma > VP_BALANCED
 
 
 def is_vp_weak(vp: float) -> bool:
-    """R14 -2: VP < 100. 매수 압력 약함."""
+    """Buy.Score -2: VP < 100. 매수 압력 약함."""
     if vp != vp:
         return False
     return vp < VP_WEAK_THRESHOLD
 
 
 def crossed_below_balanced(prev_5ma: float, cur_5ma: float) -> bool:
-    """R15 C1: VP_5MA 가 100 을 하향 돌파했는지.
+    """Exit.Triggers C1: VP_5MA 가 100 을 하향 돌파했는지.
 
     이전 tick 에서 ≥ 100 이었고 이번에 < 100. 멱등하지 않음 — 호출자가 한번만
     발화하도록 boolean 기록 필요.

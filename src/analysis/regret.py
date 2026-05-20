@@ -2,8 +2,8 @@
 
 매직 넘버 튜닝 목적:
     "STRONG 떴는데 안 산 종목 vs 산 종목 — 어느 항목이 다른가?"
-    "매수한 종목의 trigger 발화 빈도 vs 매수 안 한 종목" 비교로 R14 가중치 /
-    R15 임계의 false positive/negative 패턴 발견.
+    "매수한 종목의 trigger 발화 빈도 vs 매수 안 한 종목" 비교로 Buy.Score 가중치 /
+    Exit.Triggers 임계의 false positive/negative 패턴 발견.
 
 사용:
     python -m src.analysis.regret 2026-05-15

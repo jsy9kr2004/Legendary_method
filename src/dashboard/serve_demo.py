@@ -56,13 +56,13 @@ def _build_demo_payload(monitored: MonitoredStock, holding: Any = None) -> dict:
     vp_1ma_demo = round(random.uniform(80, 160), 0)
     accel_1m_demo = round(random.uniform(0.2, 4.0), 1)
     trigger_states = {
-        "C1_vp_below_100": vp_5ma_demo < 100,
-        "C2_bearish_divergence": False,
-        "C3_vol_drain": accel_1m_demo < 0.5,
-        "C4_bearish_candle": False,
+        "E1_vp_below_100": vp_5ma_demo < 100,
+        "E2_bearish_divergence": False,
+        "E3_vol_drain": accel_1m_demo < 0.5,
+        "E4_bearish_candle": False,
     }
     if holding is not None:
-        trigger_states["C5_vi_failure"] = False
+        trigger_states["E5_vi_failure"] = False
 
     snapshot_row = {
         "price": price,

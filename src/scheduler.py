@@ -18,7 +18,7 @@
 
 환경변수:
     LIMIT_UP_POLL_INTERVAL_SEC: 상한가 폴링 간격 (초, 기본 60)
-    LIMIT_UP_WATCH_TOP_N: 거래대금 상위 몇 개 종목을 감시할지 (기본 50, R4 v2 (a))
+    LIMIT_UP_WATCH_TOP_N: 거래대금 상위 몇 개 종목을 감시할지 (기본 50, Eod.Pick v2 (a))
 """
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ from src.report.periodic import build_periodic_report, save_periodic_report
 _SNAPSHOT_TIMES = ["11:00", "13:00", "14:00", "14:50"]
 
 _POLL_INTERVAL_SEC = int(os.getenv("LIMIT_UP_POLL_INTERVAL_SEC", "60"))
-# R4 v2 (a) round 41 — 종배 후보 universe = 거래대금 50위.
+# Eod.Pick v2 (a) round 41 — 종배 후보 universe = 거래대금 50위.
 # `LIMIT_UP_WATCH_TOP_N` 환경변수로 오버라이드 가능 (상한가 폴링 + 결정 레포트
 # 동일 스냅샷 사용).
 _WATCH_TOP_N = int(os.getenv("LIMIT_UP_WATCH_TOP_N", "50"))
@@ -219,7 +219,7 @@ def _collect_snapshot(
             code = str(row["code"])
             if code not in _already_limit_up:
                 _already_limit_up.add(code)
-                # round 32 (P1-1 wiring): 도달 시각 저장 → R14c 가산점
+                # round 32 (P1-1 wiring): 도달 시각 저장 → Buy.Score.c 가산점
                 _dashboard_session.limit_up_hit_times[code] = dt.time()
                 _send_limit_up_alert(row.to_dict(), settings, dispatcher, dt)
 
@@ -258,7 +258,7 @@ def _poll_limit_up(
         return
 
     for entry in new_entries:
-        # round 32 (P1-1 wiring): 도달 시각 저장 → R14c 가산점
+        # round 32 (P1-1 wiring): 도달 시각 저장 → Buy.Score.c 가산점
         code = str(entry.get("code", ""))
         if code:
             _dashboard_session.limit_up_hit_times[code] = dt.time()
@@ -550,9 +550,9 @@ def _send_decision_report(
     today_strong_market = market_stats.get("kospi_above_ma200")
 
     leading = identify_leading_themes(snapshot_df, theme_df)
-    # R4 v2 (a) round 41 — 결정 후보 universe 는 주도섹터 우회, 전체 snapshot (top 50)
+    # Eod.Pick v2 (a) round 41 — 결정 후보 universe 는 주도섹터 우회, 전체 snapshot (top 50)
     # 사용. 주도테마는 레포트 헤더의 [최종 주도테마] 섹션 표시용으로만 식별.
-    # docs/jongbae-strategy.md line 206 참조.
+    # docs/scalping-strategy.md line 206 참조.
     candidates_df = extract_candidates(snapshot_df, leading_theme_codes=None)
     accepted = accepted_candidates(candidates_df)
 
@@ -594,7 +594,7 @@ def _send_decision_report(
     if client is not None and accepted_dicts:
         _enrich_candidates_with_quote(accepted_dicts, client)
 
-    # R4 v2 (c) 종가 고가-10% 이내 + (d) 52주 신고가 post-filter (round 41).
+    # Eod.Pick v2 (c) 종가 고가-10% 이내 + (d) 52주 신고가 post-filter (round 41).
     # fetch_quote 보강 후 intraday_high / price 가 0 아닌 상태에서 적용.
     today = dt.date()
     from src.overnight.candidates import apply_r4v2_post_filters
@@ -602,7 +602,7 @@ def _send_decision_report(
         before = len(accepted_dicts)
         accepted_dicts = apply_r4v2_post_filters(accepted_dicts, daily_ohlcv, today)
         logger.info(
-            f"[결정] R4 v2 (c)(d) post-filter: {before}→{len(accepted_dicts)}종목"
+            f"[결정] Eod.Pick v2 (c)(d) post-filter: {before}→{len(accepted_dicts)}종목"
         )
 
     candidates_with_stats: list[dict[str, Any]] = []
@@ -631,19 +631,19 @@ def _send_decision_report(
         )
         sizing_layer_name, sizing_stats = pick_sizing_layer(layers)
 
-        # R4 v2 (f) Layer 표본 ≥5 — round 41 후속 2026-05-19: hard cut → soft.
+        # Eod.Pick v2 (f) Layer 표본 ≥5 — round 41 후속 2026-05-19: hard cut → soft.
         # 표본 부족도 후보 유지 + Kelly 가 None 으로 나오는 것만 사용자에게 표시.
         # 사이즈 결정은 사용자가 Sharpe/Equal/직관 으로 판단.
         sample_sufficient = has_enough_samples(sizing_stats)
         if not sample_sufficient:
-            logger.info(f"[결정] {code} R4 v2 (f) 표본 부족 (n<5) — soft 경고, 후보 유지")
+            logger.info(f"[결정] {code} Eod.Pick v2 (f) 표본 부족 (n<5) — soft 경고, 후보 유지")
 
         themes = (
             theme_df[theme_df["code"] == code]["theme"].tolist()
             if not theme_df.empty
             else []
         )
-        # R4 v2 보조 지표 — 1년 ret≥10% 횟수 + 갭상 비율 (round 41 ④)
+        # Eod.Pick v2 보조 지표 — 1년 ret≥10% 횟수 + 갭상 비율 (round 41 ④)
         from src.overnight.gap_stats import historical_ret10_gap_stats
         ret10_aux = historical_ret10_gap_stats(daily_ohlcv, code, today)
 

@@ -3,7 +3,7 @@
 옛 R 번호 + A/B/C 트리거 → 새 명명 (Buy.*, Exit.*, Eod.*, A1~A5/P1~P3/E1~E5).
 docs/ + 다른 텍스트 파일에 일괄 적용. 끝나면 본 스크립트 자체 삭제.
 
-길이 긴 패턴부터 먼저 매칭 (R12.5 → Buy.Position 이 R12 → Buy.Candle 보다 먼저).
+길이 긴 패턴부터 먼저 매칭 (Buy.Position → Buy.Position 이 Buy.Candle → Buy.Candle 보다 먼저).
 """
 from __future__ import annotations
 
@@ -13,27 +13,27 @@ import sys
 from pathlib import Path
 
 # (옛, 새) 순서 — 길이 긴 패턴부터.
-# word boundary 가 필요한 단순 명령 (R1 → Eod.Market) 은 \b 로 안전화.
+# word boundary 가 필요한 단순 명령 (Eod.Market → Eod.Market) 은 \b 로 안전화.
 RENAMES_LONG_FIRST: list[tuple[str, str, bool]] = [
     # (pattern, replacement, is_regex)
     # === Trigger 컬럼 (코드/데이터) — 가장 명확한 패턴 먼저 ===
-    (r"trigger_b1_take_profit_1", "trigger_p1_take_profit_1", True),
-    (r"trigger_b2_take_profit_2", "trigger_p2_take_profit_2", True),
-    (r"trigger_b3_trailing", "trigger_p3_trailing", True),
-    (r"trigger_c1_vp_below_100", "trigger_e1_vp_below_100", True),
-    (r"trigger_c2_bearish_divergence", "trigger_e2_bearish_divergence", True),
-    (r"trigger_c3_vol_drain", "trigger_e3_vol_drain", True),
-    (r"trigger_c4_bearish_candle", "trigger_e4_bearish_candle", True),
-    (r"trigger_c5_vi_failure", "trigger_e5_vi_failure", True),
+    (r"trigger_p1_take_profit_1", "trigger_p1_take_profit_1", True),
+    (r"trigger_p2_take_profit_2", "trigger_p2_take_profit_2", True),
+    (r"trigger_p3_trailing", "trigger_p3_trailing", True),
+    (r"trigger_e1_vp_below_100", "trigger_e1_vp_below_100", True),
+    (r"trigger_e2_bearish_divergence", "trigger_e2_bearish_divergence", True),
+    (r"trigger_e3_vol_drain", "trigger_e3_vol_drain", True),
+    (r"trigger_e4_bearish_candle", "trigger_e4_bearish_candle", True),
+    (r"trigger_e5_vi_failure", "trigger_e5_vi_failure", True),
     # === Trigger ID enum 값 ===
-    (r"B1_take_profit_1", "P1_take_profit_1", True),
-    (r"B2_take_profit_2", "P2_take_profit_2", True),
-    (r"B3_trailing", "P3_trailing", True),
-    (r"C1_vp_below_100", "E1_vp_below_100", True),
-    (r"C2_bearish_divergence", "E2_bearish_divergence", True),
-    (r"C3_vol_drain", "E3_vol_drain", True),
-    (r"C4_bearish_candle", "E4_bearish_candle", True),
-    (r"C5_vi_failure", "E5_vi_failure", True),
+    (r"P1_take_profit_1", "P1_take_profit_1", True),
+    (r"P2_take_profit_2", "P2_take_profit_2", True),
+    (r"P3_trailing", "P3_trailing", True),
+    (r"E1_vp_below_100", "E1_vp_below_100", True),
+    (r"E2_bearish_divergence", "E2_bearish_divergence", True),
+    (r"E3_vol_drain", "E3_vol_drain", True),
+    (r"E4_bearish_candle", "E4_bearish_candle", True),
+    (r"E5_vi_failure", "E5_vi_failure", True),
     # === R 번호 (긴 것 먼저, word boundary) ===
     (r"\bR14d\b", "Buy.Score.d", True),
     (r"\bR14c\b", "Buy.Score.c", True),
@@ -52,7 +52,7 @@ RENAMES_LONG_FIRST: list[tuple[str, str, bool]] = [
     (r"\bR6\b", "Eod.Sizing", True),
     (r"\bR5\b", "Eod.GapStats", True),
     (r"\bR4\b", "Eod.Pick", True),
-    (r"R3'", "Theme.Leader", True),  # apostrophe 변형 패턴, word boundary 부적용
+    (r"Theme.Leader", "Theme.Leader", True),  # apostrophe 변형 패턴, word boundary 부적용
     (r"\bR3\b", "Theme", True),
     (r"\bR2\b", "Universe", True),
     (r"\bR1\b", "Eod.Market", True),
@@ -74,7 +74,7 @@ RENAMES_LONG_FIRST: list[tuple[str, str, bool]] = [
     # config_thresholds 분리 — 일단 단타 thresholds 로 매핑
     (r"src/jongbae/config_thresholds\.py", "src/scalping/score/thresholds.py", True),
     # === docs 링크 ===
-    # `jongbae-strategy.md` 단독 참조는 컨텍스트별로 다르므로 일단 scalping 으로 매핑
+    # `scalping-strategy.md` 단독 참조는 컨텍스트별로 다르므로 일단 scalping 으로 매핑
     # (단타 영역이 더 큼). 종배 영역에서 참조하던 곳은 별도 손수정 필요.
     (r"jongbae-strategy\.md", "scalping-strategy.md", True),
     (r"r14-revision-proposal\.md", "buy-score-revision-proposal.md", True),

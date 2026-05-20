@@ -125,7 +125,7 @@ def build_trigger_lines(
     accel_ratio_1m: float | None,
     divergence: Any,
 ) -> list[str]:
-    """R15 청산 시그널 C1~C5 표시 라인 list.
+    """Exit.Triggers 청산 시그널 C1~C5 표시 라인 list.
 
     텔레그램 카드(`render_monitor_message`) 와 PWA 페이로드(`build_monitor_payload`)
     둘 다 동일 형식. 보유/감시 모드 분기 — 보유 모드는 C5 포함, 라벨에 "2분 지속".
@@ -145,7 +145,7 @@ def build_trigger_lines(
     lines.append(f"─ {section_label} ─")
 
     # C1: 체결강도 5MA 100 하향
-    c1_mark = _mk(trigger_states.get("C1_vp_below_100", False))
+    c1_mark = _mk(trigger_states.get("E1_vp_below_100", False))
     c1_detail_parts = []
     if vp_5ma is not None and vp_5ma == vp_5ma:
         c1_detail_parts.append(f"5MA {vp_5ma:.0f}")
@@ -155,7 +155,7 @@ def build_trigger_lines(
     lines.append(f"{c1_mark} 체결강도 5MA 100 하향 (현재 {c1_detail})")
 
     # C2: Bearish Divergence
-    c2_mark = _mk(trigger_states.get("C2_bearish_divergence", False))
+    c2_mark = _mk(trigger_states.get("E2_bearish_divergence", False))
     if divergence is not None:
         p = getattr(divergence, "price_change_pct", float("nan"))
         v = getattr(divergence, "vp_5ma_delta", float("nan"))
@@ -166,7 +166,7 @@ def build_trigger_lines(
         lines.append(f"{c2_mark} Bearish Divergence")
 
     # C3: 자금 고갈
-    c3_mark = _mk(trigger_states.get("C3_vol_drain", False))
+    c3_mark = _mk(trigger_states.get("E3_vol_drain", False))
     c3_detail = (
         f" — 현재 {accel_ratio_1m:.1f}배"
         if accel_ratio_1m is not None and accel_ratio_1m == accel_ratio_1m else ""
@@ -175,12 +175,12 @@ def build_trigger_lines(
     lines.append(f"{c3_mark} 자금 고갈 ({c3_rule}){c3_detail}")
 
     # C4: 윗꼬리 50%↑ 음봉 (1분봉)
-    c4_mark = _mk(trigger_states.get("C4_bearish_candle", False))
+    c4_mark = _mk(trigger_states.get("E4_bearish_candle", False))
     lines.append(f"{c4_mark} 윗꼬리 50%↑ 음봉 (1분봉 기준)")
 
     # C5: VI 발동 후 재상승 실패 — 보유 모드만
     if is_holding:
-        c5_mark = _mk(trigger_states.get("C5_vi_failure", False))
+        c5_mark = _mk(trigger_states.get("E5_vi_failure", False))
         lines.append(f"{c5_mark} VI 발동 후 5분 내 재상승 실패")
 
     return lines
@@ -203,7 +203,7 @@ def render_monitor_message(
     vp_1ma: float | None = None,
     vp_5ma: float | None = None,
     holding: Any = None,            # Holding 객체 (보유 모드일 때만)
-    trigger_states: dict[str, bool] | None = None,  # R15 12개 트리거 발화 상태
+    trigger_states: dict[str, bool] | None = None,  # Exit.Triggers 12개 트리거 발화 상태
     divergence: Any = None,         # DivergenceState
     investor_delta: dict[str, Any] | None = None,  # round 36 후속: 누적값 변화 + elapsed
 ) -> str:
@@ -432,7 +432,7 @@ def render_monitor_message(
     # 외인 / 기관 / 프로그램 순매수 — round 36 부활. round 22 정정의 명목 사유는
     # "KIS 응답 신뢰도 낮음" 이었으나 round 33/34 체결강도 사건 분석 후 실제
     # 원인은 fetcher 응답 list 첫 행 파싱 버그로 추정 (intraday_realtime round 36).
-    # R14 점수 합산은 round 29 ritual 통과 전엔 X — 카드 표시만 (참고 지표).
+    # Buy.Score 점수 합산은 round 29 ritual 통과 전엔 X — 카드 표시만 (참고 지표).
     if investor:
         foreign_v = investor.get("foreign_net_buy_value") or 0
         inst_v = investor.get("institution_net_buy_value") or 0
@@ -460,7 +460,7 @@ def render_monitor_message(
                 f"/ 프로그램 {_fmt_signed_shares(program_q)}{_paren(dp_q, _fmt_signed_shares)}"
             )
 
-    # 청산 시그널 (R15 C 그룹) — build_trigger_lines 헬퍼 (텔레그램 / PWA 공용).
+    # 청산 시그널 (Exit.Triggers C 그룹) — build_trigger_lines 헬퍼 (텔레그램 / PWA 공용).
     lines.extend(build_trigger_lines(
         trigger_states=trigger_states,
         is_holding=is_holding,

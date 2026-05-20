@@ -26,10 +26,10 @@ def _row(daily_return, intraday_high_pct=0.0, is_limit_up=False) -> pd.Series:
     })
 
 
-# ── classify_priority (R4 v2 (e) — round 41) ────────────────────────────────
+# ── classify_priority (Eod.Pick v2 (e) — round 41) ────────────────────────────────
 
 def test_classify_excluded_limit_up_above_27():
-    """R4 v2 (e) 상한가(+30%≈)는 27% 초과로 제외. 사용자 보고 회귀 케이스 —
+    """Eod.Pick v2 (e) 상한가(+30%≈)는 27% 초과로 제외. 사용자 보고 회귀 케이스 —
     진원생명과학 011000 +29.97% (2026-05-19)."""
     p, reason = classify_priority(_row(daily_return=29.97, intraday_high_pct=29.97, is_limit_up=True))
     assert p == PRIORITY_EXCLUDED
@@ -37,31 +37,31 @@ def test_classify_excluded_limit_up_above_27():
 
 
 def test_classify_high_pull():
-    """일중 +28%↑ 후 종가 +20~25% 영역 (R4 v2 eligible 내 1순위)."""
+    """일중 +28%↑ 후 종가 +20~25% 영역 (Eod.Pick v2 eligible 내 1순위)."""
     p, _ = classify_priority(_row(daily_return=22.0, intraday_high_pct=28.5))
     assert p == PRIORITY_HIGH_PULL
 
 
 def test_classify_normal_within_range():
-    """R4 v2 eligible 10~27% 의 high_pull 외 (예: 일중 +28% 못 넘은 +21%)."""
+    """Eod.Pick v2 eligible 10~27% 의 high_pull 외 (예: 일중 +28% 못 넘은 +21%)."""
     p, _ = classify_priority(_row(daily_return=21.0, intraday_high_pct=24.0))
     assert p == PRIORITY_NORMAL
 
 
 def test_classify_normal_between_5_and_20():
-    """R4 v2 (e) 하한 5% 적용 후 — 이전엔 20% 하한에 제외됐던 +15% 도 NORMAL."""
+    """Eod.Pick v2 (e) 하한 5% 적용 후 — 이전엔 20% 하한에 제외됐던 +15% 도 NORMAL."""
     p, _ = classify_priority(_row(daily_return=15.0, intraday_high_pct=18.0))
     assert p == PRIORITY_NORMAL
 
 
 def test_classify_normal_at_lower_bound_5pct():
-    """R4 v2 (e) 하한 5% 경계 — +6% 도 NORMAL (round 41 후속 2026-05-19)."""
+    """Eod.Pick v2 (e) 하한 5% 경계 — +6% 도 NORMAL (round 41 후속 2026-05-19)."""
     p, _ = classify_priority(_row(daily_return=6.0, intraday_high_pct=7.0))
     assert p == PRIORITY_NORMAL
 
 
 def test_classify_excluded_below_5():
-    """+5% 미만은 R4 v2 (e) 하한 컷 (round 41 후속: 10→5)."""
+    """+5% 미만은 Eod.Pick v2 (e) 하한 컷 (round 41 후속: 10→5)."""
     p, reason = classify_priority(_row(daily_return=4.0, intraday_high_pct=30.0))
     assert p == PRIORITY_EXCLUDED
     assert "5" in reason
@@ -88,7 +88,7 @@ def _snapshot_full(rows: list[dict]) -> pd.DataFrame:
 
 def test_extract_candidates_filters_to_leading_theme():
     snap = _snapshot_full([
-        # R4 v2: +30% 상한가는 제외, +25% 만 후보로
+        # Eod.Pick v2: +30% 상한가는 제외, +25% 만 후보로
         {"rank": 1, "code": "001", "daily_return": 25.0, "is_limit_up": False,
          "prev_close": 1000, "intraday_high": 1290},
         {"rank": 2, "code": "002", "daily_return": 22.0,
@@ -100,13 +100,13 @@ def test_extract_candidates_filters_to_leading_theme():
 
 
 def test_extract_candidates_priority_order():
-    """R4 v2 반환 순서: high_pull → normal → excluded
-    (limit_up 은 +30%≈로 R4 v2 (e) 상한 컷에 자동 제외 — round 41)."""
+    """Eod.Pick v2 반환 순서: high_pull → normal → excluded
+    (limit_up 은 +30%≈로 Eod.Pick v2 (e) 상한 컷에 자동 제외 — round 41)."""
     snap = _snapshot_full([
         # rank 1: 일반 +21%
         {"rank": 1, "code": "000001", "daily_return": 21.0, "is_limit_up": False,
          "prev_close": 1000, "intraday_high": 1240},
-        # rank 2: 상한가 (R4 v2 에서 제외됨)
+        # rank 2: 상한가 (Eod.Pick v2 에서 제외됨)
         {"rank": 2, "code": "B", "daily_return": 30.0, "is_limit_up": True,
          "prev_close": 1000, "intraday_high": 1300},
         # rank 3: high_pull
@@ -126,7 +126,7 @@ def test_extract_candidates_priority_order():
 
 def test_extract_candidates_excludes_user_reported_regression():
     """사용자 보고 회귀 — 진원생명과학 011000 +29.97% (2026-05-19).
-    이전 R4 v1 에서는 limit_up 으로 1순위 진입. R4 v2 (e) 적용 후 제외 확정."""
+    이전 Eod.Pick v1 에서는 limit_up 으로 1순위 진입. Eod.Pick v2 (e) 적용 후 제외 확정."""
     snap = _snapshot_full([
         {"rank": 11, "code": "011000", "name": "진원생명과학",
          "daily_return": 29.97, "is_limit_up": True,
@@ -146,12 +146,12 @@ def test_extract_candidates_empty_snapshot():
 
 
 def test_extract_candidates_no_theme_filter_r4v2():
-    """R4 v2 (round 41) — leading_theme_codes=None / 빈 list 이면 주도섹터 필터
+    """Eod.Pick v2 (round 41) — leading_theme_codes=None / 빈 list 이면 주도섹터 필터
     우회 + 전체 snapshot universe 사용 (호출부가 top 50 으로 잘라 넘김)."""
     snap = _snapshot_full([
-        # 주도섹터 없이 +20% (R4 v2 eligible)
+        # 주도섹터 없이 +20% (Eod.Pick v2 eligible)
         {"code": "000001", "daily_return": 20.0, "prev_close": 1000, "intraday_high": 1240},
-        # +30% (R4 v2 상한 컷 제외) — 결과에 priority=EXCLUDED 로 포함
+        # +30% (Eod.Pick v2 상한 컷 제외) — 결과에 priority=EXCLUDED 로 포함
         {"code": "B", "daily_return": 30.0, "prev_close": 1000, "intraday_high": 1300,
          "is_limit_up": True},
     ])
@@ -165,7 +165,7 @@ def test_extract_candidates_no_theme_filter_r4v2():
 
 
 def test_extract_candidates_theme_filter_backward_compat():
-    """leading_theme_codes 가 주어지면 R4 v1 호환 — 그 코드만 후보."""
+    """leading_theme_codes 가 주어지면 Eod.Pick v1 호환 — 그 코드만 후보."""
     snap = _snapshot_full([
         {"code": "000001", "daily_return": 20.0, "prev_close": 1000, "intraday_high": 1240},
         {"code": "B", "daily_return": 22.0, "prev_close": 1000, "intraday_high": 1260},
@@ -175,7 +175,7 @@ def test_extract_candidates_theme_filter_backward_compat():
     assert out.iloc[0]["code"] == "000001"
 
 
-# ── R4 v2 (c)(d) post-filter — round 41 ─────────────────────────────────────
+# ── Eod.Pick v2 (c)(d) post-filter — round 41 ─────────────────────────────────────
 
 def _daily_history(code: str, today: date, closes: list[int]) -> pd.DataFrame:
     """간단 일봉 DF — 오늘 직전 N일 close 만 채움 (other fields 더미)."""

@@ -1,6 +1,6 @@
-"""매도 트리거 + 감시/보유 상태 머신 (R15).
+"""매도 트리거 + 감시/보유 상태 머신 (Exit.Triggers).
 
-`docs/jongbae-strategy.md` R15 참조. 정정 이력 round 16.
+`docs/scalping-strategy.md` Exit.Triggers 참조. 정정 이력 round 16.
 
 핵심 정책 (정정 round 17):
     **모든 매도 트리거 = 보유 모드 카드 안 표시.** 별도 텔레그램 푸시 알림 X.
@@ -69,9 +69,9 @@ class Mode(str, Enum):
 TriggerKind = Literal[
     "A1_stop_price", "A2_stop_bar_low", "A3_stop_ma", "A4_stop_time",
     "A5_eod_ma_break",
-    "B1_take_profit_1", "B2_take_profit_2", "B3_trailing",
-    "C1_vp_below_100", "C2_bearish_divergence",
-    "C3_vol_drain", "C4_bearish_candle", "C5_vi_failure",
+    "P1_take_profit_1", "P2_take_profit_2", "P3_trailing",
+    "E1_vp_below_100", "E2_bearish_divergence",
+    "E3_vol_drain", "E4_bearish_candle", "E5_vi_failure",
 ]
 
 TRIGGER_LABELS: dict[TriggerKind, str] = {
@@ -80,18 +80,18 @@ TRIGGER_LABELS: dict[TriggerKind, str] = {
     "A3_stop_ma":            "A3 5분 이평 이탈",
     "A4_stop_time":          "A4 시간 손절",
     "A5_eod_ma_break":       "A5 EOD 이평+음봉 강제",
-    "B1_take_profit_1":      "B1 익절 1차 +2.0%",
-    "B2_take_profit_2":      "B2 익절 2차 +3.5%",
-    "B3_trailing":           "B3 트레일링 스탑",
-    "C1_vp_below_100":       "C1 VP 5MA 100 하향",
-    "C2_bearish_divergence": "C2 Bearish Divergence",
-    "C3_vol_drain":          "C3 자금 고갈 (2분 지속)",
-    "C4_bearish_candle":     "C4 윗꼬리 음봉",
-    "C5_vi_failure":         "C5 VI 재상승 실패",
+    "P1_take_profit_1":      "B1 익절 1차 +2.0%",
+    "P2_take_profit_2":      "B2 익절 2차 +3.5%",
+    "P3_trailing":           "B3 트레일링 스탑",
+    "E1_vp_below_100":       "C1 VP 5MA 100 하향",
+    "E2_bearish_divergence": "C2 Bearish Divergence",
+    "E3_vol_drain":          "C3 자금 고갈 (2분 지속)",
+    "E4_bearish_candle":     "C4 윗꼬리 음봉",
+    "E5_vi_failure":         "C5 VI 재상승 실패",
 }
 
 # 멱등 트리거 — 1회만 발화 (B1/B2)
-ONESHOT_TRIGGERS: set[TriggerKind] = {"B1_take_profit_1", "B2_take_profit_2"}
+ONESHOT_TRIGGERS: set[TriggerKind] = {"P1_take_profit_1", "P2_take_profit_2"}
 
 
 @dataclass
@@ -175,11 +175,11 @@ def compute_c_signal_states(
     """
     if holding is not None:
         return {
-            "C1_vp_below_100":       "C1_vp_below_100"       in holding.triggers_fired,
-            "C2_bearish_divergence": "C2_bearish_divergence" in holding.triggers_fired,
-            "C3_vol_drain":          "C3_vol_drain"          in holding.triggers_fired,
-            "C4_bearish_candle":     "C4_bearish_candle"     in holding.triggers_fired,
-            "C5_vi_failure":         "C5_vi_failure"         in holding.triggers_fired,
+            "E1_vp_below_100":       "E1_vp_below_100"       in holding.triggers_fired,
+            "E2_bearish_divergence": "E2_bearish_divergence" in holding.triggers_fired,
+            "E3_vol_drain":          "E3_vol_drain"          in holding.triggers_fired,
+            "E4_bearish_candle":     "E4_bearish_candle"     in holding.triggers_fired,
+            "E5_vi_failure":         "E5_vi_failure"         in holding.triggers_fired,
         }
 
     # 감시 모드 — 현재 시점 instantaneous.
@@ -201,11 +201,11 @@ def compute_c_signal_states(
     c5 = False
 
     return {
-        "C1_vp_below_100":       c1,
-        "C2_bearish_divergence": c2,
-        "C3_vol_drain":          c3,
-        "C4_bearish_candle":     c4,
-        "C5_vi_failure":         c5,
+        "E1_vp_below_100":       c1,
+        "E2_bearish_divergence": c2,
+        "E3_vol_drain":          c3,
+        "E4_bearish_candle":     c4,
+        "E5_vi_failure":         c5,
     }
 
 
@@ -232,8 +232,8 @@ def evaluate_triggers(
         minute_ma_5: 5분 이평 (A3 입력). None 이면 A3 스킵.
         candle: 직전 완성 봉 (C4 입력). None 이면 C4 스킵.
         vp_5ma_prev, vp_5ma_now: VP 5MA 직전/현재 값 (C1 입력).
-        divergence: R13 다이버전스 (C2 입력).
-        vol_accel_1m_value: R11 1분 가속 (C3 입력).
+        divergence: Buy.Div 다이버전스 (C2 입력).
+        vol_accel_1m_value: Buy.Accel 1분 가속 (C3 입력).
         vi_triggered_at: VI 발동 시각 (C5 입력).
         vi_recovered: VI 후 고가 회복 여부 (호출자가 분봉으로 판정).
 
@@ -242,7 +242,7 @@ def evaluate_triggers(
     """
     events: list[TriggerEvent] = []
 
-    # round 35: 매수가 미입력(entry_price <= 0) — R15 트리거 평가 skip.
+    # round 35: 매수가 미입력(entry_price <= 0) — Exit.Triggers 트리거 평가 skip.
     # PWA/텔레그램 /buy 가 시세 못 가져온 채 등록한 경우. 손절선/익절선이 모두 0
     # 이라 의미 없음. 사용자가 /buy CODE PRICE 로 갱신하면 정상 평가.
     if holding.entry_price <= 0:
@@ -309,30 +309,30 @@ def evaluate_triggers(
     # ── B: 익절 ───────────────────────────────────────────────────────────────
     if current_price >= holding.take_profit_1_price:
         fire(
-            "B1_take_profit_1", False,
+            "P1_take_profit_1", False,
             f"+{TAKE_PROFIT_1_PCT}% 도달 ({int(current_price):,}) — 1/3 청산 권장",
         )
 
     if current_price >= holding.take_profit_2_price:
         fire(
-            "B2_take_profit_2", False,
+            "P2_take_profit_2", False,
             f"+{TAKE_PROFIT_2_PCT}% 도달 ({int(current_price):,}) — 1/3 청산 권장",
         )
 
     # B3 트레일링 — B1 발화 후 활성
-    if "B1_take_profit_1" in holding.triggers_fired:
+    if "P1_take_profit_1" in holding.triggers_fired:
         ts = holding.trailing_stop_price()
         if ts > 0 and current_price <= ts:
             # 트레일링은 멱등 X — 한번 발화 후 추가 하락 시 재발화 가능.
             # 동일 tick 에 중복 추가 방지 위해 events 내 dedup.
-            if not any(e.kind == "B3_trailing" for e in events):
-                holding.triggers_fired.add("B3_trailing")
+            if not any(e.kind == "P3_trailing" for e in events):
+                holding.triggers_fired.add("P3_trailing")
                 events.append(TriggerEvent(
-                    kind="B3_trailing",
+                    kind="P3_trailing",
                     code=holding.code,
                     is_stop_loss=False,
                     text=(
-                        f"{TRIGGER_LABELS['B3_trailing']} — "
+                        f"{TRIGGER_LABELS['P3_trailing']} — "
                         f"고점 {int(holding.high_since_entry):,} × "
                         f"{1.0 + TRAILING_STOP_PCT/100.0:.3f} = {int(ts):,} "
                         f"이탈 (현 {int(current_price):,}, {pnl:+.2f}%)"
@@ -343,20 +343,20 @@ def evaluate_triggers(
     if (
         vp_5ma_prev is not None and vp_5ma_now is not None
         and crossed_below_balanced(vp_5ma_prev, vp_5ma_now)
-        and "C1_vp_below_100" not in holding.triggers_fired
+        and "E1_vp_below_100" not in holding.triggers_fired
     ):
-        holding.triggers_fired.add("C1_vp_below_100")
+        holding.triggers_fired.add("E1_vp_below_100")
         events.append(TriggerEvent(
-            kind="C1_vp_below_100", code=holding.code, is_stop_loss=False,
-            text=f"{TRIGGER_LABELS['C1_vp_below_100']} — VP_5MA {vp_5ma_prev:.0f} → {vp_5ma_now:.0f}",
+            kind="E1_vp_below_100", code=holding.code, is_stop_loss=False,
+            text=f"{TRIGGER_LABELS['E1_vp_below_100']} — VP_5MA {vp_5ma_prev:.0f} → {vp_5ma_now:.0f}",
         ))
 
-    if divergence is not None and divergence.bearish and "C2_bearish_divergence" not in holding.triggers_fired:
-        holding.triggers_fired.add("C2_bearish_divergence")
+    if divergence is not None and divergence.bearish and "E2_bearish_divergence" not in holding.triggers_fired:
+        holding.triggers_fired.add("E2_bearish_divergence")
         events.append(TriggerEvent(
-            kind="C2_bearish_divergence", code=holding.code, is_stop_loss=False,
+            kind="E2_bearish_divergence", code=holding.code, is_stop_loss=False,
             text=(
-                f"{TRIGGER_LABELS['C2_bearish_divergence']} — "
+                f"{TRIGGER_LABELS['E2_bearish_divergence']} — "
                 f"가격 {divergence.price_change_pct:+.2f}% / VP_5MA {divergence.vp_5ma_delta:+.0f}"
             ),
         ))
@@ -368,13 +368,13 @@ def evaluate_triggers(
                 holding.vol_drain_since = now
             elif (
                 (now - holding.vol_drain_since).total_seconds() >= VOL_ACCEL_DRAIN_PERSIST_SECONDS
-                and "C3_vol_drain" not in holding.triggers_fired
+                and "E3_vol_drain" not in holding.triggers_fired
             ):
-                holding.triggers_fired.add("C3_vol_drain")
+                holding.triggers_fired.add("E3_vol_drain")
                 events.append(TriggerEvent(
-                    kind="C3_vol_drain", code=holding.code, is_stop_loss=False,
+                    kind="E3_vol_drain", code=holding.code, is_stop_loss=False,
                     text=(
-                        f"{TRIGGER_LABELS['C3_vol_drain']} — "
+                        f"{TRIGGER_LABELS['E3_vol_drain']} — "
                         f"vol_accel_1m {vol_accel_1m_value:.2f} (임계 {VOL_ACCEL_1M_DRAIN})"
                     ),
                 ))
@@ -385,12 +385,12 @@ def evaluate_triggers(
     if (
         candle is not None
         and is_bearish_exit_signal(candle)
-        and "C4_bearish_candle" not in holding.triggers_fired
+        and "E4_bearish_candle" not in holding.triggers_fired
     ):
-        holding.triggers_fired.add("C4_bearish_candle")
+        holding.triggers_fired.add("E4_bearish_candle")
         events.append(TriggerEvent(
-            kind="C4_bearish_candle", code=holding.code, is_stop_loss=False,
-            text=f"{TRIGGER_LABELS['C4_bearish_candle']} — 윗꼬리 {candle.upper_wick*100:.0f}% 음봉",
+            kind="E4_bearish_candle", code=holding.code, is_stop_loss=False,
+            text=f"{TRIGGER_LABELS['E4_bearish_candle']} — 윗꼬리 {candle.upper_wick*100:.0f}% 음봉",
         ))
 
     # C5 VI 재상승 실패
@@ -400,13 +400,13 @@ def evaluate_triggers(
         holding.vi_triggered_at is not None
         and not vi_recovered
         and (now - holding.vi_triggered_at).total_seconds() >= VI_FAILURE_WINDOW_SECONDS
-        and "C5_vi_failure" not in holding.triggers_fired
+        and "E5_vi_failure" not in holding.triggers_fired
     ):
-        holding.triggers_fired.add("C5_vi_failure")
+        holding.triggers_fired.add("E5_vi_failure")
         events.append(TriggerEvent(
-            kind="C5_vi_failure", code=holding.code, is_stop_loss=False,
+            kind="E5_vi_failure", code=holding.code, is_stop_loss=False,
             text=(
-                f"{TRIGGER_LABELS['C5_vi_failure']} — "
+                f"{TRIGGER_LABELS['E5_vi_failure']} — "
                 f"VI {holding.vi_triggered_at.strftime('%H:%M:%S')} 후 5분 내 회복 X"
             ),
         ))

@@ -1,6 +1,6 @@
 """단타 paper-trade 기록기 (round 32, ritual 2 자동화).
 
-`docs/plan.md` "R14/R15 가중치 검증 ritual" 의 ritual 2 자동화. 백테스트가
+`docs/plan.md` "Buy.Score/Exit.Triggers 가중치 검증 ritual" 의 ritual 2 자동화. 백테스트가
 분봉 히스토리 부재로 불가능하므로 매일 결정 레포트 결과를 누적해 점수 ↔ 갭상
 확률 상관을 산출.
 

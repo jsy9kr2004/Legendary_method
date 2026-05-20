@@ -107,19 +107,19 @@ def run_pipeline(
     if snapshot_df.empty:
         return f"⚠ [{target_date}] 스냅샷 데이터 없음. --demo 옵션으로 실행하거나 스케줄러로 데이터를 수집하세요."
 
-    # ── 2. 주도테마 식별 (R3) ─────────────────────────────────────────────
+    # ── 2. 주도테마 식별 (Theme) ─────────────────────────────────────────────
     leading_themes = identify_leading_themes(snapshot_df, theme_df, threshold=3)
     leading_codes = codes_in_leading_themes(leading_themes)
 
     if not leading_themes:
         logger.info("주도테마 없음 — 후보 없이 레포트 생성")
 
-    # ── 3. 종배 후보 추출 (R4 v2 round 41) ────────────────────────────────
+    # ── 3. 종배 후보 추출 (Eod.Pick v2 round 41) ────────────────────────────────
     # leading_codes 우회 — 거래대금 50위 전체 universe + 10~27% 컷
     candidates_df = extract_candidates(snapshot_df, leading_theme_codes=None)
     accepted = accepted_candidates(candidates_df)
 
-    # R4 v2 (c) 종가 고가-10% 이내 + (d) 52주 신고가 post-filter.
+    # Eod.Pick v2 (c) 종가 고가-10% 이내 + (d) 52주 신고가 post-filter.
     # pipeline 은 fetch_quote 보강 path 가 없으므로 snapshot 의 intraday_high 가
     # 0 이면 (c) skip 되고 통과. 운영 환경(real)에서는 KIS volume-rank 가
     # intraday_high 를 채워주므로 정상 동작 — demo 모드 fixture 도 채워서 전달.
@@ -128,7 +128,7 @@ def run_pipeline(
     if accepted_dicts and not daily_ohlcv.empty:
         accepted_dicts = apply_r4v2_post_filters(accepted_dicts, daily_ohlcv, target_date)
 
-    # ── 4. Historical + Sizing (R5, R6) ───────────────────────────────────
+    # ── 4. Historical + Sizing (Eod.GapStats, Eod.Sizing) ───────────────────────────────────
     candidates_with_stats: list[dict[str, Any]] = []
     for row in accepted_dicts:
         code = str(row.get("code", ""))
@@ -165,11 +165,11 @@ def run_pipeline(
         )
         sizing_layer_name, sizing_stats = pick_sizing_layer(layers)
 
-        # R4 v2 (f) Layer 표본 ≥5 — round 41 후속 2026-05-19: hard cut → soft.
+        # Eod.Pick v2 (f) Layer 표본 ≥5 — round 41 후속 2026-05-19: hard cut → soft.
         # 표본 부족도 후보 유지. Kelly 만 None 으로 나옴 (sample factor n<5 = None).
         sample_sufficient = has_enough_samples(sizing_stats)
         if not sample_sufficient:
-            logger.info(f"[파이프라인] {code} R4 v2 (f) 표본 부족 (n<5) — soft 경고, 후보 유지")
+            logger.info(f"[파이프라인] {code} Eod.Pick v2 (f) 표본 부족 (n<5) — soft 경고, 후보 유지")
 
         # 테마 조회
         if not theme_df.empty:
@@ -177,7 +177,7 @@ def run_pipeline(
         else:
             themes = []
 
-        # R4 v2 보조 지표 (round 41 ④) — 1년 ret≥10 + 갭상 비율
+        # Eod.Pick v2 보조 지표 (round 41 ④) — 1년 ret≥10 + 갭상 비율
         from src.overnight.gap_stats import historical_ret10_gap_stats
         ret10_aux = historical_ret10_gap_stats(daily_ohlcv, code, target_date)
 

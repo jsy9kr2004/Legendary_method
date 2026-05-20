@@ -244,7 +244,7 @@ def test_sparkline_empty():
     assert short_trend_sparkline(pd.DataFrame()) == ""
 
 
-# ── R11 vol_accel_1m / vol_accel_5m ──────────────────────────────────────────
+# ── Buy.Accel vol_accel_1m / vol_accel_5m ──────────────────────────────────────────
 
 
 def test_vol_accel_1m_basic():

@@ -247,7 +247,7 @@ def test_payload_trigger_states():
     triggers = {
         "A1_stop_price": False,
         "A2_stop_bar_low": True,
-        "C1_vp_below_100": False,
+        "E1_vp_below_100": False,
     }
     payload = build_monitor_payload(
         _stock(),
@@ -266,10 +266,10 @@ def test_payload_trigger_lines_for_pwa():
     텔레그램 카드와 동일 텍스트 줄 list 로 제공돼야 함.
     """
     triggers = {
-        "C1_vp_below_100": False,
-        "C2_bearish_divergence": False,
-        "C3_vol_drain": True,
-        "C4_bearish_candle": False,
+        "E1_vp_below_100": False,
+        "E2_bearish_divergence": False,
+        "E3_vol_drain": True,
+        "E4_bearish_candle": False,
     }
     payload = build_monitor_payload(
         _stock(),
@@ -297,9 +297,9 @@ def test_payload_trigger_lines_holding_includes_c5():
     from src.scalping.exit.triggers import Holding
 
     triggers = {
-        "C1_vp_below_100": False, "C2_bearish_divergence": False,
-        "C3_vol_drain": False, "C4_bearish_candle": False,
-        "C5_vi_failure": False,
+        "E1_vp_below_100": False, "E2_bearish_divergence": False,
+        "E3_vol_drain": False, "E4_bearish_candle": False,
+        "E5_vi_failure": False,
     }
     holding = Holding(
         code="091340", entry_price=89000.0,

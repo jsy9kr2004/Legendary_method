@@ -330,7 +330,7 @@ def fetch_investor_flow(client: KISClient, code: str) -> dict[str, Any] | None:
         DEBUG 로그 추가. 실응답 구조 확인은 `scripts/diag_investor_flow.py` 로
         1회 캡처.
 
-        R14 점수 합산은 round 29 ritual (3~5종목 × 5거래일 KRX 공시 비교)
+        Buy.Score 점수 합산은 round 29 ritual (3~5종목 × 5거래일 KRX 공시 비교)
         완료 전엔 보류 — 카드 표시만.
     """
     params = {

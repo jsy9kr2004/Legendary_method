@@ -189,7 +189,7 @@ def test_holdings_buy_price_fallback_to_payload(
 def test_holdings_buy_price_missing_registers_zero(
     client, session, tmp_path, monkeypatch,
 ):
-    """round 35: 시세 미확보여도 등록 진행. entry_price=0 → R15 트리거 skip.
+    """round 35: 시세 미확보여도 등록 진행. entry_price=0 → Exit.Triggers 트리거 skip.
 
     사용자 정책: "그냥 보유 처리". 사용자가 나중에 `/buy CODE PRICE` 로 가격 갱신.
     """
