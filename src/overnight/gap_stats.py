@@ -338,6 +338,7 @@ def historical_4layer(
     today_strong_market: bool | None = None,
     market_regime_by_date: dict[date, bool] | None = None,
     today_volume_ratio: float | None = None,
+    code: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Historical 갭상 통계 계산 (4 + 2 layer).
 
@@ -363,14 +364,17 @@ def historical_4layer(
                                None이면 layer3_strong_mkt 산출 X.
         today_volume_ratio: 오늘 후보의 volume / 직전 20일 평균.
                             None/NaN이면 layer3_high_vol 산출 X.
+        code: 6자리 종목 코드. 지정 시 해당 종목의 historical 만 사용 (종목별 layer).
+              None 이면 cross-stock pool (시장 평균 — footer reference 용).
 
     Returns:
         layer dict. 추가 layer 인자 부재 시 해당 슬롯은 누락 (None 키 X).
 
-    설계 결정 (D2, v0):
-        Layer 1~3 은 cross-stock pool 로 매칭. 모든 종목의 historical 사례를
-        한 풀로 섞어서 통계 산출. 표본 확보엔 유리하지만 종목별 고유 패턴은 못 잡음.
-        v1 에서 종목별 layer + 표본 충분할 때만 hybrid 검토.
+    설계 결정 (D2, v0 → v1, 사용자 정정 2026-05-21):
+        v0: Layer 1~3 cross-stock pool — 표본 확보 우선.
+        v1: code 인자 추가 — 종목별 layer 가 본질 (Kelly 의 p/W/L 은 그 종목 특성).
+            cross-stock pool 은 footer reference (시장 평균 비교용) 로만 유지.
+        사용자 의도: "Layer 들은 시장 평균이 아니라 종목별로 체크해야 한다".
 
         시장 국면 매칭은 KIS API 일봉 limit(252)+ma200 윈도우 제약으로 사용 가능
         날짜가 좁다 (~52일). 더 멀리 가려면 KOSPI 영구 적재 인프라 필요 (TODO).
@@ -390,6 +394,11 @@ def historical_4layer(
     enriched = pd.concat(enriched_parts, ignore_index=True)
 
     in_window = _filter_lookback(enriched, today, lookback_days)
+
+    # 종목별 layer (v1, 사용자 정정 2026-05-21): code 인자 있으면 해당 종목 historical 만.
+    # cross-stock pool (code=None) 은 footer reference (시장 평균 비교) 용.
+    if code is not None:
+        in_window = in_window[in_window["code"] == code]
 
     layer1 = in_window[in_window["daily_return"] >= LAYER1_RETURN_THRESHOLD]
     layer2 = in_window[in_window["daily_return"] >= LAYER2_RETURN_THRESHOLD]

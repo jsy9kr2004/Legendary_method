@@ -155,6 +155,7 @@ def run_pipeline(
             today_strong = None
             regime_by_date = None
             vol_ratio = None
+        # 종목별 layer (사용자 정정 2026-05-21): code 인자로 해당 종목 historical 만.
         layers = historical_4layer(
             daily_ohlcv,
             today_close_pos=cp,
@@ -162,6 +163,7 @@ def run_pipeline(
             today_strong_market=today_strong,
             market_regime_by_date=regime_by_date,
             today_volume_ratio=vol_ratio,
+            code=code,
         )
         sizing_layer_name, sizing_stats = pick_sizing_layer(layers)
 

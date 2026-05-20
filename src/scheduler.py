@@ -660,6 +660,8 @@ def _send_decision_report(
             close=float(close),
         )
         vol_ratio = _today_volume_ratio(daily_ohlcv, code, today, int(row.get("volume") or 0))
+        # 종목별 layer (사용자 정정 2026-05-21): code 인자로 해당 종목 historical 만.
+        # cross-stock pool 은 별도 (시장 평균 reference, footer 표시 — 아래 코드 참조).
         layers = historical_4layer(
             daily_ohlcv,
             today_close_pos=cp,
@@ -667,6 +669,7 @@ def _send_decision_report(
             today_strong_market=today_strong_market,
             market_regime_by_date=market_regime_by_date or None,
             today_volume_ratio=vol_ratio,
+            code=code,
         )
         sizing_layer_name, sizing_stats = pick_sizing_layer(layers)
 
@@ -740,7 +743,27 @@ def _send_decision_report(
             if signals:
                 c["intraday_signals"] = signals
 
-    report = build_decision_report(leading, candidates_with_stats, dt, market_stats=market_stats)
+    # 시장 평균 layer reference — cross-stock pool 한 번만 (사용자 정정 2026-05-21).
+    # 후보별 layer 는 종목별로 계산되므로, 시장 평균 비교용으로 footer 에 표시.
+    market_layers = None
+    try:
+        # 시장 평균은 first 후보의 close_pos 무관하게 Layer 1/2 만 의미 있음 (Layer 3 은
+        # 후보별 close_pos 매칭이라 종목별로만 의미). dummy close_pos=0.5 로 호출 후
+        # Layer 1/2 만 사용.
+        market_layers = historical_4layer(
+            daily_ohlcv,
+            today_close_pos=0.5,
+            today=today,
+            code=None,  # cross-stock pool
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[결정] 시장 평균 layer 계산 실패: {e}")
+
+    report = build_decision_report(
+        leading, candidates_with_stats, dt,
+        market_stats=market_stats,
+        market_layers=market_layers,
+    )
     save_decision_report(report, settings.data_dir, dt)
     save_decision_candidates(candidates_with_stats, settings.data_dir, dt)
     parts = split_messages(report)

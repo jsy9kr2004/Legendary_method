@@ -313,6 +313,7 @@ def build_decision_report(
     candidates: list[dict[str, Any]],
     snapshot_dt: datetime,
     market_stats: dict[str, Any] | None = None,
+    market_layers: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """결정 레포트 마크다운 생성.
 
@@ -320,12 +321,15 @@ def build_decision_report(
         leading_themes: identify_leading_themes() 결과.
         candidates: accepted_candidates() 결과 + 각 후보에 아래 키 추가 필요:
             - themes: list[str] (네이버 테마)
-            - layers: dict (historical_4layer 결과)
+            - layers: dict (historical_4layer 결과, 종목별)
             - sizing_layer: str ("layer3" 등)
             - sizing_stats: dict (pick_sizing_layer 결과 stats)
             - sizing: {"kelly": float|None, "sharpe": float, "equal": float}
         snapshot_dt: 스냅샷 수집 시각 (KST datetime).
         market_stats: compute_market_stats() 결과. None/빈 dict 시 섹션 생략.
+        market_layers: cross-stock pool historical_4layer 결과 (시장 평균).
+            None 이면 footer 의 시장 평균 reference 섹션 생략.
+            사용자 정정 2026-05-21: 후보별 layer 는 종목별, 시장 평균은 footer 한 번만.
 
     Returns:
         마크다운 문자열.
@@ -365,14 +369,33 @@ def build_decision_report(
     lines += [
         "",
         sep("─"),
-        "[Layer 정의]",
-        "• Layer 1: 1년 lookback 안 모든 종목 일봉 ret≥20% 사례 — 시장 전체 갭상 통계",
+        "[Layer 정의 + 시장 평균 reference]",
+        "• Layer 1: 해당 종목 1년 lookback 일봉 ret≥20% 사례 — 종목별 갭상 통계",
         "• Layer 2: Layer 1 중 상한가 사례 (ret≥29.5%) — 강한 시그널만",
-        "• Layer 3: Layer 2 중 오늘 후보의 종가위치 ±2% 일치 — 마감 형태 유사 사례 (★ 사이징 기준)",
+        "• Layer 3: Layer 2 중 오늘 종가위치 ±2% 일치 — 마감 형태 유사 사례 (★ 사이징 기준)",
         "• Layer 3+: Layer 3 + KOSPI 200ma regime 매칭 / 거래량비율 매칭",
         "• Layer 4: Layer 3 + 일중 고점도달 시각 매칭 — v1 (분봉 적재 후 구현)",
-        "• ⚠ Layer 1~3 은 cross-stock pool (모든 종목 풀) — 시장 평균 통계. 종목별",
-        "  히스토리는 '📊 종목별 ret 빈도' 매트릭스 (위 후보별 표시) 참조.",
+        "• ★ 후보별 Layer 는 종목별 (사용자 정정 2026-05-21) — Kelly p/W/L 정확도 ↑",
+        "  표본 부족 (n<5) 시 Kelly None, Sharpe/Equal/직관 fallback",
+    ]
+
+    # 시장 평균 reference — cross-stock pool 한 번만 (사용자 정정 2026-05-21).
+    # 후보별 비교용. 종목별 layer 가 작을 때 시장 평균 대비 위치 확인 가능.
+    if market_layers:
+        lines.append("")
+        lines.append("[시장 평균 reference — cross-stock pool 1년]")
+        lines.append("  ※ 모든 종목 historical 풀로 산출. 종목별 Layer 와 비교용.")
+        layer_order_mkt = [
+            ("layer1", "Layer 1 (ret≥20% 모든 사례)"),
+            ("layer2", "Layer 2 (상한가 ret≥29.5%)"),
+        ]
+        for layer_key, label in layer_order_mkt:
+            stats = market_layers.get(layer_key)
+            if not stats:
+                continue
+            lines.append("  " + fmt_layer_stats(stats, label, is_sizing_basis=False))
+
+    lines += [
         "",
         "• 본 레포트는 14:50 기준. 종가 직전 상황 변동 가능",
         "• Eod.Pick v2 hard cut: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 + (e) 10≤ret≤27%",
