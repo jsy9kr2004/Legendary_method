@@ -15,7 +15,7 @@
     매도 트리거 발화 후     → 사람이 청산 여부 결정 후 명시적 /sell 필요
 
 트리거 종류 (OR, 하나라도 발동 시 푸시):
-    A1. 손절 — 가격 ≤ 진입가 × 0.985
+    A1. 손절 — 가격 ≤ 진입가 × 0.98 (-2%)
     A2. 손절 — 봉 저점 이탈
     A3. 손절 — 5분 이평 이탈
     A4. 손절 — 시간 (N분 내 +0.5% 미달)
@@ -75,7 +75,7 @@ TriggerKind = Literal[
 ]
 
 TRIGGER_LABELS: dict[TriggerKind, str] = {
-    "A1_stop_price":         "A1 가격 손절 -1.5%",
+    "A1_stop_price":         "A1 가격 손절 -2%",
     "A2_stop_bar_low":       "A2 진입봉 저점 이탈",
     "A3_stop_ma":            "A3 5분 이평 이탈",
     "A4_stop_time":          "A4 시간 손절",

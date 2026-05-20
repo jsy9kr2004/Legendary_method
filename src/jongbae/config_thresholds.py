@@ -262,7 +262,7 @@ BID_ASK_RATIO_THRESHOLD: float = 3.0        # +0.5 (강등된 가중치)
 EOD_CUTOFF_HH: int = 14
 EOD_CUTOFF_MM: int = 45
 
-STOP_LOSS_PCT: float = -1.5                 # A1 진입가 대비 -1.5%
+STOP_LOSS_PCT: float = -2.0                 # A1 진입가 대비 -2% (사용자 룰 통일, 2026-05-21)
 TAKE_PROFIT_1_PCT: float = 2.0              # B1 +2.0% (1/3)
 TAKE_PROFIT_2_PCT: float = 3.5              # B2 +3.5% (1/3)
 TRAILING_STOP_PCT: float = -1.5             # B3 고점 대비 -1.5%

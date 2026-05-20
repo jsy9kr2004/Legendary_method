@@ -41,20 +41,20 @@ def _entry(price: float = 100_000, minutes_ago: int = 1) -> tuple[Holding, datet
 
 def test_A1_stop_loss_price():
     h, now = _entry(100_000)
-    # 손절선 = 98_500
-    events = evaluate_triggers(h, now=now, current_price=98_500)
+    # 손절선 = 98_000 (-2%, 사용자 룰 통일 2026-05-21)
+    events = evaluate_triggers(h, now=now, current_price=98_000)
     kinds = [e.kind for e in events]
     assert "A1_stop_price" in kinds
     a1 = next(e for e in events if e.kind == "A1_stop_price")
     assert a1.is_stop_loss is True
-    # 카드 안 한 줄 사유 포맷 (round 17): "A1 가격 손절 -1.5% — ..."
+    # 카드 안 한 줄 사유 포맷 (round 17): "A1 가격 손절 -2% — ..."
     assert "A1" in a1.text or "손절" in a1.text
 
 
 def test_trigger_text_is_card_format_not_push():
     """정정 round 17: TriggerEvent.text 는 카드 한 줄 사유. 푸시 prefix 없어야."""
     h, now = _entry(100_000)
-    events = evaluate_triggers(h, now=now, current_price=98_500)
+    events = evaluate_triggers(h, now=now, current_price=98_000)
     a1 = next(e for e in events if e.kind == "A1_stop_price")
     # 폐기된 푸시 prefix
     assert "[손절선 도달]" not in a1.text
@@ -89,7 +89,7 @@ def test_A1_no_trigger_above_stop():
 
 def test_A2_stop_below_entry_bar_low():
     h, now = _entry(100_000)
-    # entry_bar_low = 99000. 현재가 98800 → A2 발화 (A1 = 98500 미달이라 안 옴)
+    # entry_bar_low = 99000. 현재가 98800 → A2 발화 (A1 = 98000 미달이라 안 옴)
     events = evaluate_triggers(h, now=now, current_price=98_800)
     assert any(e.kind == "A2_stop_bar_low" for e in events)
 
