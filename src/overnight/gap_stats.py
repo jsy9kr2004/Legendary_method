@@ -70,47 +70,95 @@ def historical_ret10_gap_stats(
     """Eod.Pick v2 보조 지표 — 1년 lookback 동안 ret≥10% 발생 횟수 + 그중 갭상 비율.
 
     plan.md round 41 ④: "historical 갭상 비율 (1년 ret≥10 횟수 + 그중 갭상 횟수 +
-    비율) 은 카드 보조 정보로만 표시, 컷으로 사용 X". 단골 종배 종목 식별용
-    (대한광통신 78%/빛과전자 80%/한화갤러리아 100% 등).
+    비율) 은 카드 보조 정보로만 표시, 컷으로 사용 X". 단골 종배 종목 식별용.
 
-    Args:
-        daily_ohlcv: 전체 종목 일봉 (DAILY_OHLCV_COLUMNS).
-        code: 6자리 종목 코드.
-        today: 기준 날짜. 이 날짜 직전 lookback 거래일 윈도우.
-        lookback: 거래일 수 (기본 252 ≈ 1년).
+    backward-compat: 기존 호출자가 받던 {"n_ret10", "n_gap_up", "ratio"} 그대로 유지.
 
     Returns:
         {
-            "n_ret10": int,    # ret≥10% 발생 일수
-            "n_gap_up": int,   # 그중 다음날 갭상 (next_open > close) 일수
-            "ratio": float,    # n_gap_up / n_ret10. 표본 0 이면 NaN.
+            "n_ret10": int, "n_gap_up": int, "ratio": float,  # 기존 key (1년 ret≥10)
         }
     """
+    aux = historical_aux_matrix(daily_ohlcv, code, today, lookback)
+    cell = aux.get(("year", 10), {"n": 0, "n_gap_up": 0, "ratio": float("nan")})
+    return {
+        "n_ret10": cell["n"],
+        "n_gap_up": cell["n_gap_up"],
+        "ratio": cell["ratio"],
+    }
+
+
+# 사용자 정정 2026-05-21: ret 빈도 표시 세분화 (4 기간 × 3 임계 = 12 케이스).
+# 기간: 1개월(21거래일) / 3개월(63) / 6개월(126) / 1년(252).
+# ret 임계: ≥0% / ≥10% / ≥20%.
+_PERIOD_LABELS = [
+    ("month", 21),
+    ("3month", 63),
+    ("6month", 126),
+    ("year", 252),
+]
+_RET_THRESHOLDS = [0.0, 10.0, 20.0]
+
+
+def historical_aux_matrix(
+    daily_ohlcv: pd.DataFrame,
+    code: str,
+    today: date,
+    lookback: int = LOOKBACK_TRADING_DAYS,
+) -> dict[tuple[str, int], dict[str, Any]]:
+    """ret 빈도 + 갭상 비율 매트릭스 — 4 기간 × 3 임계.
+
+    Args:
+        daily_ohlcv: 전체 종목 일봉.
+        code: 6자리 종목 코드.
+        today: 기준 날짜 (이 날짜 직전 데이터만 사용).
+        lookback: 최대 lookback (기본 252).
+
+    Returns:
+        {
+            ("month", 0): {"n": ..., "n_gap_up": ..., "ratio": ...},
+            ("month", 10): {...},
+            ("month", 20): {...},
+            ("3month", 0): {...}, ..., ("year", 20): {...},
+        }
+        n=0 시 ratio=NaN.
+    """
+    empty = {"n": 0, "n_gap_up": 0, "ratio": float("nan")}
+    out: dict[tuple[str, int], dict[str, Any]] = {
+        (p, int(t)): dict(empty) for p, _ in _PERIOD_LABELS for t in _RET_THRESHOLDS
+    }
+
     if daily_ohlcv is None or daily_ohlcv.empty:
-        return {"n_ret10": 0, "n_gap_up": 0, "ratio": float("nan")}
+        return out
 
     own = daily_ohlcv[daily_ohlcv["code"] == code]
     if own.empty:
-        return {"n_ret10": 0, "n_gap_up": 0, "ratio": float("nan")}
+        return out
 
     own = own[own["date"] < today].sort_values("date").tail(lookback)
     if own.empty:
-        return {"n_ret10": 0, "n_gap_up": 0, "ratio": float("nan")}
+        return out
 
     enriched = _compute_returns(own)
-    qualifying = enriched[enriched["daily_return"] >= 10.0]
-    n_ret10 = int(len(qualifying))
-    if n_ret10 == 0:
-        return {"n_ret10": 0, "n_gap_up": 0, "ratio": float("nan")}
 
-    # gap_pct = (next_open - close) / close * 100. next_open NaN(마지막행)은 제외.
-    gap_valid = qualifying.dropna(subset=["gap_pct"])
-    n_gap_up = int((gap_valid["gap_pct"] > 0).sum())
-    # 표본은 ret10 이지만 비율은 next_open 이 있는 표본 기준 (안전).
-    ratio_base = len(gap_valid) if len(gap_valid) > 0 else n_ret10
-    ratio = float(n_gap_up / ratio_base) if ratio_base > 0 else float("nan")
-
-    return {"n_ret10": n_ret10, "n_gap_up": n_gap_up, "ratio": ratio}
+    for period_label, period_days in _PERIOD_LABELS:
+        period_df = enriched.tail(period_days)
+        for ret_th in _RET_THRESHOLDS:
+            qualifying = period_df[period_df["daily_return"] >= ret_th]
+            n = int(len(qualifying))
+            if n == 0:
+                out[(period_label, int(ret_th))] = dict(empty)
+                continue
+            gap_valid = qualifying.dropna(subset=["gap_pct"])
+            n_gap_up = int((gap_valid["gap_pct"] > 0).sum())
+            ratio_base = len(gap_valid) if len(gap_valid) > 0 else n
+            ratio = float(n_gap_up / ratio_base) if ratio_base > 0 else float("nan")
+            out[(period_label, int(ret_th))] = {
+                "n": n,
+                "n_gap_up": n_gap_up,
+                "ratio": ratio,
+            }
+    return out
 
 
 def is_52w_high(

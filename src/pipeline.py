@@ -178,8 +178,13 @@ def run_pipeline(
             themes = []
 
         # Eod.Pick v2 보조 지표 (round 41 ④) — 1년 ret≥10 + 갭상 비율
-        from src.overnight.gap_stats import historical_ret10_gap_stats
+        # 사용자 정정 2026-05-21: 12 케이스 매트릭스 추가
+        from src.overnight.gap_stats import (
+            historical_aux_matrix,
+            historical_ret10_gap_stats,
+        )
         ret10_aux = historical_ret10_gap_stats(daily_ohlcv, code, target_date)
+        aux_matrix = historical_aux_matrix(daily_ohlcv, code, target_date)
 
         c: dict[str, Any] = dict(row)
         c["themes"] = themes
@@ -187,6 +192,7 @@ def run_pipeline(
         c["sizing_layer"] = sizing_layer_name
         c["sizing_stats"] = sizing_stats
         c["historical_aux"] = ret10_aux
+        c["historical_aux_matrix"] = aux_matrix
         c["sample_sufficient"] = sample_sufficient
         candidates_with_stats.append(c)
 

@@ -501,16 +501,55 @@ def _enrich_candidates_with_quote(
             return v == 0 or v != v  # 0 or NaN
         return False
 
+    # daily_ohlcv fallback 용 — fetch_quote 도 0 으로 줄 때 어제 종가 사용
+    daily_ohlcv = None
+    try:
+        from src.data.daily import read_daily_ohlcv
+        from src.config import load_settings
+        daily_ohlcv = read_daily_ohlcv(load_settings().data_dir)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[결정] daily_ohlcv fallback 로드 실패: {e}")
+
     for base in candidate_dicts:
         code = str(base.get("code", "")).zfill(6)
         if not code:
             continue
         q = fetch_quote(client, code)
         if q is None:
+            logger.warning(f"[결정] {code} fetch_quote 응답 None — prev_close/intraday_high 보강 불가")
             continue
         for field in _MISSING_TARGETS:
             if _is_missing(base.get(field)) and not _is_missing(q.get(field)):
                 base[field] = q[field]
+
+        # fetch_quote 도 prev_close=0 인 경우 daily_ohlcv 어제 종가로 fallback
+        # (사용자 정정 2026-05-21: 종배 레포트에서 일봉 "0 → 75,900" 으로 표시되는 문제)
+        if _is_missing(base.get("prev_close")) and daily_ohlcv is not None and not daily_ohlcv.empty:
+            today = base.get("_today_date")  # 호출자가 미리 채워넣을 수 있게 hook
+            own = daily_ohlcv[daily_ohlcv["code"] == code]
+            if not own.empty:
+                # 가장 최근 거래일 종가 (today 미입력 시 last row 사용)
+                own_sorted = own.sort_values("date")
+                last_close = int(own_sorted.iloc[-1].get("close") or 0)
+                if last_close > 0:
+                    base["prev_close"] = last_close
+                    logger.info(
+                        f"[결정] {code} prev_close fetch_quote 0 → daily_ohlcv fallback {last_close:,}"
+                    )
+                else:
+                    logger.warning(
+                        f"[결정] {code} prev_close daily_ohlcv fallback 도 0 — 표시 깨짐 예상"
+                    )
+
+        # daily_return 재계산 — prev_close 보강 후 일치성 확보
+        try:
+            price = int(base.get("price") or 0)
+            prev = int(base.get("prev_close") or 0)
+            if price > 0 and prev > 0:
+                base["daily_return"] = (price - prev) / prev * 100.0
+        except (TypeError, ValueError):
+            pass
+
         # intraday_high_pct 재계산 (보강 후 값으로)
         try:
             high = int(base.get("intraday_high") or 0)
@@ -644,8 +683,13 @@ def _send_decision_report(
             else []
         )
         # Eod.Pick v2 보조 지표 — 1년 ret≥10% 횟수 + 갭상 비율 (round 41 ④)
-        from src.overnight.gap_stats import historical_ret10_gap_stats
+        # 사용자 정정 2026-05-21: 4 기간 × 3 임계 = 12 케이스 매트릭스 추가
+        from src.overnight.gap_stats import (
+            historical_aux_matrix,
+            historical_ret10_gap_stats,
+        )
         ret10_aux = historical_ret10_gap_stats(daily_ohlcv, code, today)
+        aux_matrix = historical_aux_matrix(daily_ohlcv, code, today)
 
         c: dict[str, Any] = dict(row)
         c["themes"] = themes
@@ -653,6 +697,7 @@ def _send_decision_report(
         c["sizing_layer"] = sizing_layer_name
         c["sizing_stats"] = sizing_stats
         c["historical_aux"] = ret10_aux
+        c["historical_aux_matrix"] = aux_matrix  # 12 cells: (period, ret_th)
         c["sample_sufficient"] = sample_sufficient
         candidates_with_stats.append(c)
 

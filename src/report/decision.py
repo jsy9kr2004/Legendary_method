@@ -49,7 +49,14 @@ def _candidate_block(c: dict[str, Any]) -> str:
     prev_close = c.get("prev_close", 0)
     daily_return = c.get("daily_return", float("nan"))
     intraday_high = c.get("intraday_high", 0)
-    intraday_high_pct = c.get("intraday_high_pct", float("nan"))
+    # (사용자 정정 2026-05-21) 일중 고점 표시 = 현재가가 일중 고점에서 얼마나 빠짐
+    # 옛 intraday_high_pct = (intraday_high - prev_close) / prev_close * 100
+    # 는 Eod.Pick (c) hard cut + 52w 신고가 판정용으로 candidate dict 에 유지하되,
+    # 결정 레포트 표시는 dist_from_high_pct 로 변경 — 현재가 vs 일중 고점.
+    if intraday_high and intraday_high > 0 and price and price > 0:
+        dist_from_high_pct = (price - intraday_high) / intraday_high * 100.0
+    else:
+        dist_from_high_pct = float("nan")
     trading_value = c.get("trading_value", 0)
     volume = c.get("volume", 0)
     rank = c.get("rank", 0)
@@ -69,18 +76,18 @@ def _candidate_block(c: dict[str, Any]) -> str:
 
     lines = [
         f"▣ {name} ({code})  {priority_label}",
-        "─" * 33,
+        "─" * 27,  # 사용자 정정: 80% 길이 (33 → 27)
     ]
 
     # 테마
     if themes:
         lines.append(f"테마: {' / '.join(themes)}")
 
-    # 오늘 시그니처
+    # 오늘 일봉 + 일중 고점 (사용자 정정 2026-05-21: "오늘 시그니처" 라벨 제거)
     lines.append("")
-    lines.append("[오늘 시그니처]")
     lines.append(f"일봉:      {fmt_pct(daily_return)}  ({fmt_price(prev_close)} → {fmt_price(price)})")
-    lines.append(f"일중 고점: {fmt_price(intraday_high)}  ({fmt_pct(intraday_high_pct)})")
+    # 일중 고점 표시 = 현재가가 일중 고점 대비 얼마나 빠졌나 (음수, 0% = 현재가가 고점)
+    lines.append(f"일중 고점: {fmt_price(intraday_high)}  (현재가 {fmt_pct(dist_from_high_pct)})")
     # 거래대금 (KIS 절대 순위) + 거래량 (snapshot universe 내 상대 순위).
     # KIS volume-rank 는 거래대금 절대 순위만 — 거래량 절대 순위 별도 API 필요.
     lines.append(f"거래대금:  {fmt_billion(trading_value)}  (거래대금 {rank}위)")
@@ -117,18 +124,34 @@ def _candidate_block(c: dict[str, Any]) -> str:
         # 기존 note 가 다른 사유로 채워졌으면 그것도 표시
         lines.append(f"          비고: {layer4_note}")
 
-    # Eod.Pick v2 보조 지표 — 1년 ret≥10 횟수 + 갭상 비율 (round 41 ④, 컷 X 표시만)
-    aux = c.get("historical_aux") or {}
-    n_ret10 = int(aux.get("n_ret10", 0) or 0)
-    if n_ret10 > 0:
-        n_gap = int(aux.get("n_gap_up", 0) or 0)
-        ratio = aux.get("ratio", float("nan"))
-        if ratio == ratio:  # not NaN
-            lines.append(
-                f"  📊 1년 ret≥10: {n_ret10}회 / 갭상 {n_gap}회 ({ratio*100:.0f}%)"
-            )
-        else:
-            lines.append(f"  📊 1년 ret≥10: {n_ret10}회 (갭상 데이터 없음)")
+    # Eod.Pick v2 보조 지표 — 4 기간 × 3 임계 매트릭스 (사용자 정정 2026-05-21)
+    # 기간: 1개월(21d) / 3개월(63d) / 6개월(126d) / 1년(252d). 임계: ret>=0/10/20%.
+    # 종목별 히스토리 빈도 + 갭상 비율 — 단골 종배 종목 식별용. 컷 X 표시만.
+    aux_matrix = c.get("historical_aux_matrix") or {}
+    if aux_matrix:
+        lines.append("")
+        lines.append("  📊 종목별 ret 빈도 & 갭상 비율 (기간 × 임계)")
+        # 헤더
+        lines.append("           1개월     3개월     6개월     1년")
+        # 행: 각 ret 임계 (0/10/20)
+        for ret_th in (0, 10, 20):
+            row_label = f"  ret≥{ret_th:>2}%:"
+            cells = []
+            for period_label, _ in [
+                ("month", None), ("3month", None), ("6month", None), ("year", None)
+            ]:
+                cell = aux_matrix.get((period_label, ret_th)) or {}
+                n = int(cell.get("n", 0) or 0)
+                if n == 0:
+                    cells.append("    —    ")
+                else:
+                    n_gap = int(cell.get("n_gap_up", 0) or 0)
+                    ratio = cell.get("ratio", float("nan"))
+                    if ratio == ratio:
+                        cells.append(f" {n:>2}회/{int(ratio*100):>2}%")
+                    else:
+                        cells.append(f" {n:>2}회/ —")
+            lines.append(row_label + "  " + "  ".join(cells))
 
     # Eod.Pick v2 hard cut 통과 + soft 지표 표시
     # (c) hard cut 통과 시 ✅, (d) 신고가는 soft — pass/fail/unknown 모두 표시.
@@ -342,9 +365,18 @@ def build_decision_report(
     lines += [
         "",
         sep("─"),
+        "[Layer 정의]",
+        "• Layer 1: 1년 lookback 안 모든 종목 일봉 ret≥20% 사례 — 시장 전체 갭상 통계",
+        "• Layer 2: Layer 1 중 상한가 사례 (ret≥29.5%) — 강한 시그널만",
+        "• Layer 3: Layer 2 중 오늘 후보의 종가위치 ±2% 일치 — 마감 형태 유사 사례 (★ 사이징 기준)",
+        "• Layer 3+: Layer 3 + KOSPI 200ma regime 매칭 / 거래량비율 매칭",
+        "• Layer 4: Layer 3 + 일중 고점도달 시각 매칭 — v1 (분봉 적재 후 구현)",
+        "• ⚠ Layer 1~3 은 cross-stock pool (모든 종목 풀) — 시장 평균 통계. 종목별",
+        "  히스토리는 '📊 종목별 ret 빈도' 매트릭스 (위 후보별 표시) 참조.",
+        "",
         "• 본 레포트는 14:50 기준. 종가 직전 상황 변동 가능",
         "• Eod.Pick v2 hard cut: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 + (e) 10≤ret≤27%",
-        "• Eod.Pick v2 보조 지표 (표시만): (d) 52주 신고가 + (f) Layer 표본≥5 + 1년 ret≥10 갭상 비율",
+        "• Eod.Pick v2 보조 지표 (표시만): (d) 52주 신고가 + (f) Layer 표본≥5 + 종목별 ret 빈도 매트릭스",
         "• NXT 청산 가능 여부: v1 예정",
     ]
 

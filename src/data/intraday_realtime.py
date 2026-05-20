@@ -382,12 +382,26 @@ def fetch_investor_flow(client: KISClient, code: str) -> dict[str, Any] | None:
     foreign_value = _to_int(out.get("frgn_ntby_tr_pbmn"))
     inst_value = _to_int(out.get("orgn_ntby_tr_pbmn"))
 
-    # round 36: 모두 0 인 응답 시 진단 로그 — 응답 필드명 불일치 또는 시간대별
-    # list 의 잘못된 행 선택을 추적. 장 시작 직후엔 정상적으로도 0 가능하니 debug.
+    # round 36: 모두 0 인 응답 시 진단 로그.
+    # 사용자 정정 2026-05-21: debug → warning 격상 (사용자가 결정 레포트에서
+    # "외국인 0 / 기관 0" 보고 — 데이터 정합 진단 필요). 또한 응답 키 전체 +
+    # 샘플 값 로그로 KIS 응답 구조 추적 가능.
     if foreign == 0 and inst == 0 and indiv == 0 and program == 0:
-        logger.debug(
-            f"{code} 투자자 순매수 모두 0 — 응답 필드명/행 선택 의심. "
-            f"output 키 일부: {list(out.keys())[:12]}"
+        sample_kv = {k: v for k, v in list(out.items())[:20]}
+        logger.warning(
+            f"[investor_flow] {code} 모든 순매수 0 — KIS 응답 결함 가능성. "
+            f"output 키 ({len(out)}개): {list(out.keys())[:15]}, "
+            f"샘플 값: {sample_kv}"
+        )
+
+    # foreign_value/inst_value 도 0 인지 별도 추적 — 결정 레포트의 "외국인 0 / 기관 0"
+    # 출력 진단. 수량은 정상인데 금액만 0 이면 KIS 응답 필드명 불일치 (frgn_ntby_tr_pbmn
+    # vs 다른 키) 의심.
+    if foreign_value == 0 and inst_value == 0 and (foreign != 0 or inst != 0):
+        logger.warning(
+            f"[investor_flow] {code} 수량은 정상 (foreign={foreign}, inst={inst}) "
+            f"인데 금액만 0 — 필드명 frgn_ntby_tr_pbmn / orgn_ntby_tr_pbmn 확인 필요. "
+            f"output 키: {list(out.keys())[:15]}"
         )
 
     return {
