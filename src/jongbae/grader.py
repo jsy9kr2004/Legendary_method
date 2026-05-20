@@ -22,33 +22,8 @@ from src.jongbae.candle import (
     is_clean_bullish,
     is_weak_candle,
 )
-from src.jongbae.config_thresholds import (
-    BID_ASK_RATIO_THRESHOLD,
-    DIST_FROM_HIGH_MAX_PCT,
-    GRADE_NEUTRAL,
-    GRADE_STRONG,
-    GRADE_WATCH,
-    LIMIT_UP_EARLY_HH,
-    LIMIT_UP_EARLY_MM,
-    LIMIT_UP_MID_HH,
-    LIMIT_UP_MID_MM,
-    VOL_ACCEL_1M_DRAIN,
-    VOL_ACCEL_1M_STRONG,
-    VOL_ACCEL_1M_VERY_STRONG,
-    VOL_ACCEL_1M_WEAK,
-    VOL_ACCEL_5M_STRONG,
-    VOL_ACCEL_5M_WEAK,
-    MA5_THRESHOLD_PCT,
-    MA20_THRESHOLD_PCT,
-    VOLUME_RATIO_EXCESSIVE,
-    VOLUME_RATIO_NORMAL_MAX,
-    VOLUME_RATIO_NORMAL_MIN,
-    VOLUME_TURNOVER_TOP_N,
-    VP_BALANCED,
-    VWAP_ABOVE_THRESHOLD_PCT,
-    VWAP_BELOW_THRESHOLD_PCT,
-)
 from src.jongbae.divergence import DivergenceState
+from src.jongbae.grader_thresholds import DEFAULT_THRESHOLDS, GraderThresholds
 from src.jongbae.volume_power import is_vp_strong, is_vp_weak
 
 Grade = Literal["STRONG", "WATCH", "NEUTRAL", "AVOID"]
@@ -126,92 +101,121 @@ class ScoreCard:
         return GRADE_EMOJI[self.grade]
 
 
-def _grade_for(score: float) -> Grade:
-    if score >= GRADE_STRONG:
+def _grade_for(score: float, th: GraderThresholds) -> Grade:
+    if score >= th.grade_strong:
         return "STRONG"
-    if score >= GRADE_WATCH:
+    if score >= th.grade_watch:
         return "WATCH"
-    if score >= GRADE_NEUTRAL:
+    if score >= th.grade_neutral:
         return "NEUTRAL"
     return "AVOID"
 
 
-def calculate_buy_score(snap: GraderSnapshot) -> ScoreCard:
-    """R14 매수 점수 + 등급. `docs/jongbae-strategy.md` R14 의 score 공식 그대로."""
+def calculate_buy_score(
+    snap: GraderSnapshot,
+    thresholds: GraderThresholds = DEFAULT_THRESHOLDS,
+) -> ScoreCard:
+    """R14 매수 점수 + 등급. `docs/jongbae-strategy.md` R14 의 score 공식 그대로.
+
+    Args:
+        snap: 시그널 입력값 한 묶음 (호출자가 매 tick 수집).
+        thresholds: 가중치/임계 묶음. default 는 운영 가중치 — 인자 안 주면 기존
+            동작과 동일. backtest variant 비교 시 `THRESHOLDS_Q1` 등 전달.
+    """
+    th = thresholds
     score = 0.0
     reasons: list[str] = []
 
     # 거래대금 회전율 순위 (+1)
-    if snap.volume_turnover_rank is not None and snap.volume_turnover_rank <= VOLUME_TURNOVER_TOP_N:
-        score += 1
-        reasons.append(f"+1 거래대금 {VOLUME_TURNOVER_TOP_N}위내")
+    if snap.volume_turnover_rank is not None and snap.volume_turnover_rank <= th.volume_turnover_top_n:
+        score += th.weight_turnover_top
+        reasons.append(f"+{th.weight_turnover_top:g} 거래대금 {th.volume_turnover_top_n}위내")
 
     # R11 가속 — 동반 가속/동반 감속
     a5 = snap.vol_accel_5m
     a1 = snap.vol_accel_1m
     a5_ok = a5 == a5  # not NaN
     a1_ok = a1 == a1
-    if a5_ok and a1_ok and a5 > VOL_ACCEL_5M_STRONG and a1 > VOL_ACCEL_1M_STRONG:
-        score += 2
-        reasons.append(f"+2 가속 동반 (5m {a5:.1f} / 1m {a1:.1f})")
+    if a5_ok and a1_ok and a5 > th.vol_accel_5m_strong and a1 > th.vol_accel_1m_strong:
+        score += th.weight_accel_double_strong
+        reasons.append(f"+{th.weight_accel_double_strong:g} 가속 동반 (5m {a5:.1f} / 1m {a1:.1f})")
     # 감속(WEAK)은 ≤ 임계 — "0.8 이하" 같은 한국 단타 통설 표현 부합.
     # 가속(STRONG)은 strict > — 임계 초과만 가산.
-    if a5_ok and a1_ok and a5 <= VOL_ACCEL_5M_WEAK and a1 <= VOL_ACCEL_1M_WEAK:
-        score -= 3
-        reasons.append(f"-3 가속 죽음 (5m {a5:.1f} / 1m {a1:.1f})")
+    if a5_ok and a1_ok and a5 <= th.vol_accel_5m_weak and a1 <= th.vol_accel_1m_weak:
+        score += th.weight_accel_double_weak
+        reasons.append(f"{th.weight_accel_double_weak:+g} 가속 죽음 (5m {a5:.1f} / 1m {a1:.1f})")
 
     # R12 봉 패턴
     if snap.candle is not None:
         if is_clean_bullish(snap.candle):
-            score += 2
-            reasons.append(f"+2 장대양봉 (윗꼬리 {snap.candle.upper_wick*100:.0f}%)")
+            score += th.weight_candle_clean_bullish
+            reasons.append(f"+{th.weight_candle_clean_bullish:g} 장대양봉 (윗꼬리 {snap.candle.upper_wick*100:.0f}%)")
         if is_weak_candle(snap.candle):
-            score -= 2
+            score += th.weight_candle_weak
             reasons.append(
-                f"-2 약한 봉 ({snap.candle.type} / 윗꼬리 {snap.candle.upper_wick*100:.0f}%)"
+                f"{th.weight_candle_weak:+g} 약한 봉 ({snap.candle.type} / 윗꼬리 {snap.candle.upper_wick*100:.0f}%)"
             )
 
     # R10 체결강도
     if is_vp_strong(snap.vp, snap.vp_5ma):
-        score += 2
-        reasons.append(f"+2 VP {snap.vp:.0f} 5MA {snap.vp_5ma:.0f}")
+        score += th.weight_vp_strong
+        reasons.append(f"+{th.weight_vp_strong:g} VP {snap.vp:.0f} 5MA {snap.vp_5ma:.0f}")
     if is_vp_weak(snap.vp):
-        score -= 2
-        reasons.append(f"-2 VP<{VP_BALANCED:.0f} ({snap.vp:.0f})")
+        score += th.weight_vp_weak
+        reasons.append(f"{th.weight_vp_weak:+g} VP<{th.vp_balanced:.0f} ({snap.vp:.0f})")
 
-    # 가속 단일 (R11 추가)
-    if a1_ok and a1 > VOL_ACCEL_1M_VERY_STRONG:
-        score += 1
-        reasons.append(f"+1 vol_accel_1m {a1:.1f}배")
-    if a1_ok and a1 < VOL_ACCEL_1M_DRAIN:
-        score -= 1
-        reasons.append(f"-1 자금 고갈 (1m {a1:.1f})")
+    # 가속 단일 (R11 추가) — VERY_STRONG / MILD (Q1) / DRAIN
+    # 다단계는 strongest first — 같은 신호로 두 번 안 잡히게.
+    if a1_ok and a1 > th.vol_accel_1m_very_strong:
+        score += th.weight_accel_1m_very_strong
+        reasons.append(f"+{th.weight_accel_1m_very_strong:g} vol_accel_1m {a1:.1f}배")
+    elif a1_ok and a1 > th.vol_accel_1m_mild:
+        score += th.weight_accel_1m_mild
+        if th.weight_accel_1m_mild != 0.0:
+            reasons.append(f"+{th.weight_accel_1m_mild:g} vol_accel_1m {a1:.1f}배 (mild)")
+    if a1_ok and a1 < th.vol_accel_1m_drain:
+        score += th.weight_accel_1m_drain
+        reasons.append(f"{th.weight_accel_1m_drain:+g} 자금 고갈 (1m {a1:.1f})")
 
     # R13 다이버전스 (round 27, P2-1: ±2 → ±1 강등)
     # 통설 검색(namu.wiki 단타매매기법, i-whale 등)에서 다이버전스는 잘 안 나옴.
     # 차트분석/스윙 영역 지표라 단타 신뢰도 낮음 — 회전율(+1) 동급으로 강등.
     if snap.divergence is not None:
         if snap.divergence.bearish:
-            score -= 1
-            reasons.append("-1 Bearish Divergence")
+            score += th.weight_div_bearish
+            reasons.append(f"{th.weight_div_bearish:+g} Bearish Divergence")
         if snap.divergence.bullish:
-            score += 1
-            reasons.append("+1 Bullish Divergence")
+            score += th.weight_div_bullish
+            reasons.append(f"+{th.weight_div_bullish:g} Bullish Divergence")
 
     # 호가잔량 (강등된 보조 가중)
-    if snap.bid_ask_ratio == snap.bid_ask_ratio and snap.bid_ask_ratio > BID_ASK_RATIO_THRESHOLD:
-        score += 0.5
-        reasons.append(f"+0.5 호가 {snap.bid_ask_ratio:.1f}배 (보조)")
+    if snap.bid_ask_ratio == snap.bid_ask_ratio and snap.bid_ask_ratio > th.bid_ask_ratio_threshold:
+        score += th.weight_bid_ask_high
+        reasons.append(f"+{th.weight_bid_ask_high:g} 호가 {snap.bid_ask_ratio:.1f}배 (보조)")
 
     # R14a VWAP 위치 (round 23, P0-1) — 통설: VWAP 위 = 세력 평단 위 = 매수 우위
+    # 다단계 분기 (Q3 ramp 지원). default 는 strong/mild 가중치 0 + 임계 ±999
+    # 로 비활성 → 기존 cliff 동작 동일.
     v = snap.price_vs_vwap_pct
     if v == v:  # not NaN
-        if v >= VWAP_ABOVE_THRESHOLD_PCT:
-            score += 1
-            reasons.append(f"+1 VWAP +{v:.2f}% 위")
-        elif v <= VWAP_BELOW_THRESHOLD_PCT:
-            score -= 1
-            reasons.append(f"-1 VWAP {v:.2f}% 아래")
+        if v >= th.vwap_strong_above:
+            score += th.weight_vwap_strong_above
+            if th.weight_vwap_strong_above != 0.0:
+                reasons.append(f"+{th.weight_vwap_strong_above:g} VWAP +{v:.2f}% 위(강)")
+        elif v >= th.vwap_above:
+            score += th.weight_vwap_above
+            reasons.append(f"+{th.weight_vwap_above:g} VWAP +{v:.2f}% 위")
+        elif v >= th.vwap_mild_above:
+            score += th.weight_vwap_mild_above
+            if th.weight_vwap_mild_above != 0.0:
+                reasons.append(f"+{th.weight_vwap_mild_above:g} VWAP +{v:.2f}% 위(약)")
+        elif v <= th.vwap_strong_below:
+            score += th.weight_vwap_strong_below
+            if th.weight_vwap_strong_below != 0.0:
+                reasons.append(f"{th.weight_vwap_strong_below:+g} VWAP {v:.2f}% 아래(강)")
+        elif v <= th.vwap_below:
+            score += th.weight_vwap_below
+            reasons.append(f"{th.weight_vwap_below:+g} VWAP {v:.2f}% 아래")
 
     # R14b 5/20분 이평 위치 (round 24, P0-2) — 통설: 정배열/역배열
     m5 = snap.price_vs_ma5_pct
@@ -219,48 +223,48 @@ def calculate_buy_score(snap: GraderSnapshot) -> ScoreCard:
     m5_ok = m5 == m5
     m20_ok = m20 == m20
     if m5_ok and m20_ok:
-        if m5 >= MA5_THRESHOLD_PCT and m20 >= MA20_THRESHOLD_PCT:
-            score += 1
-            reasons.append(f"+1 정배열 (MA5 +{m5:.2f}% / MA20 +{m20:.2f}%)")
-        elif m5 <= -MA5_THRESHOLD_PCT and m20 <= -MA20_THRESHOLD_PCT:
-            score -= 1
-            reasons.append(f"-1 역배열 (MA5 {m5:.2f}% / MA20 {m20:.2f}%)")
+        if m5 >= th.ma5_threshold and m20 >= th.ma20_threshold:
+            score += th.weight_ma_bullish
+            reasons.append(f"+{th.weight_ma_bullish:g} 정배열 (MA5 +{m5:.2f}% / MA20 +{m20:.2f}%)")
+        elif m5 <= -th.ma5_threshold and m20 <= -th.ma20_threshold:
+            score += th.weight_ma_bearish
+            reasons.append(f"{th.weight_ma_bearish:+g} 역배열 (MA5 {m5:.2f}% / MA20 {m20:.2f}%)")
 
     # R14c 상한가 진입 시간 가산 (round 25, P1-1)
     # 통설(상따): 9:30 이내 진입이 가장 강함, 10:30 이내까지 first-mover 인정.
     t = snap.limit_up_hit_time
     if t is not None:
         hm = (t.hour, t.minute)
-        if hm < (LIMIT_UP_EARLY_HH, LIMIT_UP_EARLY_MM):
-            score += 1
-            reasons.append(f"+1 상한가 조기진입 ({t.hour:02d}:{t.minute:02d})")
-        elif hm < (LIMIT_UP_MID_HH, LIMIT_UP_MID_MM):
-            score += 0.5
-            reasons.append(f"+0.5 상한가 진입 ({t.hour:02d}:{t.minute:02d})")
+        if hm < (th.limit_up_early_hh, th.limit_up_early_mm):
+            score += th.weight_limit_up_early
+            reasons.append(f"+{th.weight_limit_up_early:g} 상한가 조기진입 ({t.hour:02d}:{t.minute:02d})")
+        elif hm < (th.limit_up_mid_hh, th.limit_up_mid_mm):
+            score += th.weight_limit_up_mid
+            reasons.append(f"+{th.weight_limit_up_mid:g} 상한가 진입 ({t.hour:02d}:{t.minute:02d})")
 
     # R14d 거래량 비율 검증 (round 28, P2-2)
     # 통설(상따): 전일 대비 100~300% 정상 매집, 10배↑ 과열(약신호).
     vr = snap.volume_ratio_vs_prev_day
     if vr == vr:  # not NaN
-        if vr >= VOLUME_RATIO_EXCESSIVE:
-            score -= 1
-            reasons.append(f"-1 거래량 {vr:.1f}배 (과열)")
-        elif VOLUME_RATIO_NORMAL_MIN <= vr <= VOLUME_RATIO_NORMAL_MAX:
-            score += 0.5
-            reasons.append(f"+0.5 거래량 {vr:.1f}배 (정상)")
+        if vr >= th.volume_ratio_excessive:
+            score += th.weight_volume_ratio_excessive
+            reasons.append(f"{th.weight_volume_ratio_excessive:+g} 거래량 {vr:.1f}배 (과열)")
+        elif th.volume_ratio_normal_min <= vr <= th.volume_ratio_normal_max:
+            score += th.weight_volume_ratio_normal
+            reasons.append(f"+{th.weight_volume_ratio_normal:g} 거래량 {vr:.1f}배 (정상)")
 
     # 진입 필수조건 (등급과 별도)
-    required = _check_required(snap)
+    required = _check_required(snap, th)
 
     return ScoreCard(
         score=score,
-        grade=_grade_for(score),
+        grade=_grade_for(score, th),
         reasons=reasons,
         required_checks=required,
     )
 
 
-def _check_required(snap: GraderSnapshot) -> dict[str, bool]:
+def _check_required(snap: GraderSnapshot, th: GraderThresholds) -> dict[str, bool]:
     """진입 필수조건 (AND).
 
     None / NaN 은 unknown — 보수적으로 False 처리.
@@ -269,7 +273,7 @@ def _check_required(snap: GraderSnapshot) -> dict[str, bool]:
 
     checks["회전율↑"] = (
         snap.volume_turnover_rank is not None
-        and snap.volume_turnover_rank <= VOLUME_TURNOVER_TOP_N
+        and snap.volume_turnover_rank <= th.volume_turnover_top_n
     )
 
     checks["VP>110+5MA>100"] = is_vp_strong(snap.vp, snap.vp_5ma)
@@ -278,7 +282,7 @@ def _check_required(snap: GraderSnapshot) -> dict[str, bool]:
     a1 = snap.vol_accel_1m
     checks["가속 5m+1m"] = (
         a5 == a5 and a1 == a1
-        and a5 > VOL_ACCEL_5M_STRONG and a1 > VOL_ACCEL_1M_STRONG
+        and a5 > th.vol_accel_5m_strong and a1 > th.vol_accel_1m_strong
     )
 
     checks["장대양봉"] = (
@@ -287,7 +291,7 @@ def _check_required(snap: GraderSnapshot) -> dict[str, bool]:
 
     dist = snap.dist_from_intraday_high_pct
     checks["고점-2%이내"] = (
-        dist == dist and dist >= DIST_FROM_HIGH_MAX_PCT
+        dist == dist and dist >= th.dist_from_high_max_pct
     )
 
     return checks
