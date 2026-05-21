@@ -12,7 +12,7 @@ Layer 2 — 상한가 사례만:
     의미: 강한 시그널만 추출
 
 Layer 3 — 종가 위치 매칭:
-    조건: Layer 2 + 종가 위치 ±2% 일치
+    조건: Layer 2 + 종가 위치 ±5% 일치 (2026-05-22 ±2% → ±5%)
     종가 위치 = (close - low) / (high - low)
     의미: 오늘과 가장 유사한 마감 형태
 
@@ -41,7 +41,12 @@ from loguru import logger
 
 LAYER1_RETURN_THRESHOLD = 20.0
 LAYER2_RETURN_THRESHOLD = 29.5
-CLOSE_POSITION_TOLERANCE = 0.02   # ±2%
+# Layer 3 종가위치 매칭 폭. close_pos = (close-low)/(high-low), 0~1 범위.
+# 2026-05-22 정정: ±0.02 → ±0.05. 종목별 Layer 전환 후 표본 부족 (1년 ret≥29.5%
+# 사례 자체 0~10건) + ±2% 매칭은 통계 노이즈 수준 → 거의 모든 종목 Layer 3 = 0.
+# 한국 단타 통설 "종가 상단/중단/하단 마감" 분류는 ±10~20% 폭이 표준 — ±5% 가
+# 통계 매칭 + 의미 보존의 균형점.
+CLOSE_POSITION_TOLERANCE = 0.05   # ±5%
 LOOKBACK_TRADING_DAYS = 252
 MIN_SAMPLES_FOR_CANDIDATE = 5     # n<5 이면 후보 제외 (Eod.Pick (c))
 MARKET_MA_WINDOW = 200            # KOSPI 200일 이평 (강세장 판정)
@@ -345,7 +350,7 @@ def historical_4layer(
     기본 4 layer (M3):
         layer1 — 전체 +20%↑
         layer2 — 상한가 (+29.5%↑)
-        layer3 — layer2 + 종가 위치 ±2%
+        layer3 — layer2 + 종가 위치 ±5%
         layer4 — layer3 + 분봉 고점 도달 시각 (v1 슬롯)
 
     추가 layer (M3+ 한국 단타 통설 매칭):

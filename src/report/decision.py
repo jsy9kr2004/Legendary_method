@@ -104,7 +104,7 @@ def _candidate_block(c: dict[str, Any]) -> str:
     layer_order = [
         ("layer1",            "Layer 1 (ret≥20% 모든 사례)"),
         ("layer2",            "Layer 2 (상한가 ret≥29.5%)"),
-        ("layer3",            "Layer 3 (L2 + 종가위치 ±2% 일치)"),
+        ("layer3",            "Layer 3 (L2 + 종가위치 ±5% 일치)"),
         ("layer3_strong_mkt", "Layer 3 + KOSPI 200ma 위 매칭"),
         ("layer3_high_vol",   "Layer 3 + 거래량비율 ±0.5배 매칭"),
     ]
@@ -375,7 +375,7 @@ def build_decision_report(
         "[Layer 정의 + 시장 평균 reference]",
         "• Layer 1: 해당 종목 1년 lookback 일봉 ret≥20% 사례 — 종목별 갭상 통계",
         "• Layer 2: Layer 1 중 상한가 사례 (ret≥29.5%) — 강한 시그널만",
-        "• Layer 3: Layer 2 중 오늘 종가위치 ±2% 일치 — 마감 형태 유사 사례 (★ 사이징 기준)",
+        "• Layer 3: Layer 2 중 오늘 종가위치 ±5% 일치 — 마감 형태 유사 사례 (★ 사이징 기준)",
         "• Layer 3+: Layer 3 + KOSPI 200ma regime 매칭 / 거래량비율 매칭",
         "• Layer 4: Layer 3 + 일중 고점도달 시각 매칭 — v1 (분봉 적재 후 구현)",
         "• ★ 후보별 Layer 는 종목별 (사용자 정정 2026-05-21) — Kelly p/W/L 정확도 ↑",

@@ -85,7 +85,7 @@ def test_historical_4layer_layer2_filters_below_29_5():
 
 
 def test_historical_4layer_layer3_close_position_match():
-    """Layer 3: +29.5%↑ 중 종가 위치 ±2% 일치만."""
+    """Layer 3: +29.5%↑ 중 종가 위치 ±5% 일치만 (2026-05-22 ±2%→±5%)."""
     today = date(2026, 5, 6)
     rows = [
         # 종가 위치 1.0 (고가 마감)

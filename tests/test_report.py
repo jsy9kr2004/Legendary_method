@@ -245,7 +245,7 @@ def test_decision_report_layer_labels_explain_matching():
     report = build_decision_report([], [_make_candidate()], _DT)
     assert "ret≥20% 모든 사례" in report  # Layer 1
     assert "상한가 ret≥29.5%" in report   # Layer 2
-    assert "종가위치 ±2% 일치" in report  # Layer 3
+    assert "종가위치 ±5% 일치" in report  # Layer 3 (2026-05-22 ±2%→±5%)
 
 
 def test_decision_report_layer4_explains_what_it_is():
