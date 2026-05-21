@@ -343,6 +343,7 @@ def build_decision_report(
     snapshot_dt: datetime,
     market_stats: dict[str, Any] | None = None,
     market_layers: dict[str, dict[str, Any]] | None = None,
+    market_summaries: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """결정 레포트 마크다운 생성.
 
@@ -407,6 +408,55 @@ def build_decision_report(
         "• ★ 후보별 Layer 는 종목별 (사용자 정정 2026-05-21) — Kelly p/W/L 정확도 ↑",
         "  표본 부족 (n<5) 시 Kelly None, Sharpe/Equal/직관 fallback",
     ]
+
+    # 시장 외인/기관/프로그램 — 오늘 vs 20일 평균 (2026-05-22 Phase 2).
+    # 사용자 의도: 상대 강도 비교. "시장 매도 중인데 이 종목만 매수" / "기관이 시장 매수
+    # 추세인데 이 종목만 매도" 같은 anomaly 비교. KIS endpoint:
+    #   외인/기관: inquire-investor-daily-by-market (FHPTJ04040000)
+    #   프로그램:   comp-program-trade-daily (FHPPG04600001)
+    if market_summaries:
+        lines.append("")
+        lines.append("[시장 외인/기관/프로그램 — 오늘 vs N일 평균]")
+        for mkt in ("KOSPI", "KOSDAQ"):
+            ms = market_summaries.get(mkt)
+            if not ms:
+                continue
+            today = ms.get("today") or {}
+            avg = ms.get("nday_avg") or {}
+            n_days = ms.get("n_days") or 0
+            n_label = "20일" if n_days >= 20 else f"{n_days}일"
+
+            def _qm(v: float) -> str:
+                if v == 0:
+                    return "0"
+                sign = "+" if v > 0 else "-"
+                mag = abs(v)
+                if mag >= 100_000_000:
+                    return f"{sign}{mag / 100_000_000:.1f}억주"
+                if mag >= 10_000:
+                    return f"{sign}{mag / 10_000:,.0f}만주"
+                return f"{sign}{int(mag):,}주"
+
+            def _label_market(today_v: float, avg_v: float) -> str:
+                if avg_v == 0 and today_v == 0:
+                    return "—"
+                if avg_v == 0:
+                    return f"→ {'매수' if today_v > 0 else '매도'} 전환 (평균 0)"
+                if today_v * avg_v < 0:
+                    return f"🔥 {'매수' if today_v > 0 else '매도'} 전환"
+                ratio = (today_v / avg_v - 1.0) * 100.0
+                return f"{'+' if ratio >= 0 else ''}{ratio:.0f}% vs 평균"
+
+            lines.append(f"  {mkt} ({n_label} 평균):")
+            for ko_label, today_key, avg_key in [
+                ("외국인", "foreign_qty", "foreign_qty_avg"),
+                ("기관", "institution_qty", "institution_qty_avg"),
+                ("프로그램", "program_qty", "program_qty_avg"),
+            ]:
+                t_v = float(today.get(today_key) or 0)
+                a_v = float(avg.get(avg_key) or 0)
+                tag = _label_market(t_v, a_v)
+                lines.append(f"    {ko_label:>6}: 오늘 {_qm(t_v):>10}  평균 {_qm(a_v):>10}  {tag}")
 
     # 시장 평균 reference — cross-stock pool 한 번만 (사용자 정정 2026-05-21).
     # 후보별 비교용. 종목별 layer 가 작을 때 시장 평균 대비 위치 확인 가능.

@@ -773,10 +773,32 @@ def _send_decision_report(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[결정] 시장 평균 layer 계산 실패: {e}")
 
+    # Phase 2 (2026-05-22): 시장 외인/기관/프로그램 일별 — KOSPI + KOSDAQ 각 1회
+    # KIS endpoint 호출 (300일 / 30일 응답). 결정 레포트 footer 에 시장 vs 20일 평균 표시.
+    market_summaries: dict[str, Any] = {}
+    if client is not None:
+        try:
+            from src.data.intraday_realtime import fetch_market_summary
+            from src.data.investor_daily import append_today_market
+            for mkt in ("KOSPI", "KOSDAQ"):
+                summary = fetch_market_summary(client, mkt, n_days=20)
+                if summary:
+                    market_summaries[mkt] = summary
+                    # 자체 누적 (fallback 안전망 — KIS endpoint 변경 시).
+                    today_d = summary.get("today") or {}
+                    append_today_market(mkt, {
+                        "foreign_net_buy": today_d.get("foreign_qty", 0),
+                        "institution_net_buy": today_d.get("institution_qty", 0),
+                        "program_net_buy": today_d.get("program_qty", 0),
+                    }, today)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[결정] 시장 외인기관프로그램 조회 실패: {e}")
+
     report = build_decision_report(
         leading, candidates_with_stats, dt,
         market_stats=market_stats,
         market_layers=market_layers,
+        market_summaries=market_summaries or None,
     )
     save_decision_report(report, settings.data_dir, dt)
     save_decision_candidates(candidates_with_stats, settings.data_dir, dt)

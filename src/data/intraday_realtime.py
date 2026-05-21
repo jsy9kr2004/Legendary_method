@@ -48,6 +48,13 @@ _INVESTOR_TREND_TR_ID = "HHPTJ04160200"
 _PROGRAM_TRADE_ENDPOINT = "/uapi/domestic-stock/v1/quotations/program-trade-by-stock"
 _PROGRAM_TRADE_TR_ID = "FHPPG04650101"
 
+# 2026-05-22 Phase 2: 시장 전체 외인/기관/프로그램 일별 — 새벽도 호출 가능.
+# 종목별 외인/기관 일별 (FHPTJ04160001) 은 00:00~15:40 시간 제한 — 자체 누적 fallback.
+_MARKET_INVESTOR_DAILY_ENDPOINT = "/uapi/domestic-stock/v1/quotations/inquire-investor-daily-by-market"
+_MARKET_INVESTOR_DAILY_TR_ID = "FHPTJ04040000"
+_MARKET_PROGRAM_DAILY_ENDPOINT = "/uapi/domestic-stock/v1/quotations/comp-program-trade-daily"
+_MARKET_PROGRAM_DAILY_TR_ID = "FHPPG04600001"
+
 
 # ── 유틸 ──────────────────────────────────────────────────────────────────────
 
@@ -473,4 +480,220 @@ def fetch_investor_flow(client: KISClient, code: str) -> dict[str, Any] | None:
         "program_net_buy_value": program_value,
         "bsop_hour_gb": trend["bsop_hour_gb"] if trend else None,
         "bsop_hour": program["bsop_hour"] if program else None,
+    }
+
+
+# ── 5) 시장 외인/기관/프로그램 일별 (Phase 2, 2026-05-22) ──────────────────────
+
+
+# 시장 endpoint 응답 단위:
+#   외인/기관 _qty (frgn_ntby_qty 등) = 천주 단위 (×1000 으로 종목 단위와 일치)
+#   외인/기관 _pbmn (frgn_ntby_tr_pbmn 등) = 백만원 단위 (×1e6 으로 원 단위와 일치)
+#   프로그램 _qty (whol_smtn_ntby_qty) = 천주 단위
+#   프로그램 _pbmn = 백만원 단위
+# 종목 endpoint (FHPPG04650101) 의 _qty 는 주 단위라 비교 시 시장 ×1000 보정.
+
+_MARKET_QTY_UNIT_MULTIPLIER = 1000        # 시장 _qty 를 종목 (주) 단위로 변환
+_MARKET_PBMN_UNIT_MULTIPLIER = 1_000_000  # 시장 _pbmn 을 원 단위로 변환
+
+
+def fetch_market_investor_daily(
+    client: KISClient, market: str, n_days: int = 20,
+) -> dict[str, Any] | None:
+    """시장 외인/기관 일별 — 오늘 + N일 평균 (FHPTJ04040000).
+
+    HTS [0404] "시장별 일별동향" 동일 데이터. 응답 list 300 row (≈1년치).
+
+    Args:
+        market: "KOSPI" | "KOSDAQ"
+        n_days: 과거 N일 평균 (오늘 제외)
+
+    Returns:
+        {
+            "market": str,
+            "today": {date, foreign_qty, institution_qty, individual_qty,
+                      foreign_value, institution_value},
+            "nday_avg": {n_days, foreign_qty_avg, institution_qty_avg, ...},
+        }
+        모두 종목 단위 (주, 원) 로 변환됨. None 이면 실패.
+    """
+    market = market.upper()
+    if market == "KOSPI":
+        iscd, iscd_1, iscd_2 = "0001", "KSP", "0001"
+    elif market == "KOSDAQ":
+        iscd, iscd_1, iscd_2 = "1001", "KSQ", "1001"
+    else:
+        return None
+
+    from datetime import date as _date
+    today_str = _date.today().strftime("%Y%m%d")
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "U",
+        "FID_INPUT_ISCD": iscd,
+        "FID_INPUT_DATE_1": today_str,
+        "FID_INPUT_ISCD_1": iscd_1,
+        "FID_INPUT_DATE_2": today_str,
+        "FID_INPUT_ISCD_2": iscd_2,
+    }
+    try:
+        payload = client.get(
+            _MARKET_INVESTOR_DAILY_ENDPOINT, _MARKET_INVESTOR_DAILY_TR_ID,
+            params=params,
+        )
+    except (KISApiError, httpx.HTTPError) as e:
+        logger.warning(f"[market_investor] {market} 조회 실패: {e}")
+        return None
+
+    raw = payload.get("output")
+    if not isinstance(raw, list) or not raw:
+        return None
+
+    # list 시간 desc (오늘 row 가 [0]).
+    today_row = raw[0] if isinstance(raw[0], dict) else None
+    if today_row is None:
+        return None
+
+    def _t(k: str, mult: int) -> int:
+        v = _to_int(today_row.get(k))
+        return v * mult
+
+    today_dict = {
+        "date": str(today_row.get("stck_bsop_date") or "").strip(),
+        "foreign_qty": _t("frgn_ntby_qty", _MARKET_QTY_UNIT_MULTIPLIER),
+        "institution_qty": _t("orgn_ntby_qty", _MARKET_QTY_UNIT_MULTIPLIER),
+        "individual_qty": _t("prsn_ntby_qty", _MARKET_QTY_UNIT_MULTIPLIER),
+        "foreign_value": _t("frgn_ntby_tr_pbmn", _MARKET_PBMN_UNIT_MULTIPLIER),
+        "institution_value": _t("orgn_ntby_tr_pbmn", _MARKET_PBMN_UNIT_MULTIPLIER),
+    }
+
+    # N일 평균 (오늘 제외, 그 다음 N row)
+    past = [r for r in raw[1:1 + n_days] if isinstance(r, dict)]
+    actual_n = len(past)
+    if actual_n == 0:
+        return {"market": market, "today": today_dict, "nday_avg": None}
+
+    def _sum(k: str, mult: int) -> int:
+        return sum(_to_int(r.get(k)) for r in past) * mult
+
+    avg_dict = {
+        "n_days": actual_n,
+        "foreign_qty_avg": _sum("frgn_ntby_qty", _MARKET_QTY_UNIT_MULTIPLIER) / actual_n,
+        "institution_qty_avg": _sum("orgn_ntby_qty", _MARKET_QTY_UNIT_MULTIPLIER) / actual_n,
+        "individual_qty_avg": _sum("prsn_ntby_qty", _MARKET_QTY_UNIT_MULTIPLIER) / actual_n,
+    }
+    return {"market": market, "today": today_dict, "nday_avg": avg_dict}
+
+
+def fetch_market_program_daily(
+    client: KISClient, market: str, n_days: int = 20,
+) -> dict[str, Any] | None:
+    """시장 프로그램 일별 — 오늘 + N일 평균 (FHPPG04600001).
+
+    HTS [0460] "프로그램매매 종합현황" 동일. 응답 list 30 row.
+
+    Args:
+        market: "KOSPI" | "KOSDAQ"
+        n_days: 과거 N일 평균
+
+    Returns:
+        {
+            "market": str,
+            "today": {date, program_qty, program_value},
+            "nday_avg": {n_days, program_qty_avg, program_value_avg},
+        }
+        주/원 단위로 변환. None 이면 실패.
+    """
+    market = market.upper()
+    if market == "KOSPI":
+        mrkt_cls = "K"
+    elif market == "KOSDAQ":
+        mrkt_cls = "Q"
+    else:
+        return None
+
+    from datetime import date as _date
+    today_str = _date.today().strftime("%Y%m%d")
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_MRKT_CLS_CODE": mrkt_cls,
+        "FID_INPUT_DATE_1": "",
+        "FID_INPUT_DATE_2": today_str,
+    }
+    try:
+        payload = client.get(
+            _MARKET_PROGRAM_DAILY_ENDPOINT, _MARKET_PROGRAM_DAILY_TR_ID,
+            params=params,
+        )
+    except (KISApiError, httpx.HTTPError) as e:
+        logger.warning(f"[market_program] {market} 조회 실패: {e}")
+        return None
+
+    raw = payload.get("output")
+    if not isinstance(raw, list) or not raw:
+        return None
+    today_row = raw[0] if isinstance(raw[0], dict) else None
+    if today_row is None:
+        return None
+
+    today_dict = {
+        "date": str(today_row.get("stck_bsop_date") or "").strip(),
+        "program_qty": _to_int(today_row.get("whol_smtn_ntby_qty")) * _MARKET_QTY_UNIT_MULTIPLIER,
+        "program_value": _to_int(today_row.get("whol_smtn_ntby_tr_pbmn")) * _MARKET_PBMN_UNIT_MULTIPLIER,
+    }
+
+    past = [r for r in raw[1:1 + n_days] if isinstance(r, dict)]
+    actual_n = len(past)
+    if actual_n == 0:
+        return {"market": market, "today": today_dict, "nday_avg": None}
+
+    return {
+        "market": market,
+        "today": today_dict,
+        "nday_avg": {
+            "n_days": actual_n,
+            "program_qty_avg":
+                sum(_to_int(r.get("whol_smtn_ntby_qty")) for r in past) * _MARKET_QTY_UNIT_MULTIPLIER / actual_n,
+            "program_value_avg":
+                sum(_to_int(r.get("whol_smtn_ntby_tr_pbmn")) for r in past) * _MARKET_PBMN_UNIT_MULTIPLIER / actual_n,
+        },
+    }
+
+
+def fetch_market_summary(
+    client: KISClient, market: str, n_days: int = 20,
+) -> dict[str, Any] | None:
+    """시장 외인/기관/프로그램 일별 합산 — 두 endpoint 호출 + 합산.
+
+    Returns:
+        {
+            "market": str,
+            "n_days": int,
+            "today": {foreign_qty, institution_qty, program_qty, ...},
+            "nday_avg": {foreign_qty_avg, institution_qty_avg, program_qty_avg, ...},
+        }
+        None 이면 둘 다 실패.
+    """
+    inv = fetch_market_investor_daily(client, market, n_days=n_days)
+    pgm = fetch_market_program_daily(client, market, n_days=n_days)
+    if inv is None and pgm is None:
+        return None
+
+    today = (inv["today"] if inv else {}) | (pgm["today"] if pgm else {})
+    avg = {}
+    if inv and inv.get("nday_avg"):
+        avg.update(inv["nday_avg"])
+    if pgm and pgm.get("nday_avg"):
+        # n_days 는 두 endpoint 중 더 작은 값
+        if "n_days" in avg:
+            avg["n_days"] = min(avg["n_days"], pgm["nday_avg"]["n_days"])
+        else:
+            avg["n_days"] = pgm["nday_avg"]["n_days"]
+        avg["program_qty_avg"] = pgm["nday_avg"]["program_qty_avg"]
+        avg["program_value_avg"] = pgm["nday_avg"]["program_value_avg"]
+
+    return {
+        "market": market,
+        "n_days": avg.get("n_days", 0),
+        "today": today,
+        "nday_avg": avg if avg else None,
     }
