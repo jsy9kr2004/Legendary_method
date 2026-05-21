@@ -4,8 +4,10 @@ v0 (Sonnet 1차 구현, 폐기 예정):
     "거래대금 30위 ≥ 3종목" — 대형주 편향으로 부적합.
 
 v1 (M5.5, 한국 단타 통설):
-    1. 거래대금 상위 LEADING_SECTOR_TOP_N(=50) 종목 추출 (master 필터로
-       ETF/펀드/리츠/스팩 사전 제외)
+    1. 주도섹터 분모 universe = 거래대금 top LEADING_SECTOR_TOP_N(=50)
+       ∩ 회전율(거래대금/시총) top LEADING_SECTOR_TOP_N(=50) 교집합
+       (master 필터로 ETF/펀드/리츠/스팩 사전 제외). 2026-05-22 사용자 명시 —
+       거래대금만 보면 대형주 편향, 회전율 교집합으로 단타 자금 실유입 종목만 남김.
     2. 각 종목의 네이버 테마 리스트 조회 (한 종목 = 다중 테마)
     3. 테마별로 (a) breadth: +5%↑ 종목 수
                   (b) avg_return: 동일가중 평균 상승률
@@ -56,6 +58,48 @@ LEADING_THEME_THRESHOLD = 3
 DEFAULT_TOP_N = 30
 
 
+def _sector_universe(snapshot_df: pd.DataFrame, top_n: int) -> pd.DataFrame:
+    """주도섹터 분모 universe — 거래대금 top_n ∩ 회전율(거래대금/시총) top_n.
+
+    정량 정의 (2026-05-22 사용자 명시, 주도주/종배 공통):
+        거래대금 top_n 만 보면 시총 큰 대형주가 다수 포함돼 단타 자금이 실제로
+        몰린 종목이 희석된다. 그래서
+            (1) 거래대금(rank) 상위 top_n        AND
+            (2) 회전율(turnover = 거래대금/시총) 상위 top_n
+        을 동시에 만족하는 교집합만 주도섹터 집계 대상으로 남긴다.
+        교집합 위에서 주도섹터 룰(v0 count / v1 z-score)은 그대로 적용 — "갯수 많은"
+        테마 채택 로직 자체는 불변, 분모 universe 만 좁힌다.
+
+    turnover 컬럼이 없거나 전부 NaN 이면 회전율 순위를 못 매기므로 거래대금 top_n
+    만으로 fallback (fail-loud: warning 로그). NaN turnover 종목은 회전율 top_n
+    에서 자연 제외 → 교집합에서 빠진다.
+
+    Returns:
+        rank(거래대금) 오름차순 정렬, code 가 str 로 캐스팅된 snapshot 부분집합.
+    """
+    if snapshot_df.empty:
+        return snapshot_df
+    snap = snapshot_df.copy()
+    snap["code"] = snap["code"].astype(str)
+
+    value_codes = set(snap.sort_values("rank").head(top_n)["code"])
+
+    has_turnover = "turnover" in snap.columns and snap["turnover"].notna().any()
+    if not has_turnover:
+        logger.warning(
+            "주도섹터 universe: 회전율 데이터 없음 — 거래대금 top_n 만으로 fallback "
+            "(시총/turnover 적재 확인 필요)"
+        )
+        eligible = value_codes
+    else:
+        turnover_codes = set(
+            snap.sort_values("turnover", ascending=False).head(top_n)["code"]
+        )
+        eligible = value_codes & turnover_codes
+
+    return snap[snap["code"].isin(eligible)].sort_values("rank")
+
+
 def count_themes(
     snapshot_df: pd.DataFrame,
     theme_mapping_df: pd.DataFrame,
@@ -93,7 +137,8 @@ def identify_leading_themes(
     """주도테마 식별.
 
     정량 정의:
-        주도테마 = 거래대금 상위 top_n위 내에서 동일 테마 종목이 threshold개 이상 출현
+        분모 universe = 거래대금 top_n ∩ 회전율 top_n (`_sector_universe`).
+        주도테마 = 그 universe 안에서 동일 테마 종목이 threshold개 이상 출현.
 
     Returns:
         [{"theme": "전기/전선", "count": 5, "codes": ["075180", ...]}, ...]
@@ -103,8 +148,8 @@ def identify_leading_themes(
         logger.debug("주도테마 식별: 빈 스냅샷")
         return []
 
-    top = snapshot_df.sort_values("rank").head(top_n)
-    top_codes = top["code"].astype(str).tolist()
+    top = _sector_universe(snapshot_df, top_n)
+    top_codes = top["code"].tolist()  # _sector_universe: str 캐스팅 + rank 오름차순
     top_codes_set = set(top_codes)
 
     if theme_mapping_df.empty:
@@ -452,7 +497,8 @@ def score_leading_sectors(
     """주도섹터 식별 v1 (M5.5) — 테마별 z-score 합산.
 
     정량 정의:
-        1. 거래대금 상위 top_n 종목 추출 (스냅샷이 이미 master 필터링됨)
+        1. 분모 universe = 거래대금 top_n ∩ 회전율 top_n (`_sector_universe`,
+           스냅샷이 이미 master 필터링됨)
         2. 각 테마에 속한 종목으로 (a) breadth, (b) avg_return, (c) turnover_sum 집계
         3. 테마간 z-score 정규화 → 가중합
         4. 상위 sector_count 개를 주도섹터로 채택
@@ -482,8 +528,7 @@ def score_leading_sectors(
         logger.warning("주도섹터 식별: 테마 매핑 데이터 없음")
         return []
 
-    top = snapshot_df.sort_values("rank").head(top_n).copy()
-    top["code"] = top["code"].astype(str)
+    top = _sector_universe(snapshot_df, top_n)  # str 캐스팅 + rank 오름차순
     top_codes = set(top["code"].tolist())
 
     mapping = theme_mapping_df.copy()

@@ -93,7 +93,11 @@
 **v1 (M5.5에서 도입, 한국 단타 통설 반영):**
 ```
 [유니버스 컷]
-1. 거래대금 50위 추출 (30→50 확장)
+1. 거래대금 top 50 ∩ 회전율(거래대금/시총) top 50 교집합 (2026-05-22 사용자 명시)
+   — 거래대금 50위만 보면 시총 큰 대형주가 다수 포함돼 단타 자금이 실제로 몰린
+     종목이 희석됨. 회전율 top 50 과 교집합을 잡아야 "거래대금도 크고 시총 대비
+     회전도 빠른" 진성 단타 종목만 분모에 남음. 교집합 위에서 주도섹터 룰(아래)은 불변.
+   — turnover 데이터 없으면 거래대금 top 50 만으로 fallback (fail-loud warning).
 2. ETF/ETN/리츠/스팩/펀드 제외 (Universe 강화)
 
 [테마 단위 집계 — 한 종목이 N개 테마에 속함]
@@ -385,6 +389,7 @@ weight_i = score_i / sum(score)
 
 | Round | 잘못 알았던 것 | 정정 |
 |---|---|---|
+| 2026-05-22 (주도섹터 universe 교집합) | Theme 주도섹터 분모를 거래대금 top 50 단일 기준으로만 잡음 — 시총 큰 대형주가 다수 포함돼 단타 자금이 실제로 몰린 종목이 희석됨. 사용자(Zeta) 명시: "거래대금 50위로만 보지 말고 거래대금 50위 & 회전율(거래대금/시총) 50위 인 것들에서 주도섹터 원래 룰대로(갯수 많은거)". 주도주/종배 양쪽 공통. | `_sector_universe(snapshot_df, top_n)` 헬퍼 신설 — 분모 = 거래대금 top_n ∩ 회전율 top_n 교집합. `identify_leading_themes`(v0 count, 종배 경로) + `score_leading_sectors`(v1 z-score, 단타 dashboard) 둘 다 적용. 교집합 위 주도섹터 채택 룰(count/z-score)은 불변. turnover 없으면 거래대금 top_n fallback (warning). 회귀 테스트 4건 신규 (`test_leading_theme.py`). 952 pass. |
 | 2026-05-21 명명 마이그레이션 | docs/jongbae-strategy.md 한 파일에 단타 (R9~R15) + 종배 (R1~R8) 룰이 R 번호로 섞임. 사용자 (Zeta) 가 매매일지 작성 시 혼동 보고. | 명명 재설계 + 시스템 분리: ①R1 → Eod.Market, R4~R8 → Eod.* 의미있는 이름. ②docs/scalping-strategy.md (단타) + docs/eod-strategy.md (종배, 본 문서) 분리. ③src/jongbae/ → src/overnight/ + src/scalping/ + src/common/ 재구성. ④CLAUDE.md "현재 종배만 구현 중" 표현 정정. |
 | 41 후속 3 (backtest 재실행) | round 41 후속 2 에서 backtest 결과도 무효일까 우려. 사용자 (Zeta) "R4 v2 backtest 재실행도 해줘". 재실행 (`scripts/backtest_r4v2.py`, daily_ohlcv 기반): 최대 갭상 LG전자 5/14 +17.97% / 최악 엑스게이트 5/13 -4.88% **둘 다 round 41 본문 결과와 정확히 일치** → 본문 backtest 는 처음부터 daily_ohlcv 기반이라 거래대금 universe 가 정확했음을 확인. 운영 universe 만 거래량이었던 게 진짜 문제 (= 5일 연속 0종목의 본질). 종목 수 차이 (본문 17 vs 재실행 30) 는 (d)(f) hard→soft 정정 차이로 설명. **30 vs 50 universe 비교 (4영업일, hard=a,b,c,e)**: 30위 N=20 P=80.0% 평균+2.96% / 50위 N=30 P=70.0% 평균+2.04%. 다양성 vs 신호 강도 trade-off. | round 41 후속 3 (backtest 재실행 + strategy.md 정정): scripts/backtest_r4v2.py 신규, data/backtest/ 디렉터리 신설, docs/jongbae-strategy.md v2 결과 표 "정확성 재확인" 으로 정정. **다음 영업일 5/20 부터 운영 universe 도 backtest 일치 진입**. |
 | 41 후속 2 후속 (30→50 확장) | round 41 후속 2 직후 사용자(Zeta) "50위 가져오는 방법 찾자". KIS volume-rank 가 한 호출당 30개 hard cap. 진단: ctx 페이지네이션 미지원, **가격 범위 분할 작동 확인**. 3회 호출 합집합 90 고유 종목 → 거래대금 desc top 50 = 완벽 cover. | round 41 후속 3 (30→50 확장): _PRICE_BUCKETS 상수 + 가격 버킷 3회 호출 union + trading_value desc top_n. 회귀 테스트 5건. 906 pass. **다음 영업일 (2026-05-20) 14:50 cron 부터 진짜 거래대금 50위 universe 진입**. |

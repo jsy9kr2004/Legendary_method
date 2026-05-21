@@ -107,6 +107,62 @@ def test_identify_leading_themes_multiple_sorted_by_count():
     assert [t["count"] for t in leading] == [4, 3]
 
 
+def _snapshot_to(rows: list[tuple[int, str, float]]) -> pd.DataFrame:
+    """rank, code, turnover 를 채운 최소 스냅샷 (교집합 검증용)."""
+    return pd.DataFrame([
+        {
+            "rank": r, "code": c, "name": f"종목{c}",
+            "price": 1000, "prev_close": 900, "daily_return": 11.0,
+            "intraday_high": 1100, "volume": 1, "trading_value": 1,
+            "is_limit_up": False, "market_cap": 1000, "turnover": to,
+        }
+        for r, c, to in rows
+    ])
+
+
+def test_identify_leading_themes_intersects_turnover():
+    """v0 도 거래대금 top_n ∩ 회전율 top_n 적용 — 저회전 대형주/저거래대금 종목 제외."""
+    snap = _snapshot_to([
+        (1, "A", 0.3),   # 거래대금 1위지만 회전율 꼴찌 → 제외
+        (2, "B", 20.0),
+        (3, "C", 18.0),
+        (4, "D", 16.0),
+        (5, "E", 22.0),  # 회전율 1위지만 거래대금 5위 → 제외
+    ])
+    mapping = _theme_mapping([
+        ("A", "T"), ("B", "T"), ("C", "T"), ("D", "T"), ("E", "T"),
+    ])
+    # 거래대금 top4={A,B,C,D}, 회전율 top4={E,B,C,D} → 교집합={B,C,D}
+    leading = identify_leading_themes(snap, mapping, threshold=3, top_n=4)
+    assert len(leading) == 1
+    assert leading[0]["theme"] == "T"
+    assert leading[0]["count"] == 3
+    assert set(leading[0]["codes"]) == {"B", "C", "D"}
+
+
+def test_identify_leading_themes_intersection_below_threshold():
+    """교집합이 줄어 threshold 미달이면 주도테마 없음."""
+    snap = _snapshot_to([
+        (1, "A", 0.3),   # 회전율 꼴찌 → 교집합 제외
+        (2, "B", 20.0),
+        (3, "C", 18.0),
+        (4, "D", 16.0),
+    ])
+    mapping = _theme_mapping([("A", "T"), ("B", "T"), ("C", "T")])
+    # top_n=3: 거래대금 top3={A,B,C}, 회전율 top3={B,C,D} → 교집합={B,C} 2종목 < 3
+    leading = identify_leading_themes(snap, mapping, threshold=3, top_n=3)
+    assert leading == []
+
+
+def test_identify_leading_themes_fallback_when_no_turnover():
+    """turnover 컬럼 없으면 거래대금 top_n 만으로 fallback (교집합 X)."""
+    snap = _snapshot([(1, "A"), (2, "B"), (3, "C")])  # turnover 없음
+    mapping = _theme_mapping([("A", "T"), ("B", "T"), ("C", "T")])
+    leading = identify_leading_themes(snap, mapping, threshold=3, top_n=3)
+    assert len(leading) == 1
+    assert set(leading[0]["codes"]) == {"A", "B", "C"}
+
+
 def test_codes_in_leading_themes_dedupe():
     leading = [
         {"theme": "T1", "count": 3, "codes": ["A", "B", "C"]},
@@ -442,12 +498,16 @@ def test_score_sectors_empty_inputs():
 
 
 def test_score_sectors_top_n_caps_universe():
-    """top_n 이 작으면 그 안의 종목만 집계 — 테마 멤버수 줄어들 수 있음."""
+    """top_n 이 작으면 그 안의 종목만 집계 — 테마 멤버수 줄어들 수 있음.
+
+    회전율 순서를 거래대금 순서와 일치시켜 교집합 컷이 거래대금 컷과 동일하게
+    동작하도록 둠 (top_n cap 자체를 검증).
+    """
     snap = _full_snap([
-        (1, "A", 20.0, 15.0, 1000),
-        (2, "B", 18.0, 12.0, 1000),
-        (3, "C", 22.0, 18.0, 1000),
-        (4, "D", 19.0, 14.0, 1000),  # top_n=3 일 땐 미포함
+        (1, "A", 20.0, 20.0, 1000),
+        (2, "B", 18.0, 18.0, 1000),
+        (3, "C", 22.0, 22.0, 1000),
+        (4, "D", 19.0, 10.0, 1000),  # top_n=3 일 땐 거래대금·회전율 모두 미포함
     ])
     mapping = _theme_map([
         ("A", "T"), ("B", "T"), ("C", "T"), ("D", "T"),
@@ -455,3 +515,25 @@ def test_score_sectors_top_n_caps_universe():
     leading = score_leading_sectors(snap, mapping, top_n=3, sector_count=1)
     assert leading[0]["member_count"] == 3
     assert "D" not in leading[0]["codes"]
+
+
+def test_score_sectors_intersect_drops_low_turnover_megacap():
+    """거래대금 top_n 안이어도 회전율 top_n 밖(저회전 대형주)이면 분모에서 제외.
+
+    2026-05-22 사용자 명시 — 주도섹터 universe = 거래대금 top_n ∩ 회전율 top_n.
+    """
+    snap = _full_snap([
+        (1, "A", 10.0,  1.0, 100000),  # 거래대금 1위지만 회전율 최하 (초대형주) → 제외
+        (2, "B", 18.0, 20.0, 1000),
+        (3, "C", 16.0, 18.0, 1000),
+        (4, "D", 14.0, 16.0, 1000),
+        (5, "E", 22.0, 22.0, 1000),    # 회전율 1위지만 거래대금 5위 → 제외
+    ])
+    mapping = _theme_map([
+        ("A", "T"), ("B", "T"), ("C", "T"), ("D", "T"),
+    ])
+    # 거래대금 top4={A,B,C,D}, 회전율 top4={E,B,C,D} → 교집합={B,C,D}
+    leading = score_leading_sectors(snap, mapping, top_n=4, sector_count=1)
+    assert leading[0]["member_count"] == 3
+    assert "A" not in leading[0]["codes"]
+    assert set(leading[0]["codes"]) == {"B", "C", "D"}
