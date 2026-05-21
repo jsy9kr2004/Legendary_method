@@ -905,6 +905,7 @@ def dashboard_tick(
             trigger_states=trigger_states,
             funnel_evaluated=(code in tick_cache),
             holding=holding,
+            intraday_high_override=int(high_for_grade) if high_for_grade > 0 else None,
         ))
 
     t_monitored = perf_counter()
@@ -934,6 +935,15 @@ def dashboard_tick(
             name=snap_row_extra.get("name") or snap_code,
             added_at=now,
         )
+        # 비-monitored 도 cached bars 가 있으면 일중 최고가 fallback (KIS stck_hgpr=0 회피)
+        intraday_high_x: int | None = None
+        if bars_present_x and cached_bars is not None and "high" in cached_bars.columns:
+            try:
+                h = float(cached_bars["high"].max())
+                if h == h and h > 0:
+                    intraday_high_x = int(h)
+            except (KeyError, ValueError):
+                pass
         tick_log_rows.append(build_tick_log_row(
             now=now,
             code=snap_code,
@@ -962,6 +972,7 @@ def dashboard_tick(
             trigger_states={},
             funnel_evaluated=bool(cached),
             holding=None,
+            intraday_high_override=intraday_high_x,
         ))
 
     append_tick_log(tick_log_rows, now)

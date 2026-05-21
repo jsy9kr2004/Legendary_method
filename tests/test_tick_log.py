@@ -146,6 +146,66 @@ def test_build_row_holding_mode():
     assert row.trigger_e1_vp_below_100 is True
 
 
+# ── intraday_high_override (2026-05-21, KIS stck_hgpr=0 결함 회피) ────────────
+
+
+def _base_args_for_override_test():
+    """override 테스트용 공통 인자 묶음 — snap_row 의 intraday_high 만 다르게."""
+    return dict(
+        now=datetime(2026, 5, 21, 9, 30),
+        code="017900", name="광전자",
+        monitored=MonitoredStock(code="017900", name="광전자", added_at=datetime(2026, 5, 21, 9, 0)),
+        bars_present=True,
+        accel_5m=1.5, accel_1m=2.0,
+        recent_bar_value=0, last_bar_value=0,
+        candle=None, vp_now=120.0, vp_5ma=115.0, vp_1ma=118.0,
+        ccnl=None, asking=None, investor=None, investor_delta=None,
+        vwap_pct=1.0, ma5_pct=0.5, ma20_pct=2.0,
+        divergence=None, volume_ratio=1.5, limit_up_hit_time=None,
+        trigger_states={},
+        funnel_evaluated=True,
+    )
+
+
+def test_intraday_high_override_used_when_snap_zero():
+    """KIS stck_hgpr=0 응답 시 worker fallback 값을 override 로 받아서 저장."""
+    row = build_tick_log_row(
+        snap_row={"price": 15390, "intraday_high": 0},  # KIS 결함 — 0 응답
+        intraday_high_override=15450,                    # worker bars fallback
+        **_base_args_for_override_test(),
+    )
+    assert row.intraday_high == 15450
+
+
+def test_intraday_high_snap_value_kept_when_no_override():
+    """기존 동작 — override 미지정 시 snap_row 값 그대로 (회귀 안전망)."""
+    row = build_tick_log_row(
+        snap_row={"price": 91300, "intraday_high": 91500},
+        **_base_args_for_override_test(),
+    )
+    assert row.intraday_high == 91500
+
+
+def test_intraday_high_override_none_falls_back_to_snap():
+    """override=None 명시 시도 snap_row 값 사용."""
+    row = build_tick_log_row(
+        snap_row={"price": 91300, "intraday_high": 91500},
+        intraday_high_override=None,
+        **_base_args_for_override_test(),
+    )
+    assert row.intraday_high == 91500
+
+
+def test_intraday_high_override_zero_ignored():
+    """override 가 0 (양수 아님) 이면 무시하고 snap_row 값 사용 — 양쪽 다 0 이면 0/None."""
+    row_with_snap = build_tick_log_row(
+        snap_row={"price": 91300, "intraday_high": 91500},
+        intraday_high_override=0,
+        **_base_args_for_override_test(),
+    )
+    assert row_with_snap.intraday_high == 91500
+
+
 # ── append_tick_log ──────────────────────────────────────────────────────────
 
 

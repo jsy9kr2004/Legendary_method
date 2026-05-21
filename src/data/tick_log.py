@@ -247,8 +247,14 @@ def build_tick_log_row(
     trigger_states: dict[str, bool],
     funnel_evaluated: bool,
     holding: Any = None,
+    intraday_high_override: int | None = None,
 ) -> TickLogRow:
-    """필드별 NaN/None 안전 변환 후 row 생성. worker 의 종목 루프 끝에서 호출."""
+    """필드별 NaN/None 안전 변환 후 row 생성. worker 의 종목 루프 끝에서 호출.
+
+    intraday_high_override: KIS volume-rank API stck_hgpr 가 0 으로 응답되는 결함
+    회피용. worker 가 분봉 bars 최고가로 fallback 한 값을 전달하면 snap_row 의
+    intraday_high (대부분 0) 대신 우선 사용. None 이면 snap_row 값 사용 (기존 동작).
+    """
 
     def _int_safe(v: Any) -> int | None:
         if v is None:
@@ -326,7 +332,11 @@ def build_tick_log_row(
         turnover=_float_safe(snap_row.get("turnover")),
         trading_value=_int_safe(snap_row.get("trading_value")),
         rank=_int_safe(snap_row.get("rank")),
-        intraday_high=_int_safe(snap_row.get("intraday_high")),
+        intraday_high=(
+            intraday_high_override
+            if intraday_high_override is not None and intraday_high_override > 0
+            else _int_safe(snap_row.get("intraday_high"))
+        ),
         # 모멘텀
         vol_accel_5m=_float_safe(accel_5m),
         vol_accel_1m=_float_safe(accel_1m),
