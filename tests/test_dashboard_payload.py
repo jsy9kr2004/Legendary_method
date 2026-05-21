@@ -175,7 +175,7 @@ def test_payload_source_hold_when_holding():
     # pnl_pct = (91300 - 89000) / 89000 * 100 ≈ 2.58
     assert payload["holding"]["pnl_pct"] is not None
     assert abs(payload["holding"]["pnl_pct"] - 2.584) < 0.01
-    assert payload["holding"]["stop_loss_price"] == int(89000 * 0.985)
+    assert payload["holding"]["stop_loss_price"] == int(89000 * 0.98)  # A1 -2% (commit fa5b248)
     assert "triggers_fired" in payload["holding"]
 
 
