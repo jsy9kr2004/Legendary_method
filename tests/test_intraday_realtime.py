@@ -12,7 +12,9 @@ from src.data.intraday_realtime import (
     fetch_asking_price,
     fetch_ccnl_strength,
     fetch_investor_flow,
+    fetch_investor_trend_estimate,
     fetch_minute_bars,
+    fetch_program_trade_by_stock,
 )
 
 
@@ -226,107 +228,190 @@ def test_fetch_asking_price_empty_response():
     assert fetch_asking_price(_client({}), "005930") is None
 
 
-# ── fetch_investor_flow ──────────────────────────────────────────────────────
+# ── fetch_investor_trend_estimate (HHPTJ04160200) ────────────────────────────
 
 
-def test_fetch_investor_basic():
-    payload = {
-        "output": {
-            "frgn_ntby_qty": "10000",
-            "orgn_ntby_qty": "20000",
-            "prsn_ntby_qty": "-30000",
-            "pgtr_ntby_qty": "5000",
-            "frgn_ntby_tr_pbmn": "1500000000",
-        }
-    }
-    result = fetch_investor_flow(_client(payload), "005930")
+def _trend_payload(rows: list[dict]) -> dict:
+    return {"output2": rows}
+
+
+def _program_payload(rows: list[dict]) -> dict:
+    return {"output": rows}
+
+
+def test_trend_estimate_picks_max_bsop_hour_gb():
+    """output2 list 의 max bsop_hour_gb row (가장 최신 추정 누계) 채택."""
+    payload = _trend_payload([
+        {"bsop_hour_gb": "1", "frgn_fake_ntby_qty": "-00000000000112000",
+         "orgn_fake_ntby_qty": "000000000000000000",
+         "sum_fake_ntby_qty": "-00000000000112000"},
+        {"bsop_hour_gb": "5", "frgn_fake_ntby_qty": "000000000004084000",
+         "orgn_fake_ntby_qty": "000000000000741000",
+         "sum_fake_ntby_qty": "000000000004825000"},
+        {"bsop_hour_gb": "3", "frgn_fake_ntby_qty": "000000000001441000",
+         "orgn_fake_ntby_qty": "000000000000233000",
+         "sum_fake_ntby_qty": "000000000001674000"},
+    ])
+    result = fetch_investor_trend_estimate(_client(payload), "005930")
     assert result is not None
-    assert result["foreign_net_buy"] == 10000
-    assert result["institution_net_buy"] == 20000
-    assert result["individual_net_buy"] == -30000
-    assert result["program_net_buy"] == 5000
-    assert result["foreign_net_buy_value"] == 1_500_000_000
+    assert result["foreign_net_buy"] == 4_084_000  # gb=5 (max) row 채택
+    assert result["institution_net_buy"] == 741_000
+    assert result["bsop_hour_gb"] == 5
 
 
-def test_fetch_investor_list_uses_latest_by_time():
-    """round 36: output 이 list 면 시간 필드(stck_cntg_hour) max 행을 채택.
+def test_trend_estimate_negative_value_parsed():
+    """sign + zero-padded 음수 누계 (장 초반 매도 우세)."""
+    payload = _trend_payload([
+        {"bsop_hour_gb": "1", "frgn_fake_ntby_qty": "-00000000000500000",
+         "orgn_fake_ntby_qty": "-00000000000100000"},
+    ])
+    result = fetch_investor_trend_estimate(_client(payload), "091340")
+    assert result is not None
+    assert result["foreign_net_buy"] == -500_000
+    assert result["institution_net_buy"] == -100_000
 
-    round 22 까지는 `out[0]` (첫 행)을 잡아서 빈/0 인 행이 나오면 전부 0 으로
-    들어왔던 게 카드 라인 제거의 진짜 원인 (round 33/34 체결강도와 동일 패턴).
+
+def test_trend_estimate_empty_list_returns_none():
+    assert fetch_investor_trend_estimate(_client({"output2": []}), "005930") is None
+
+
+def test_trend_estimate_missing_output2_returns_none():
+    """다른 KIS endpoint 처럼 output / output1 응답이 와도 None (이 endpoint 는 output2 만)."""
+    assert fetch_investor_trend_estimate(_client({"output": [{}]}), "005930") is None
+
+
+def test_trend_estimate_http_500_returns_none():
+    c = MagicMock()
+    c.get.side_effect = _http_status_error(500)
+    assert fetch_investor_trend_estimate(c, "005930") is None
+
+
+# ── fetch_program_trade_by_stock (FHPPG04650101) ──────────────────────────────
+
+
+def test_program_trade_picks_first_row_as_latest():
+    """output list[0] = 가장 최신 분봉 (KIS 응답 시간 desc 정렬)."""
+    payload = _program_payload([
+        {"bsop_hour": "143000", "stck_prpr": "299500",
+         "whol_smtn_ntby_qty": "5755302",
+         "whol_smtn_ntby_tr_pbmn": "1706786691000",
+         "whol_ntby_vol_icdc": "-14000"},
+        {"bsop_hour": "142900", "stck_prpr": "299000",
+         "whol_smtn_ntby_qty": "5700000",
+         "whol_smtn_ntby_tr_pbmn": "1690000000000"},
+    ])
+    result = fetch_program_trade_by_stock(_client(payload), "005930")
+    assert result is not None
+    assert result["program_net_buy"] == 5_755_302
+    assert result["program_net_buy_value"] == 1_706_786_691_000
+    assert result["current_price"] == 299_500
+    assert result["bsop_hour"] == "143000"
+
+
+def test_program_trade_empty_list_returns_none():
+    assert fetch_program_trade_by_stock(_client({"output": []}), "005930") is None
+
+
+def test_program_trade_missing_output_returns_none():
+    assert fetch_program_trade_by_stock(_client({"output2": [{}]}), "005930") is None
+
+
+def test_program_trade_http_500_returns_none():
+    c = MagicMock()
+    c.get.side_effect = _http_status_error(500)
+    assert fetch_program_trade_by_stock(c, "005930") is None
+
+
+# ── fetch_investor_flow (두 endpoint 합산) ────────────────────────────────────
+
+
+def _dual_client(trend_rows: list[dict] | None, program_rows: list[dict] | None) -> MagicMock:
+    """endpoint URL 별 응답 분기. trend_rows=None / program_rows=None 이면 빈 응답."""
+    c = MagicMock()
+
+    def _dispatch(path: str, tr_id: str, *args, **kwargs):
+        if "investor-trend-estimate" in path:
+            return {"output2": trend_rows if trend_rows is not None else []}
+        if "program-trade-by-stock" in path:
+            return {"output": program_rows if program_rows is not None else []}
+        return {}
+
+    c.get.side_effect = _dispatch
+    return c
+
+
+def test_investor_flow_combines_both_endpoints():
+    """두 endpoint 모두 정상 응답 — 외인/기관 + 프로그램 통합 + _value 추정."""
+    trend = [
+        {"bsop_hour_gb": "5", "frgn_fake_ntby_qty": "000000000004084000",
+         "orgn_fake_ntby_qty": "000000000000741000"},
+    ]
+    program = [
+        {"bsop_hour": "143000", "stck_prpr": "299500",
+         "whol_smtn_ntby_qty": "5755302",
+         "whol_smtn_ntby_tr_pbmn": "1706786691000"},
+    ]
+    result = fetch_investor_flow(_dual_client(trend, program), "005930")
+    assert result is not None
+    assert result["foreign_net_buy"] == 4_084_000
+    assert result["institution_net_buy"] == 741_000
+    assert result["individual_net_buy"] is None  # 신규 endpoint 미제공
+    assert result["program_net_buy"] == 5_755_302
+    assert result["program_net_buy_value"] == 1_706_786_691_000
+    # _value 추정: 수량 × stck_prpr (299500)
+    assert result["foreign_net_buy_value"] == 4_084_000 * 299_500
+    assert result["institution_net_buy_value"] == 741_000 * 299_500
+    assert result["bsop_hour_gb"] == 5
+    assert result["bsop_hour"] == "143000"
+
+
+def test_investor_flow_trend_only_program_missing():
+    """프로그램 endpoint 실패 — 외인/기관만 채우고 program_value=0."""
+    trend = [{"bsop_hour_gb": "3", "frgn_fake_ntby_qty": "1000",
+              "orgn_fake_ntby_qty": "500"}]
+    result = fetch_investor_flow(_dual_client(trend, None), "005930")
+    assert result is not None
+    assert result["foreign_net_buy"] == 1000
+    assert result["institution_net_buy"] == 500
+    assert result["program_net_buy"] == 0
+    assert result["program_net_buy_value"] == 0
+    # price 0 → _value 0 (현재가 추정 불가)
+    assert result["foreign_net_buy_value"] == 0
+    assert result["institution_net_buy_value"] == 0
+
+
+def test_investor_flow_program_only_trend_missing():
+    """trend endpoint 실패 — 프로그램만 채우고 외인/기관 0."""
+    program = [{"bsop_hour": "143000", "stck_prpr": "10000",
+                "whol_smtn_ntby_qty": "100",
+                "whol_smtn_ntby_tr_pbmn": "1000000"}]
+    result = fetch_investor_flow(_dual_client(None, program), "005930")
+    assert result is not None
+    assert result["foreign_net_buy"] == 0
+    assert result["institution_net_buy"] == 0
+    assert result["program_net_buy"] == 100
+    assert result["program_net_buy_value"] == 1_000_000
+    # 외인/기관 0 × price → 0
+    assert result["foreign_net_buy_value"] == 0
+
+
+def test_investor_flow_both_failed_returns_none():
+    """두 endpoint 모두 실패 — None."""
+    assert fetch_investor_flow(_dual_client(None, None), "005930") is None
+
+
+def test_investor_flow_all_zero_returns_dict():
+    """KIS 정상 응답이지만 추정 누계가 모두 0 (장 시작 직전) — None 아닌 zero dict.
+
+    카드 렌더가 0 일 때 라인 생략하는 별도 정책 (render.py) 으로 처리.
     """
-    payload = {
-        "output": [
-            {"stck_cntg_hour": "090100", "frgn_ntby_qty": "0",
-             "orgn_ntby_qty": "0", "prsn_ntby_qty": "0",
-             "pgtr_ntby_qty": "0"},
-            {"stck_cntg_hour": "143000", "frgn_ntby_qty": "10000",
-             "orgn_ntby_qty": "5000", "prsn_ntby_qty": "-15000",
-             "pgtr_ntby_qty": "3000"},
-        ]
-    }
-    result = fetch_investor_flow(_client(payload), "005930")
-    assert result is not None
-    # 143000 행이 채택돼야 함 (첫 행이 아니라)
-    assert result["foreign_net_buy"] == 10000
-    assert result["institution_net_buy"] == 5000
-    assert result["individual_net_buy"] == -15000
-    assert result["program_net_buy"] == 3000
-
-
-def test_fetch_investor_list_no_time_field_uses_last_row():
-    """시간 필드 없는 list 면 마지막 행 채택 (KIS 가 보통 시간 오름차순 반환)."""
-    payload = {
-        "output": [
-            {"frgn_ntby_qty": "0"},
-            {"frgn_ntby_qty": "0"},
-            {"frgn_ntby_qty": "9999", "orgn_ntby_qty": "1111"},
-        ]
-    }
-    result = fetch_investor_flow(_client(payload), "005930")
-    assert result is not None
-    assert result["foreign_net_buy"] == 9999
-    assert result["institution_net_buy"] == 1111
-
-
-def test_fetch_investor_output1_fallback():
-    """output 키가 없고 output1 으로 오는 경우 — 다른 KIS TR 들과의 호환."""
-    payload = {
-        "output1": {
-            "frgn_ntby_qty": "7777",
-            "orgn_ntby_qty": "8888",
-            "prsn_ntby_qty": "0",
-            "pgtr_ntby_qty": "0",
-        }
-    }
-    result = fetch_investor_flow(_client(payload), "005930")
-    assert result is not None
-    assert result["foreign_net_buy"] == 7777
-    assert result["institution_net_buy"] == 8888
-
-
-def test_fetch_investor_all_zero_returns_zero_dict():
-    """모두 0 응답 — 장 시작 직후 정상 케이스라 None 이 아니라 zero dict 반환.
-
-    DEBUG 진단 로그는 찍히지만 호출자는 dict 형태로 정상 처리해야 함
-    (카드 렌더는 모두 0 이면 라인 자체 생략 — 별도 회귀 케이스 참고).
-    """
-    payload = {
-        "output": {
-            "frgn_ntby_qty": "0", "orgn_ntby_qty": "0",
-            "prsn_ntby_qty": "0", "pgtr_ntby_qty": "0",
-        }
-    }
-    result = fetch_investor_flow(_client(payload), "005930")
+    trend = [{"bsop_hour_gb": "1", "frgn_fake_ntby_qty": "0",
+              "orgn_fake_ntby_qty": "0"}]
+    program = [{"bsop_hour": "090100", "stck_prpr": "10000",
+                "whol_smtn_ntby_qty": "0",
+                "whol_smtn_ntby_tr_pbmn": "0"}]
+    result = fetch_investor_flow(_dual_client(trend, program), "005930")
     assert result is not None
     assert result["foreign_net_buy"] == 0
     assert result["institution_net_buy"] == 0
     assert result["program_net_buy"] == 0
-
-
-def test_fetch_investor_empty_response():
-    assert fetch_investor_flow(_client({}), "005930") is None
-
-
-def test_fetch_investor_empty_list_response():
-    """output 이 빈 list 면 None."""
-    assert fetch_investor_flow(_client({"output": []}), "005930") is None

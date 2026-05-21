@@ -10,8 +10,10 @@
                    TR FHKST01010300 — 최근 30체결
     호가 잔량    : /uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn
                    TR FHKST01010200 — 매수/매도 10단계 호가 + 잔량
-    투자자별 매매: /uapi/domestic-stock/v1/quotations/inquire-investor
-                   TR FHKST01010900 — 외국인/기관/개인 누적 순매수
+    외인기관 추정: /uapi/domestic-stock/v1/quotations/investor-trend-estimate
+                   TR HHPTJ04160200 — 외인/기관 추정 누계 (09:30~14:30 4~5회 갱신)
+    프로그램 매매: /uapi/domestic-stock/v1/quotations/program-trade-by-stock
+                   TR FHPPG04650101 — 프로그램 체결 분봉 누계
 
 ⚠ 응답 필드명은 KIS open-trading-api / KIS Developer Portal 문서 기준 추정.
    운영 시 mock 모드로 한 번 검증 필요. 응답이 비어 있거나 필드명이 다를 경우
@@ -38,8 +40,13 @@ _CCNL_TR_ID = "FHKST01010300"
 _ASKING_PRICE_ENDPOINT = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
 _ASKING_PRICE_TR_ID = "FHKST01010200"
 
-_INVESTOR_ENDPOINT = "/uapi/domestic-stock/v1/quotations/inquire-investor"
-_INVESTOR_TR_ID = "FHKST01010900"
+# 2026-05-21 교체: inquire-investor (FHKST01010900) 가 외인/기관 빈 응답 + 프로그램
+# 필드 자체 미제공 → KIS GitHub open-trading-api 확인 후 두 종목별 endpoint 로 교체.
+_INVESTOR_TREND_ENDPOINT = "/uapi/domestic-stock/v1/quotations/investor-trend-estimate"
+_INVESTOR_TREND_TR_ID = "HHPTJ04160200"
+
+_PROGRAM_TRADE_ENDPOINT = "/uapi/domestic-stock/v1/quotations/program-trade-by-stock"
+_PROGRAM_TRADE_TR_ID = "FHPPG04650101"
 
 
 # ── 유틸 ──────────────────────────────────────────────────────────────────────
@@ -298,118 +305,172 @@ def fetch_asking_price(client: KISClient, code: str) -> dict[str, Any] | None:
 # ── 4) 투자자별 순매수 ────────────────────────────────────────────────────────
 
 
-def fetch_investor_flow(client: KISClient, code: str) -> dict[str, Any] | None:
-    """외국인/기관/개인/프로그램 당일 누적 순매수 조회.
+def fetch_investor_trend_estimate(client: KISClient, code: str) -> dict[str, Any] | None:
+    """외국인/기관 추정 누계 순매수 조회 (HHPTJ04160200).
+
+    MTS "투자자동향 탭 > 추정(주)" 화면 동일. 증권사 직원이 장중에 집계/입력한
+    추정 누계. 갱신 시각:
+        외국인:   09:30 / 11:20 / 13:20 / 14:30
+        기관종합: 10:00 / 11:20 / 13:20 / 14:30
+
+    응답 구조 (`output2`, list len=5):
+        bsop_hour_gb       시간대 구분 ("1"=가장 이른~"5"=가장 늦은). 5 가 최신.
+        frgn_fake_ntby_qty 외국인 추정 누계 순매수 수량 (주, sign+18 zero-padded)
+        orgn_fake_ntby_qty 기관 추정 누계 순매수 수량
+        sum_fake_ntby_qty  합계
 
     Returns:
         {
             "code": code,
-            "foreign_net_buy": int,    # 외국인 순매수 (단위: 주)
-            "institution_net_buy": int,  # 기관 순매수
-            "individual_net_buy": int,   # 개인 순매수
-            "program_net_buy": int,     # 프로그램 순매수 (있으면)
-            "foreign_net_buy_value": int,  # 외국인 순매수 금액 (원, 있으면)
-            "institution_net_buy_value": int,  # 기관 순매수 금액
+            "foreign_net_buy": int,     # 외인 추정 누계 (주)
+            "institution_net_buy": int, # 기관 추정 누계 (주)
+            "bsop_hour_gb": int,        # 갱신 시각 식별 (1~5)
         }
         실패/응답 비어있음 시 None.
-
-    응답 필드 (output, KIS 추정):
-        frgn_ntby_qty       외국인 순매수 수량
-        orgn_ntby_qty       기관 순매수 수량
-        prsn_ntby_qty       개인 순매수 수량
-        pgtr_ntby_qty       프로그램 순매수 수량
-        frgn_ntby_tr_pbmn   외국인 순매수 거래대금
-        orgn_ntby_tr_pbmn   기관 순매수 거래대금
-
-    정정 이력 (round 36):
-        round 22 정정으로 모니터링 카드에서 제거됐던 라인 — 명목 사유는
-        "KIS 응답 신뢰도 낮음". round 33/34 체결강도 사건 분석 결과 동일 패턴
-        가능성이 큼: 응답이 시간대별 list 일 때 첫 행(`out[0]`)을 잡으면
-        빈/0 인 행이 와서 모든 값이 0으로 떨어짐. round 34 `fetch_ccnl_strength`
-        패턴 따라 최신 행 선택 (시간 필드 max, 없으면 list 마지막) + 모두 0 응답
-        DEBUG 로그 추가. 실응답 구조 확인은 `scripts/diag_investor_flow.py` 로
-        1회 캡처.
-
-        Buy.Score 점수 합산은 round 29 ritual (3~5종목 × 5거래일 KRX 공시 비교)
-        완료 전엔 보류 — 카드 표시만.
     """
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD": code,
-    }
     try:
-        payload = client.get(_INVESTOR_ENDPOINT, _INVESTOR_TR_ID, params=params)
+        payload = client.get(
+            _INVESTOR_TREND_ENDPOINT, _INVESTOR_TREND_TR_ID,
+            params={"MKSC_SHRN_ISCD": code},
+        )
     except KISApiError as e:
-        logger.error(f"{code} 투자자 매매 조회 실패: {e}")
+        logger.error(f"{code} 외인기관 추정 조회 실패: {e}")
         return None
     except httpx.HTTPError as e:
-        logger.warning(f"{code} 투자자 매매 조회 HTTP 실패: {type(e).__name__}: {e}")
+        logger.warning(f"{code} 외인기관 추정 조회 HTTP 실패: {type(e).__name__}: {e}")
         return None
 
-    raw = payload.get("output") or payload.get("output1") or payload.get("output2")
-    if isinstance(raw, dict):
-        out = raw
-    elif isinstance(raw, list) and raw:
-        # 시간대별 list 응답 시 가장 최신 행 (round 34 패턴).
-        # 시간 필드 후보: stck_cntg_hour / bsop_hour / stck_bsop_date.
-        # 모두 비어있으면 list 마지막 행 (KIS 가 보통 시간 오름차순 반환).
-        def _ts_key(r: Any) -> str:
-            if not isinstance(r, dict):
-                return ""
-            for k in ("stck_cntg_hour", "bsop_hour", "stck_bsop_date"):
-                v = str(r.get(k, "") or "").strip()
-                if v:
-                    return v
-            return ""
-
-        keyed = [(_ts_key(r), r) for r in raw if isinstance(r, dict)]
-        if not keyed:
-            return None
-        if all(not k for k, _ in keyed):
-            out = keyed[-1][1]
-        else:
-            out = max(keyed, key=lambda x: x[0])[1]
-    else:
+    raw = payload.get("output2")
+    if not isinstance(raw, list) or not raw:
         return None
 
-    if not isinstance(out, dict) or not out:
+    # 가장 큰 bsop_hour_gb row = 가장 최신. 누락 시 list 마지막.
+    def _gb(r: Any) -> int:
+        if not isinstance(r, dict):
+            return -1
+        try:
+            return int(str(r.get("bsop_hour_gb") or "").strip() or -1)
+        except ValueError:
+            return -1
+
+    latest = max((r for r in raw if isinstance(r, dict)), key=_gb, default=None)
+    if not latest:
         return None
 
-    foreign = _to_int(out.get("frgn_ntby_qty"))
-    inst = _to_int(out.get("orgn_ntby_qty"))
-    indiv = _to_int(out.get("prsn_ntby_qty"))
-    program = _to_int(out.get("pgtr_ntby_qty"))
-    foreign_value = _to_int(out.get("frgn_ntby_tr_pbmn"))
-    inst_value = _to_int(out.get("orgn_ntby_tr_pbmn"))
+    return {
+        "code": code,
+        "foreign_net_buy": _to_int(latest.get("frgn_fake_ntby_qty")),
+        "institution_net_buy": _to_int(latest.get("orgn_fake_ntby_qty")),
+        "bsop_hour_gb": _gb(latest),
+    }
 
-    # round 36: 모두 0 인 응답 시 진단 로그.
-    # 사용자 정정 2026-05-21: debug → warning 격상 (사용자가 결정 레포트에서
-    # "외국인 0 / 기관 0" 보고 — 데이터 정합 진단 필요). 또한 응답 키 전체 +
-    # 샘플 값 로그로 KIS 응답 구조 추적 가능.
-    if foreign == 0 and inst == 0 and indiv == 0 and program == 0:
-        sample_kv = {k: v for k, v in list(out.items())[:20]}
-        logger.warning(
-            f"[investor_flow] {code} 모든 순매수 0 — KIS 응답 결함 가능성. "
-            f"output 키 ({len(out)}개): {list(out.keys())[:15]}, "
-            f"샘플 값: {sample_kv}"
+
+def fetch_program_trade_by_stock(client: KISClient, code: str) -> dict[str, Any] | None:
+    """종목별 프로그램 체결 분봉 누계 조회 (FHPPG04650101).
+
+    HTS [0465] / MTS 현재가 > 기타수급 > 프로그램 화면 동일. 분봉 30개 history
+    (시간 desc) 의 가장 최신 row = 현재 시점 누계.
+
+    응답 구조 (`output`, list len=30, 시간 desc):
+        bsop_hour              시각 (HHMMSS)
+        stck_prpr              현재가
+        whol_smtn_ntby_qty     프로그램 합산 순매수 수량 (주)
+        whol_smtn_ntby_tr_pbmn 프로그램 합산 순매수 거래대금 (원)
+        whol_ntby_vol_icdc     직전 대비 증감 수량
+        whol_ntby_tr_pbmn_icdc 직전 대비 증감 거래대금
+
+    Returns:
+        {
+            "code": code,
+            "program_net_buy": int,         # 프로그램 누계 순매수 (주)
+            "program_net_buy_value": int,   # 프로그램 누계 순매수 거래대금 (원)
+            "current_price": int,           # 응답 시점 현재가 (외인/기관 _value 추정용)
+            "bsop_hour": str,               # 응답 시각 HHMMSS
+        }
+        실패/응답 비어있음 시 None.
+    """
+    try:
+        payload = client.get(
+            _PROGRAM_TRADE_ENDPOINT, _PROGRAM_TRADE_TR_ID,
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
         )
+    except KISApiError as e:
+        logger.error(f"{code} 프로그램매매 조회 실패: {e}")
+        return None
+    except httpx.HTTPError as e:
+        logger.warning(f"{code} 프로그램매매 조회 HTTP 실패: {type(e).__name__}: {e}")
+        return None
 
-    # foreign_value/inst_value 도 0 인지 별도 추적 — 결정 레포트의 "외국인 0 / 기관 0"
-    # 출력 진단. 수량은 정상인데 금액만 0 이면 KIS 응답 필드명 불일치 (frgn_ntby_tr_pbmn
-    # vs 다른 키) 의심.
-    if foreign_value == 0 and inst_value == 0 and (foreign != 0 or inst != 0):
-        logger.warning(
-            f"[investor_flow] {code} 수량은 정상 (foreign={foreign}, inst={inst}) "
-            f"인데 금액만 0 — 필드명 frgn_ntby_tr_pbmn / orgn_ntby_tr_pbmn 확인 필요. "
-            f"output 키: {list(out.keys())[:15]}"
-        )
+    raw = payload.get("output")
+    if not isinstance(raw, list) or not raw:
+        return None
+
+    # list[0] = 가장 최신 분봉 (KIS 응답 시간 desc 정렬).
+    latest = next((r for r in raw if isinstance(r, dict)), None)
+    if not latest:
+        return None
+
+    return {
+        "code": code,
+        "program_net_buy": _to_int(latest.get("whol_smtn_ntby_qty")),
+        "program_net_buy_value": _to_int(latest.get("whol_smtn_ntby_tr_pbmn")),
+        "current_price": _to_int(latest.get("stck_prpr")),
+        "bsop_hour": str(latest.get("bsop_hour") or "").strip(),
+    }
+
+
+def fetch_investor_flow(client: KISClient, code: str) -> dict[str, Any] | None:
+    """외국인/기관/프로그램 당일 누적 순매수 조회.
+
+    2026-05-21 본문 교체: 기존 inquire-investor (FHKST01010900) 가 외인/기관 빈
+    응답 + 프로그램 필드 자체 미제공. 두 신규 종목별 endpoint 합산으로 교체:
+        investor-trend-estimate (HHPTJ04160200)  — 외인/기관 추정 누계 (수량)
+        program-trade-by-stock  (FHPPG04650101) — 프로그램 체결 누계 (수량+거래대금)
+
+    사용자 정책 (2026-05-21): 모니터링 카드 매 tick 갱신, 캐싱 / 시간 분기 X.
+    외인/기관은 KIS 자체가 09:30~14:30 4~5회만 갱신하지만 코드는 매번 동일 fetch.
+
+    Returns:
+        {
+            "code": code,
+            "foreign_net_buy": int,           # 외인 추정 누계 (주)
+            "institution_net_buy": int,        # 기관 추정 누계 (주)
+            "individual_net_buy": None,        # 신규 endpoint 미제공
+            "program_net_buy": int,            # 프로그램 체결 누계 (주)
+            "foreign_net_buy_value": int,      # 외인 수량 × 현재가 추정 (원)
+            "institution_net_buy_value": int,  # 기관 수량 × 현재가 추정 (원)
+            "program_net_buy_value": int,      # 프로그램 누계 거래대금 (KIS 직접 제공)
+            "bsop_hour_gb": int | None,        # 외인/기관 갱신 시각 식별 (1~5)
+            "bsop_hour": str | None,           # 프로그램 응답 시각 HHMMSS
+        }
+        두 endpoint 모두 실패 시 None.
+    """
+    trend = fetch_investor_trend_estimate(client, code)
+    program = fetch_program_trade_by_stock(client, code)
+
+    if trend is None and program is None:
+        return None
+
+    foreign = trend["foreign_net_buy"] if trend else 0
+    inst = trend["institution_net_buy"] if trend else 0
+    program_qty = program["program_net_buy"] if program else 0
+    program_value = program["program_net_buy_value"] if program else 0
+
+    # 외인/기관 거래대금은 KIS 가 미제공 — 수량 × 현재가 추정 (program 응답의 stck_prpr).
+    # program 응답이 없으면 0 (수량은 정상 채워짐).
+    price = program["current_price"] if program else 0
+    foreign_value = foreign * price if price > 0 else 0
+    inst_value = inst * price if price > 0 else 0
 
     return {
         "code": code,
         "foreign_net_buy": foreign,
         "institution_net_buy": inst,
-        "individual_net_buy": indiv,
-        "program_net_buy": program,
+        "individual_net_buy": None,  # 신규 endpoint 미제공
+        "program_net_buy": program_qty,
         "foreign_net_buy_value": foreign_value,
         "institution_net_buy_value": inst_value,
+        "program_net_buy_value": program_value,
+        "bsop_hour_gb": trend["bsop_hour_gb"] if trend else None,
+        "bsop_hour": program["bsop_hour"] if program else None,
     }
