@@ -556,9 +556,17 @@ def _candidate_with_signals() -> dict:
             "bid_ask_ratio": 7.1,
         },
         "ccnl_strength": {"ccnl_strength": 142.0},
+        # 2026-05-22: 외인/기관/프로그램 표시 수량 일관 통일 + N일 평균 비교.
         "investor_flow": {
-            "foreign_net_buy_value": 1_800_000_000,
-            "institution_net_buy_value": 4_200_000_000,
+            "foreign_net_buy": 1_800_000,       # +180만주
+            "institution_net_buy": 4_200_000,   # +420만주
+            "program_net_buy": 600_000,         # +60만주
+        },
+        "investor_nday_avg": {
+            "n_days": 5,
+            "foreign_net_buy_avg": 1_200_000,   # 평균 +120만주
+            "institution_net_buy_avg": -800_000, # 평균 -80만주 (오늘 +420만주 = 매수 전환)
+            "program_net_buy_avg": 400_000,     # 평균 +40만주
         },
     }
     return base
@@ -573,10 +581,36 @@ def test_decision_report_shows_intraday_signals():
     assert "[14:50 시그널]" in report
     assert "표시만 — 사이징 미반영" in report
     assert "체결강도 142" in report
-    # round 36: 양수 순매수에 + 부호 명시.
-    assert "외국인 +18.0억" in report
-    assert "기관 +42.0억" in report
+    # 2026-05-22: 수급 라인 N일 평균 비교 형식
+    assert "수급 (5일 자체 누적 평균 대비)" in report
+    assert "외국인:" in report
+    assert "+180만주" in report           # 오늘 외인
+    assert "+420만주" in report           # 오늘 기관
+    assert "+60만주" in report            # 오늘 프로그램
+    assert "+50% vs 평균 +120만주" in report  # 외인 같은 방향 50% 강화
+    assert "🔥 매수 전환" in report           # 기관 부호 전환 (평균 매도 → 오늘 매수)
     assert "🟢 매수 우세" in report
+
+
+def test_decision_report_first_day_no_nday_avg():
+    """첫날 (자체 누적 없음) — 오늘 값만 표시 + '자체 누적 시작' 안내."""
+    c = _make_candidate()
+    c["intraday_signals"] = {
+        "asking_price": {"bid_total_volume": 100, "ask_total_volume": 100, "bid_ask_ratio": 1.0},
+        "ccnl_strength": {"ccnl_strength": 100.0},
+        "investor_flow": {
+            "foreign_net_buy": 500_000, "institution_net_buy": 0, "program_net_buy": -100_000,
+        },
+        # investor_nday_avg 누락 (첫날)
+    }
+    report = build_decision_report(
+        leading_themes=[],
+        candidates=[c],
+        snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
+    )
+    assert "외국인 +50만주" in report
+    assert "프로그램 -10만주" in report
+    assert "자체 누적 시작" in report
 
 
 def test_decision_report_flags_sell_side_dominance():

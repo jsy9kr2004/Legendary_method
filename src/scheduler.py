@@ -738,6 +738,20 @@ def _send_decision_report(
                 inv = fetch_investor_flow(client, code)
                 if inv:
                     signals["investor_flow"] = inv
+                    # 2026-05-22: 종목별 외인/기관/프로그램 일별 누적 — N일 평균 비교용.
+                    # KIS 일별 endpoint (FHPTJ04160001 등) 가 시간 제한으로 새벽 차단되어
+                    # 자체 누적이 즉시 작동 안전망. 같은 날 재실행 안전 (덮어쓰기).
+                    from src.data.investor_daily import (
+                        append_today_stock,
+                        get_nday_avg_stock,
+                    )
+                    try:
+                        append_today_stock(code, inv, today)
+                        avg = get_nday_avg_stock(code, today)
+                        if avg:
+                            signals["investor_nday_avg"] = avg
+                    except Exception as e2:  # noqa: BLE001
+                        logger.warning(f"[결정] {code} 투자자 누적 저장/평균 실패: {e2}")
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"[결정] {code} 투자자 매매 조회 실패: {e}")
             if signals:

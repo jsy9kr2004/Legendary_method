@@ -231,29 +231,55 @@ def _intraday_signal_lines(signals: dict[str, Any]) -> list[str]:
 
     inv = signals.get("investor_flow") or {}
     if inv:
-        fv = inv.get("foreign_net_buy_value", 0)
-        iv = inv.get("institution_net_buy_value", 0)
-        pq = inv.get("program_net_buy", 0)
+        # 2026-05-22: 외인/기관/프로그램 모두 **수량** 일관 표시.
+        # KIS investor-trend-estimate 가 금액 미제공 — 일관성 위해 수량으로 통일.
+        # N일 평균 비교 (signals["investor_nday_avg"]) 동반 표시. 자체 누적은 시작
+        # 시점부터 점진 (N=1~20). KIS 일별 endpoint 도입 시 20일 확장 가능.
+        fq = int(inv.get("foreign_net_buy") or 0)
+        iq = int(inv.get("institution_net_buy") or 0)
+        pq = int(inv.get("program_net_buy") or 0)
 
-        # round 36: 양수에 + 부호 명시 (음수는 fmt_billion 자체 처리). 프로그램은
-        # KIS 응답에 금액 필드가 없어 수량(만주) 단위로 표시.
-        def _signed_bil(v: int) -> str:
+        def _qty(v: int) -> str:
             if v == 0:
                 return "0"
-            sign = "+" if v > 0 else ""
-            return f"{sign}{fmt_billion(v)}"
+            sign = "+" if v > 0 else "-"
+            mag = abs(v)
+            if mag >= 100_000_000:
+                return f"{sign}{mag / 100_000_000:.1f}억주"
+            if mag >= 10_000:
+                return f"{sign}{mag / 10_000:,.0f}만주"
+            return f"{sign}{int(mag):,}주"
 
-        program_str = ""
-        if pq:
-            sign = "+" if pq > 0 else "-"
-            mag = abs(pq)
-            if mag >= 1e4:
-                program_str = f" / 프로그램 {sign}{mag / 1e4:,.0f}만주"
-            else:
-                program_str = f" / 프로그램 {sign}{int(mag):,}주"
-        out.append(
-            f"  수급:  외국인 {_signed_bil(fv)} / 기관 {_signed_bil(iv)}{program_str}"
-        )
+        def _vs_avg(today_v: int, avg_v: float) -> str:
+            """오늘 vs 평균 비교 라벨 — 부호 다르면 전환 알림, 같으면 % 차이."""
+            if avg_v == 0 and today_v == 0:
+                return "—"
+            if avg_v == 0:
+                return f"→ {'매수' if today_v > 0 else '매도'} 전환 (평균 0)"
+            if today_v == 0:
+                return "→ 중립 전환"
+            if today_v * avg_v < 0:
+                return f"🔥 {'매수' if today_v > 0 else '매도'} 전환 (평균 {_qty(int(avg_v))})"
+            ratio = (today_v / avg_v - 1.0) * 100.0
+            return f"{'+' if ratio >= 0 else ''}{ratio:.0f}% vs 평균 {_qty(int(avg_v))}"
+
+        avg = signals.get("investor_nday_avg") or {}
+        if avg:
+            n_days = int(avg.get("n_days", 0))
+            f_avg = float(avg.get("foreign_net_buy_avg", 0) or 0)
+            i_avg = float(avg.get("institution_net_buy_avg", 0) or 0)
+            p_avg = float(avg.get("program_net_buy_avg", 0) or 0)
+            n_label = "20일" if n_days >= 20 else f"{n_days}일"
+            out.append(f"  수급 ({n_label} 자체 누적 평균 대비):")
+            out.append(f"    외국인:  {_qty(fq):>10}   {_vs_avg(fq, f_avg)}")
+            out.append(f"    기관:    {_qty(iq):>10}   {_vs_avg(iq, i_avg)}")
+            out.append(f"    프로그램: {_qty(pq):>10}   {_vs_avg(pq, p_avg)}")
+        else:
+            # 누적 데이터 없음 (첫날 또는 KIS endpoint 미작동) — 오늘 값만 표시.
+            out.append(
+                f"  수급:  외국인 {_qty(fq)} / 기관 {_qty(iq)} / 프로그램 {_qty(pq)}"
+            )
+            out.append("         (자체 누적 시작 — 다음날부터 N일 평균 비교 표시)")
 
     return out
 
