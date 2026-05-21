@@ -126,6 +126,27 @@ def fmt_volume(value: int | float) -> str:
         return "N/A"
 
 
+def fmt_market_cap(value: int | float) -> str:
+    """시가총액 표시 — 단위 **억원** (KIS mst 기준). 1조 이상은 조 단위로 자동 변환.
+
+    Examples:
+        5_000_000 → "500.0조"   (삼성전자 ~500조)
+        14_500    → "1.5조"      (제주반도체 ~1.5조)
+        5_000     → "5,000억"    (광전자 ~5천억)
+        500       → "500억"
+        0         → "N/A"
+    """
+    try:
+        v = int(value)
+        if v <= 0:
+            return "N/A"
+        if v >= 10_000:  # 1조 = 10,000억 이상
+            return f"{v / 10_000:,.1f}조"
+        return f"{v:,}억"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
 def fmt_rank(value: Any) -> str:
     """순위 정수 — NaN/None 시 '—'.
 

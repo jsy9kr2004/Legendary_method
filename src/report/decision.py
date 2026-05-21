@@ -28,12 +28,12 @@ from src.report.formatting import (
     fmt_billion,
     fmt_date,
     fmt_layer_stats,
+    fmt_market_cap,
     fmt_pct,
     fmt_price,
     fmt_rank,
     fmt_sizing_table,
     fmt_time,
-    fmt_volume,
     save_report,
     sep,
 )
@@ -58,9 +58,12 @@ def _candidate_block(c: dict[str, Any]) -> str:
     else:
         dist_from_high_pct = float("nan")
     trading_value = c.get("trading_value", 0)
-    volume = c.get("volume", 0)
     rank = c.get("rank", 0)
-    volume_rank = c.get("volume_rank")
+    # 사용자 정정 2026-05-22: 거래량(주) 표시 → 회전율(거래대금/시총) + 시총.
+    # 거래량은 ETF/저가주 편향이 있어 종배 비교축으로 부적합 (CLAUDE.md 도메인 용어).
+    turnover = c.get("turnover", float("nan"))
+    market_cap = c.get("market_cap", 0)
+    turnover_rank = c.get("turnover_rank")
     themes = c.get("themes", [])
     priority = c.get("priority", "")
     layers = c.get("layers", {})
@@ -88,10 +91,10 @@ def _candidate_block(c: dict[str, Any]) -> str:
     lines.append(f"일봉:      {fmt_pct(daily_return)}  ({fmt_price(prev_close)} → {fmt_price(price)})")
     # 일중 고점 표시 = 현재가가 일중 고점 대비 얼마나 빠졌나 (음수, 0% = 현재가가 고점)
     lines.append(f"일중 고점: {fmt_price(intraday_high)}  (현재가 {fmt_pct(dist_from_high_pct)})")
-    # 거래대금 (KIS 절대 순위) + 거래량 (snapshot universe 내 상대 순위).
-    # KIS volume-rank 는 거래대금 절대 순위만 — 거래량 절대 순위 별도 API 필요.
+    # 거래대금 (KIS 절대 순위) + 회전율 (snapshot universe 내 상대 순위) + 시총.
+    # 회전율 = 거래대금 / 시총. 시총 정규화로 대형주 편향 제거 — 단타 자금 유입의 진짜 강도.
     lines.append(f"거래대금:  {fmt_billion(trading_value)}  (거래대금 {rank}위)")
-    lines.append(f"거래량:    {fmt_volume(volume)}  (top50 내 {fmt_rank(volume_rank)})")
+    lines.append(f"회전율:    {fmt_pct(turnover, digits=2, sign=False)}  (회전율 {fmt_rank(turnover_rank)})  시총 {fmt_market_cap(market_cap)}")
 
     # Historical 통계 + Layer 정의 설명 (라벨에 사례 매칭 조건 명시).
     # 각 Layer 는 동일 종목 1년 일봉에서 유사 사례 추출 → 다음날 갭상 통계.

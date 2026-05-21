@@ -170,6 +170,10 @@ def _make_candidate(**kwargs) -> dict:
         "price": 91300, "prev_close": 70230,
         "daily_return": 30.0, "intraday_high": 91300,
         "intraday_high_pct": 30.0, "trading_value": 400_000_000_000,
+        # 2026-05-22: 거래량 → 회전율+시총 표시 변경 (사용자 정정)
+        "market_cap": 14_500,  # 1.4조 (제룡전기 ~1.4조 추정)
+        "turnover": 18.3,      # 회전율 18.3%
+        "turnover_rank": 2,
         "is_limit_up": True, "priority": "limit_up",
         "themes": ["전기/전선", "원자력"],
         "layers": {
@@ -213,13 +217,27 @@ def test_decision_report_no_candidates():
     assert "후보 없음" in report
 
 
-def test_decision_report_shows_volume_with_rank():
-    """거래량 라인 — 만/주 단위 + snapshot universe 내 상대 순위 (2026-05-19)."""
-    c = _make_candidate(volume=5_000_000, volume_rank=3)
+def test_decision_report_shows_turnover_and_market_cap():
+    """회전율(거래대금/시총) + 시총 라인 — 단타 자금 유입 강도 표시 (2026-05-22 사용자 정정).
+
+    거래량(주) 은 ETF/저가주 편향이 있어 종배 비교축으로 부적합 (CLAUDE.md 도메인 용어).
+    회전율 + 시총으로 변경.
+    """
+    c = _make_candidate(turnover=18.3, market_cap=14_500, turnover_rank=2)
     report = build_decision_report([], [c], _DT)
-    assert "거래량:" in report
-    assert "500.0만주" in report  # fmt_volume
-    assert "top50 내 3위" in report  # fmt_rank
+    assert "회전율:" in report
+    assert "18.30%" in report      # fmt_pct(sign=False)
+    assert "1.4조" in report        # fmt_market_cap (14500억 → 1.4조)
+    assert "회전율 2위" in report   # fmt_rank
+
+
+def test_fmt_market_cap_units():
+    from src.report.formatting import fmt_market_cap
+    assert fmt_market_cap(5_000_000) == "500.0조"  # 삼전
+    assert fmt_market_cap(14_500) == "1.4조"       # 1.45조
+    assert fmt_market_cap(5_000) == "5,000억"      # 5천억
+    assert fmt_market_cap(0) == "N/A"
+    assert fmt_market_cap(-1) == "N/A"
 
 
 def test_decision_report_layer_labels_explain_matching():
