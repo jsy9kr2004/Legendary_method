@@ -13,6 +13,7 @@ from src.report.formatting import (
     fmt_date,
     fmt_pct,
     fmt_price,
+    is_num,
     save_report,
     sep,
 )
@@ -82,8 +83,10 @@ def build_afterhours_report(
             stats = c.get("sizing_stats", {})
             p = stats.get("p", float("nan"))
             avg = stats.get("avg_gap", float("nan"))
-            p_str = f"P={p*100:.0f}%" if p == p else "P=N/A"
-            avg_str = f"E[갭]={fmt_pct(avg)}" if avg == avg else "E[갭]=N/A"
+            # is_num: reload 된 후보의 p/avg 는 NaN→null→None 일 수 있어 (Layer 사례
+            # 0건 종목, 예: 삼성전기) `== ` 가드만으론 None*100 크래시. (2026-05-24)
+            p_str = f"P={p*100:.0f}%" if is_num(p) else "P=N/A"
+            avg_str = f"E[갭]={fmt_pct(avg)}" if is_num(avg) else "E[갭]=N/A"
             lines.append(
                 f"  • {c.get('name','')} ({c.get('code','')})  [{priority_label}]  "
                 f"{fmt_pct(float(c.get('daily_return', 0)))}  {p_str}  {avg_str}"

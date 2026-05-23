@@ -67,6 +67,18 @@ def _truncate_to_width(s: str, max_width: int) -> str:
     return "".join(out)
 
 
+def is_num(x: Any) -> bool:
+    """유한 숫자(int/float, NaN/None/bool 제외) 여부.
+
+    레포트 후보는 save_decision_candidates 가 NaN → None(JSON null) 으로 직렬화한
+    뒤 reload 되므로, NaN 가드(`x == x`) 만으로는 None 을 못 거른다(None == None 은
+    True). 사후 레포트(build_afterhours_report) 가 reload 된 후보의 sizing_stats.p
+    (= NaN→null→None) 에 `* 100` 하다 TypeError 로 죽던 버그(2026-05-24, 삼성전기처럼
+    Layer 사례 0건 종목) 회피용 공통 가드.
+    """
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and x == x
+
+
 def fmt_pct(value: float, digits: int = 2, sign: bool = True) -> str:
     """등락률 포맷.
 
@@ -74,8 +86,9 @@ def fmt_pct(value: float, digits: int = 2, sign: bool = True) -> str:
         5.23   → "+5.23%"
         -2.1   → "-2.10%"
         0.0    → "+0.00%"
+        None/NaN → "N/A"
     """
-    if value != value:  # NaN
+    if not is_num(value):  # NaN 또는 None(reload 직렬화 산물)
         return "N/A"
     prefix = "+" if (sign and value >= 0) else ""
     return f"{prefix}{value:.{digits}f}%"
@@ -204,9 +217,9 @@ def fmt_layer_stats(stats: dict, label: str, is_sizing_basis: bool = False) -> s
     avg = stats.get("avg_gap", float("nan"))
     std = stats.get("std_gap", float("nan"))
 
-    p_str = f"{p*100:.0f}%" if p == p else "N/A"
-    avg_str = fmt_pct(avg) if avg == avg else "N/A"
-    std_str = f"{std:.1f}%" if std == std else "N/A"
+    p_str = f"{p*100:.0f}%" if is_num(p) else "N/A"
+    avg_str = fmt_pct(avg) if is_num(avg) else "N/A"
+    std_str = f"{std:.1f}%" if is_num(std) else "N/A"
     star = "  ★ 사이징 기준" if is_sizing_basis else ""
 
     return f"{label}: n={n}  P={p_str}  E[갭]={avg_str}  σ={std_str}{star}"
@@ -244,13 +257,13 @@ def fmt_sizing_table(candidates: list[dict]) -> str:
     for c in candidates:
         raw_name = str(c.get("name", ""))
         name = _truncate_to_width(raw_name, name_w)
-        p_str = f"{c['p_gap']*100:.0f}%" if c.get("p_gap") == c.get("p_gap") else "N/A"
-        gap_str = fmt_pct(c["avg_gap"]) if c.get("avg_gap") == c.get("avg_gap") else "N/A"
+        p_str = f"{c['p_gap']*100:.0f}%" if is_num(c.get("p_gap")) else "N/A"
+        gap_str = fmt_pct(c["avg_gap"]) if is_num(c.get("avg_gap")) else "N/A"
 
         kelly = c.get("kelly")
-        kelly_str = f"{kelly*100:.1f}%" if kelly is not None else "제외"
-        sharpe_str = f"{c['sharpe']*100:.1f}%" if c.get("sharpe") is not None else "N/A"
-        equal_str = f"{c['equal']*100:.1f}%"
+        kelly_str = f"{kelly*100:.1f}%" if is_num(kelly) else "제외"
+        sharpe_str = f"{c['sharpe']*100:.1f}%" if is_num(c.get("sharpe")) else "N/A"
+        equal_str = f"{c['equal']*100:.1f}%" if is_num(c.get("equal")) else "N/A"
 
         lines.append(row(name, p_str, gap_str, kelly_str, sharpe_str, equal_str))
     return "\n".join(lines)

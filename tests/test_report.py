@@ -544,6 +544,44 @@ def test_afterhours_report_errors_shown():
     assert "❌" in report
 
 
+def test_afterhours_report_handles_none_sizing_from_reload():
+    """reload 된 후보의 sizing_stats.p/avg 가 None(NaN→null) 이어도 크래시 X.
+
+    Layer 사례 0건 종목(예: 삼성전기)은 sizing_stats.p=NaN → save 시 null → reload 시
+    None. 옛 `p == p` 가드는 None==None=True 라 None*100 으로 죽었다 (2026-05-24 fix).
+    """
+    c = _make_candidate(name="삼성전기", code="009150")
+    c["sizing_stats"] = {"n": 0, "p": None, "avg_gap": None, "std_gap": None}
+    c["sizing"] = {"kelly": None, "sharpe": None, "equal": None}
+    report = build_afterhours_report(
+        candidates=[c], afterhours_quotes=[],
+        data_status={"ohlcv_updated": True, "ohlcv_count": 1,
+                     "snapshots_collected": 4, "errors": []},
+        report_dt=datetime(2026, 5, 6, 16, 0, tzinfo=KST),
+    )
+    assert "삼성전기" in report
+    assert "P=N/A" in report and "E[갭]=N/A" in report  # 크래시 없이 graceful
+
+
+def test_decision_report_sizing_block_handles_none_from_reload():
+    """build_decision_report 도 reload 된 None sizing 으로 _sizing_block 크래시 X."""
+    c = _make_candidate(name="삼성전기", code="009150")
+    c["sizing_stats"] = {"n": 0, "p": None, "avg_gap": None}
+    c["sizing"] = {"kelly": None, "sharpe": None, "equal": None}
+    report = build_decision_report([], [c], _DT)  # 예외 안 나면 통과
+    assert "삼성전기" in report
+
+
+def test_fmt_helpers_handle_none():
+    """is_num / fmt_pct / fmt_layer_stats 가 None(reload 산물) 을 N/A 로."""
+    from src.report.formatting import is_num, fmt_layer_stats
+    assert is_num(1.5) is True and is_num(0) is True
+    assert is_num(None) is False and is_num(float("nan")) is False
+    assert is_num(True) is False
+    assert fmt_pct(None) == "N/A"
+    assert "N/A" in fmt_layer_stats({"n": 3, "p": None, "avg_gap": None, "std_gap": None}, "Layer X")
+
+
 # ── market regime line (top of decision report) ──────────────────────────────
 
 def test_decision_report_shows_market_regime():
