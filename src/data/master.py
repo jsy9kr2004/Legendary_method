@@ -300,3 +300,91 @@ def fetch_stock_master(
     )
 
     return pd.concat([kospi, kosdaq], ignore_index=True)
+
+
+def backfill_market_cap_from_snapshots(
+    master_df: pd.DataFrame,
+    data_dir,
+    min_turnover: float = 0.0,
+) -> pd.DataFrame:
+    """누적 스냅샷에서 종목별 시총(억)/상장주식수 역산 → master 의 market_cap 보강.
+
+    KIS mst 의 시총 컬럼(char[172:181]) 이 모두 0 으로 파싱되는 알려진 결함
+    (update_master TODO) 의 정식 backfill. 거래대금 순위 스냅샷이 함께 주는
+    거래대금 + 거래대금회전율로 역산한다:
+        시총(원)   = 거래대금 / (회전율/100)
+        상장주식수 = 시총 / 현재가
+    `infer_market_cap_eok` 과 동일 정의라 레포트에 표시되는 회전율과 자기일관.
+
+    소스 선택 근거: pykrx/KRX public 이 이 데이터셋 날짜(2026)에 빈 응답을 주고,
+    프로젝트 시세가 전부 KIS 기반이라 외부 시총을 끌어오면 가격과 불일치 →
+    KIS 스냅샷 자체 역산이 가장 일관된 소스. 상장주식수는 거의 정적이라 저장해두면
+    과거 일별 시총 = 과거 종가 × 상장주식수 로 historical 회전율 layer 도 가능.
+
+    종목별로 가장 최근 스냅샷(파일명 YYYY-MM-DD/HH_MM, 사전순=시간순) 의 turnover>0
+    행을 채택. 거래대금 top50 에 한 번도 안 뜬 종목(종배 무관 저유동)은 0 유지.
+
+    Args:
+        master_df: code 컬럼 보유 DataFrame. market_cap/shares 없으면 생성.
+        data_dir: 데이터 루트 (스냅샷은 {data_dir}/intraday/snapshots/...).
+        min_turnover: 이 값 초과 회전율만 사용 (기본 0 = 양수 전부).
+
+    Returns:
+        market_cap(억, int) + shares(int) 가 보강된 master_df 복사본.
+    """
+    from pathlib import Path
+
+    from src.data.intraday import infer_market_cap_eok
+
+    snap_dir = Path(data_dir) / "intraday" / "snapshots"
+    snap_files = sorted(snap_dir.glob("*/*.parquet"))  # 사전순 = 시간순 (오래된→최신)
+
+    latest: dict[str, tuple[int, int]] = {}  # code → (market_cap_eok, shares)
+    for f in snap_files:
+        try:
+            df = pd.read_parquet(f, columns=["code", "price", "trading_value", "turnover"])
+        except Exception as e:  # noqa: BLE001 — 손상/스키마 불일치 스냅샷은 skip
+            logger.warning(f"[master backfill] 스냅샷 {f} skip: {e}")
+            continue
+        if df.empty:
+            continue
+        df["code"] = df["code"].astype(str).str.zfill(6)
+        for code, price, tv, to in zip(
+            df["code"], df["price"], df["trading_value"], df["turnover"]
+        ):
+            to_f = float(to) if to == to else 0.0
+            tv_i = int(tv) if tv == tv else 0
+            px_i = int(price) if price == price else 0
+            if to_f <= min_turnover or tv_i <= 0 or px_i <= 0:
+                continue
+            mc_eok = infer_market_cap_eok(tv_i, to_f)
+            if mc_eok <= 0:
+                continue
+            # 나중 파일(더 최신)이 앞 값을 덮어씀 → 종목별 최신 추정 채택
+            latest[code] = (mc_eok, int(round(mc_eok * 1e8 / px_i)))
+
+    out = master_df.copy()
+    codes = out["code"].astype(str).str.zfill(6)
+    existing_mc = (
+        out["market_cap"].fillna(0).astype(int)
+        if "market_cap" in out.columns
+        else pd.Series(0, index=out.index)
+    )
+    existing_sh = (
+        out["shares"].fillna(0).astype(int)
+        if "shares" in out.columns
+        else pd.Series(0, index=out.index)
+    )
+    # 기존 비-0 값은 보존(향후 mst 파싱 복구 대비), 스냅샷 추정 있으면 그 값으로 채움
+    out["market_cap"] = [
+        latest[c][0] if c in latest else em for c, em in zip(codes, existing_mc)
+    ]
+    out["shares"] = [
+        latest[c][1] if c in latest else es for c, es in zip(codes, existing_sh)
+    ]
+    filled = sum(1 for c in codes if c in latest)
+    logger.info(
+        f"[master backfill] 스냅샷 {len(snap_files)}개에서 시총/상장주식수 역산 — "
+        f"{filled}/{len(out)} 종목 보강 (나머지는 거래대금 top50 미등장, 0 유지)"
+    )
+    return out

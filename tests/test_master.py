@@ -214,3 +214,71 @@ def test_fetch_stock_master_concatenates_markets():
     assert set(df["market"]) == {"KOSPI", "KOSDAQ"}
     assert "005930" in set(df["code"])
     assert "091990" in set(df["code"])
+
+
+# ── 시총/상장주식수 backfill (스냅샷 역산, 2026-05-24) ─────────────────────────
+
+def _write_snapshot(tmp_path, day: str, hhmm: str, rows: list[dict]) -> None:
+    import pandas as pd
+    p = tmp_path / "intraday" / "snapshots" / day
+    p.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_parquet(p / f"{hhmm}.parquet", index=False)
+
+
+def test_backfill_market_cap_from_snapshots(tmp_path):
+    """거래대금/회전율 역산으로 시총(억)+상장주식수 채움. 미등장 종목은 0 유지."""
+    import pandas as pd
+    # 05-20: 062970 거래대금 200억 / 회전율 20% → 시총 1000억
+    _write_snapshot(tmp_path, "2026-05-20", "14_50", [
+        {"code": "062970", "price": 2000, "trading_value": 20_000_000_000, "turnover": 20.0},
+    ])
+    # 05-21 (더 최신): 062970 거래대금 100억 / 회전율 10% → 시총 1000억, price 2500
+    #                 009150 거래대금 1조 / 회전율 1% → 시총 100조 (=1,000,000억)
+    _write_snapshot(tmp_path, "2026-05-21", "14_50", [
+        {"code": "062970", "price": 2500, "trading_value": 10_000_000_000, "turnover": 10.0},
+        {"code": "009150", "price": 1_000_000, "trading_value": 1_000_000_000_000, "turnover": 1.0},
+    ])
+    master_df = pd.DataFrame({
+        "code": ["062970", "009150", "999999"],
+        "name": ["한국첨단소재", "삼성전기", "없는종목"],
+        "market": ["KOSDAQ", "KOSPI", "KOSPI"],
+        "market_cap": [0, 0, 0],
+    })
+    out = master.backfill_market_cap_from_snapshots(master_df, tmp_path)
+    rec = {r["code"]: r for _, r in out.iterrows()}
+
+    # 062970: 최신(05-21) 채택 — 시총 1000억, shares = 1000억원 / 2500
+    assert rec["062970"]["market_cap"] == 1000
+    assert rec["062970"]["shares"] == int(round(1000 * 1e8 / 2500))  # 4,000,000 (05-20 이었으면 5,000,000)
+    # 009150: 시총 100조 = 1,000,000억
+    assert rec["009150"]["market_cap"] == 1_000_000
+    # 스냅샷 미등장 종목 → 0 유지
+    assert rec["999999"]["market_cap"] == 0
+    assert rec["999999"]["shares"] == 0
+
+
+def test_backfill_skips_zero_or_missing_turnover(tmp_path):
+    """회전율 0/거래대금 0/가격 0 행은 역산 불가 → 0 유지."""
+    import pandas as pd
+    _write_snapshot(tmp_path, "2026-05-21", "14_50", [
+        {"code": "062970", "price": 2500, "trading_value": 10_000_000_000, "turnover": 0.0},
+        {"code": "036540", "price": 0, "trading_value": 10_000_000_000, "turnover": 5.0},
+    ])
+    master_df = pd.DataFrame({
+        "code": ["062970", "036540"], "name": ["x", "y"],
+        "market": ["KOSDAQ", "KOSDAQ"], "market_cap": [0, 0],
+    })
+    out = master.backfill_market_cap_from_snapshots(master_df, tmp_path)
+    assert out.set_index("code").loc["062970", "market_cap"] == 0
+    assert out.set_index("code").loc["036540", "market_cap"] == 0
+
+
+def test_backfill_no_snapshots_keeps_existing(tmp_path):
+    """스냅샷 디렉토리 없으면 기존 market_cap 보존 (예외 X)."""
+    import pandas as pd
+    master_df = pd.DataFrame({
+        "code": ["062970"], "name": ["x"], "market": ["KOSDAQ"], "market_cap": [777],
+    })
+    out = master.backfill_market_cap_from_snapshots(master_df, tmp_path)
+    assert out.iloc[0]["market_cap"] == 777  # 기존 비-0 값 보존
+    assert out.iloc[0]["shares"] == 0

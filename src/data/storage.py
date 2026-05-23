@@ -60,7 +60,7 @@ DAILY_OHLCV_COLUMNS = [
     "change_rate",
 ]
 
-STOCK_MASTER_COLUMNS = ["code", "name", "market", "market_cap", "listed_at"]
+STOCK_MASTER_COLUMNS = ["code", "name", "market", "market_cap", "shares", "listed_at"]
 
 
 def daily_ohlcv_path(data_dir: Path) -> Path:
