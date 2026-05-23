@@ -227,8 +227,53 @@ def test_decision_report_shows_turnover_and_market_cap():
     report = build_decision_report([], [c], _DT)
     assert "회전율:" in report
     assert "18.30%" in report      # fmt_pct(sign=False)
+    assert "시총:" in report        # 2026-05-24: 시총은 별도 줄
     assert "1.4조" in report        # fmt_market_cap (14500억 → 1.4조)
-    assert "회전율 2위" in report   # fmt_rank
+    assert "(2위)" in report        # 2026-05-24: 중복 "회전율" 단어 제거 → 순위만
+    assert "회전율 2위" not in report
+
+
+def test_decision_report_current_price_format():
+    """(1)(2) 2026-05-24: 현재가+상승률 + '현재가 대비'. prev_close '0 →' 표기 폐기."""
+    c = _make_candidate(price=3180, prev_close=0, daily_return=22.31,
+                        intraday_high=3295, intraday_high_pct=26.7)
+    report = build_decision_report([], [c], _DT)
+    assert "현재가:" in report
+    assert "3,180  (+22.31%)" in report
+    assert "(0 → 3,180)" not in report      # prev_close 표기 폐기 (버그 회피)
+    assert "현재가 대비 -3.49%" in report     # (2) "현재가" → "현재가 대비"
+
+
+def test_decision_report_three_day_trend_lines():
+    """(3)(4)(7) 거래대금/회전율/수급 3일 추이 + 순위 변동 (권외/위/— 상태) 렌더."""
+    c = _make_candidate()
+    c["trends"] = {
+        "n_days": 3,
+        "trading_value": [
+            {"date": "2026-05-20", "value": 20_000_000_000, "rank": None, "rank_state": "out"},
+            {"date": "2026-05-21", "value": 5_000_000_000, "rank": 30, "rank_state": "in"},
+            {"date": "2026-05-22", "value": 10_000_000_000, "rank": 43, "rank_state": "in"},
+        ],
+        "turnover": [
+            {"date": "2026-05-20", "value": 20.0, "rank": None, "rank_state": "na"},
+            {"date": "2026-05-21", "value": 5.0, "rank": 8, "rank_state": "in"},
+            {"date": "2026-05-22", "value": 10.0, "rank": 5, "rank_state": "in"},
+        ],
+        "supply": [
+            {"date": "2026-05-21", "foreign": 20_000, "institution": 0, "program": 400_000},
+            {"date": "2026-05-22", "foreign": 82_000, "institution": 0, "program": 848_147},
+        ],
+    }
+    c["intraday_signals"] = {
+        "investor_flow": {"foreign_net_buy": 82_000, "institution_net_buy": 0,
+                          "program_net_buy": 848_147},
+    }
+    report = build_decision_report([], [c], _DT)
+    assert "200.0억 → 50.0억 → 100.0억" in report   # 거래대금 값 추이
+    assert "권외 → 30위 → 43위" in report             # 거래대금 순위 변동
+    assert "20.0% → 5.0% → 10.0%" in report          # 회전율 값 추이
+    assert "— → 8위 → 5위" in report                  # 회전율 순위 (NA → 위)
+    assert "3일 외인 +2.0만주→+8.2만주" in report      # 수급 3일 추이
 
 
 def test_fmt_market_cap_units():
@@ -579,21 +624,20 @@ def test_decision_report_shows_intraday_signals():
         snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
     )
     assert "[14:50 시그널]" in report
-    assert "표시만 — 사이징 미반영" in report
+    assert "표시만 — 사이징 미반영" not in report   # (5) 2026-05-24: 부연 제거
     assert "체결강도 142" in report
-    # 2026-05-22: 수급 라인 N일 평균 비교 형식
-    assert "수급 (5일 자체 누적 평균 대비)" in report
-    assert "외국인:" in report
-    assert "+180만주" in report           # 오늘 외인
-    assert "+420만주" in report           # 오늘 기관
-    assert "+60만주" in report            # 오늘 프로그램
-    assert "+50% vs 평균 +120만주" in report  # 외인 같은 방향 50% 강화
-    assert "🔥 매수 전환" in report           # 기관 부호 전환 (평균 매도 → 오늘 매수)
+    # 수급 — 오늘 값 한 줄 (수량 .1f 정밀) + N일 평균 比 컴팩트 한 줄 (2026-05-24)
+    assert "외국인 +180.0만주" in report      # 오늘 외인
+    assert "기관 +420.0만주" in report        # 오늘 기관
+    assert "프로그램 +60.0만주" in report      # 오늘 프로그램
+    assert "5일평균比" in report
+    assert "외인 +50%" in report              # 외인 같은 방향 50% 강화
+    assert "🔥매수전환" in report              # 기관 부호 전환 (평균 매도 → 오늘 매수)
     assert "🟢 매수 우세" in report
 
 
 def test_decision_report_first_day_no_nday_avg():
-    """첫날 (자체 누적 없음) — 오늘 값만 표시 + '자체 누적 시작' 안내."""
+    """첫날 (자체 누적 없음) — 오늘 값만 한 줄. 안내 문구/평균 比 줄 없음 (2026-05-24)."""
     c = _make_candidate()
     c["intraday_signals"] = {
         "asking_price": {"bid_total_volume": 100, "ask_total_volume": 100, "bid_ask_ratio": 1.0},
@@ -608,9 +652,11 @@ def test_decision_report_first_day_no_nday_avg():
         candidates=[c],
         snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
     )
-    assert "외국인 +50만주" in report
-    assert "프로그램 -10만주" in report
-    assert "자체 누적 시작" in report
+    assert "외국인 +50.0만주" in report
+    assert "기관 0" in report
+    assert "프로그램 -10.0만주" in report
+    assert "자체 누적 시작" not in report   # (6) 2026-05-24: 안내 제거
+    assert "평균比" not in report           # 누적 없으면 평균 줄 없음
 
 
 def test_decision_report_flags_sell_side_dominance():

@@ -41,12 +41,69 @@ from src.report.formatting import (
 TELEGRAM_MAX_LEN = 4096
 
 
+def _fmt_qty(v: int) -> str:
+    """순매수 수량 표시 — 억주/만주/주 자동 분기, 부호 명시.
+
+    Examples: 82000 → "+8.2만주", -45000 → "-4.5만주", 0 → "0".
+    """
+    v = int(v or 0)
+    if v == 0:
+        return "0"
+    sign = "+" if v > 0 else "-"
+    mag = abs(v)
+    if mag >= 100_000_000:
+        return f"{sign}{mag / 100_000_000:.1f}억주"
+    if mag >= 10_000:
+        return f"{sign}{mag / 10_000:,.1f}만주"
+    return f"{sign}{int(mag):,}주"
+
+
+def _rank_cell_str(cell: dict[str, Any]) -> str:
+    """추이 셀의 순위 표시 — 발견='43위', 권외(top50 밖)='권외', 데이터 없음='—'."""
+    state = cell.get("rank_state")
+    if state == "in" and cell.get("rank") is not None:
+        return f"{int(cell['rank'])}위"
+    if state == "out":
+        return "권외"
+    return "—"
+
+
+def _value_trend_line(cells: list[dict[str, Any]] | None, kind: str) -> str | None:
+    """거래대금/회전율 3일 추이 한 줄.
+
+    kind: "trading_value" (억) | "turnover" (%).
+    Example: "   └ 3일 360.5억 → 127.8억 → 721.0억   순위 권외 → 권외 → 43위"
+    """
+    if not cells:
+        return None
+    vals: list[str] = []
+    for c in cells:
+        v = c.get("value", float("nan"))
+        if v != v:  # NaN
+            vals.append("—")
+        elif kind == "trading_value":
+            vals.append(fmt_billion(v))
+        else:
+            vals.append(f"{v:.1f}%")
+    ranks = [_rank_cell_str(c) for c in cells]
+    return f"   └ 3일 {' → '.join(vals)}   순위 {' → '.join(ranks)}"
+
+
+def _supply_trend_line(cells: list[dict[str, Any]] | None) -> str | None:
+    """수급(외인/기관/프로그램) 3일 추이 한 줄. 누적 ≥2일일 때만 (1일이면 위 줄과 중복)."""
+    if not cells or len(cells) < 2:
+        return None
+    f = "→".join(_fmt_qty(c["foreign"]) for c in cells)
+    i = "→".join(_fmt_qty(c["institution"]) for c in cells)
+    p = "→".join(_fmt_qty(c["program"]) for c in cells)
+    return f"     └ 3일 외인 {f}  ·  기관 {i}  ·  프로그램 {p}"
+
+
 def _candidate_block(c: dict[str, Any]) -> str:
     """종목 1개에 대한 마크다운 블록."""
     code = c.get("code", "")
     name = c.get("name", "")
     price = c.get("price", 0)
-    prev_close = c.get("prev_close", 0)
     daily_return = c.get("daily_return", float("nan"))
     intraday_high = c.get("intraday_high", 0)
     # (사용자 정정 2026-05-21) 일중 고점 표시 = 현재가가 일중 고점에서 얼마나 빠짐
@@ -86,15 +143,25 @@ def _candidate_block(c: dict[str, Any]) -> str:
     if themes:
         lines.append(f"테마: {' / '.join(themes)}")
 
-    # 오늘 일봉 + 일중 고점 (사용자 정정 2026-05-21: "오늘 시그니처" 라벨 제거)
+    trends = c.get("trends") or {}
     lines.append("")
-    lines.append(f"일봉:      {fmt_pct(daily_return)}  ({fmt_price(prev_close)} → {fmt_price(price)})")
-    # 일중 고점 표시 = 현재가가 일중 고점 대비 얼마나 빠졌나 (음수, 0% = 현재가가 고점)
-    lines.append(f"일중 고점: {fmt_price(intraday_high)}  (현재가 {fmt_pct(dist_from_high_pct)})")
-    # 거래대금 (KIS 절대 순위) + 회전율 (snapshot universe 내 상대 순위) + 시총.
-    # 회전율 = 거래대금 / 시총. 시총 정규화로 대형주 편향 제거 — 단타 자금 유입의 진짜 강도.
-    lines.append(f"거래대금:  {fmt_billion(trading_value)}  (거래대금 {rank}위)")
-    lines.append(f"회전율:    {fmt_pct(turnover, digits=2, sign=False)}  (회전율 {fmt_rank(turnover_rank)})  시총 {fmt_market_cap(market_cap)}")
+    # (1) 현재가 + 전일 대비 상승률 (사용자 요청 2026-05-24: prev_close "0 → X" 표시 폐기,
+    #     현재가 + 상승률만). prev_close 는 close_position 계산엔 여전히 쓰임 (표시만 제거).
+    lines.append(f"현재가:    {fmt_price(price)}  ({fmt_pct(daily_return)})")
+    # (2) 일중 고점 대비 — "현재가" → "현재가 대비" 로 명확화 (음수, 0% = 현재가가 고점)
+    lines.append(f"일중 고점: {fmt_price(intraday_high)}  (현재가 대비 {fmt_pct(dist_from_high_pct)})")
+    # (3) 거래대금 + 순위 (중복 "거래대금" 단어 제거) + 3거래일 추이/순위 변동
+    lines.append(f"거래대금:  {fmt_billion(trading_value)}  ({fmt_rank(rank)})")
+    tv_line = _value_trend_line(trends.get("trading_value"), "trading_value")
+    if tv_line:
+        lines.append(tv_line)
+    # (4) 회전율 + 순위 (중복 "회전율" 단어 제거) + 3거래일 추이/순위 변동. 시총은 다음 줄.
+    #     회전율 = 거래대금 / 시총. 시총 정규화로 대형주 편향 제거 — 단타 자금 유입 강도.
+    lines.append(f"회전율:    {fmt_pct(turnover, digits=2, sign=False)}  ({fmt_rank(turnover_rank)})")
+    to_line = _value_trend_line(trends.get("turnover"), "turnover")
+    if to_line:
+        lines.append(to_line)
+    lines.append(f"시총:      {fmt_market_cap(market_cap)}")
 
     # Historical 통계 + Layer 정의 설명 (라벨에 사례 매칭 조건 명시).
     # 각 Layer 는 동일 종목 1년 일봉에서 유사 사례 추출 → 다음날 갭상 통계.
@@ -178,22 +245,41 @@ def _candidate_block(c: dict[str, Any]) -> str:
         lines.append(f"  Eod.Pick v2: {' / '.join(chk_parts)}")
 
     # 14:50 시그널 (표시만, 점수화 X)
+    # (5) 사용자 요청 2026-05-24: "※ 표시만 — 사이징 미반영" 부연 제거.
     signals = c.get("intraday_signals") or {}
-    signal_lines = _intraday_signal_lines(signals)
+    signal_lines = _intraday_signal_lines(signals, trends)
     if signal_lines:
         lines.append("")
-        lines.append("[14:50 시그널]  ※ 표시만 — 사이징 미반영")
+        lines.append("[14:50 시그널]")
         lines.extend(signal_lines)
 
     return "\n".join(lines)
 
 
-def _intraday_signal_lines(signals: dict[str, Any]) -> list[str]:
+def _vs_avg_short(today_v: float, avg_v: float) -> str:
+    """오늘 vs N일 평균 — 컴팩트 라벨. 부호 다르면 전환, 같으면 % 차이."""
+    if avg_v == 0 and today_v == 0:
+        return "—"
+    if today_v == 0:
+        return "중립전환"
+    if avg_v == 0:
+        return "신규"
+    if today_v * avg_v < 0:
+        return f"🔥{'매수' if today_v > 0 else '매도'}전환"
+    ratio = (today_v / avg_v - 1.0) * 100.0
+    return f"{'+' if ratio >= 0 else ''}{ratio:.0f}%"
+
+
+def _intraday_signal_lines(
+    signals: dict[str, Any],
+    trends: dict[str, Any] | None = None,
+) -> list[str]:
     """후보 종목의 14:50 호가/체결/투자자 시그널 → 사람-읽는 줄들.
 
     Args:
         signals: {"asking_price": {...}, "ccnl_strength": {...}, "investor_flow": {...}}
                  각 dict는 src/data/intraday_realtime.py 의 fetch_xxx 결과.
+        trends: candidate_trends.attach_candidate_trends 결과 (수급 3일 추이용).
 
     Returns:
         없는 시그널은 줄 생략. 셋 다 비어 있으면 [].
@@ -231,38 +317,23 @@ def _intraday_signal_lines(signals: dict[str, Any]) -> list[str]:
 
     inv = signals.get("investor_flow") or {}
     if inv:
-        # 2026-05-22: 외인/기관/프로그램 모두 **수량** 일관 표시.
-        # KIS investor-trend-estimate 가 금액 미제공 — 일관성 위해 수량으로 통일.
-        # N일 평균 비교 (signals["investor_nday_avg"]) 동반 표시. 자체 누적은 시작
-        # 시점부터 점진 (N=1~20). KIS 일별 endpoint 도입 시 20일 확장 가능.
+        # 외인/기관/프로그램 모두 **수량** 일관 표시 (KIS investor-trend-estimate 가
+        # 금액 미제공). 오늘 값 한 줄 + (7) 3거래일 추이 + N일 평균 比 (있을 때).
         fq = int(inv.get("foreign_net_buy") or 0)
         iq = int(inv.get("institution_net_buy") or 0)
         pq = int(inv.get("program_net_buy") or 0)
 
-        def _qty(v: int) -> str:
-            if v == 0:
-                return "0"
-            sign = "+" if v > 0 else "-"
-            mag = abs(v)
-            if mag >= 100_000_000:
-                return f"{sign}{mag / 100_000_000:.1f}억주"
-            if mag >= 10_000:
-                return f"{sign}{mag / 10_000:,.0f}만주"
-            return f"{sign}{int(mag):,}주"
+        # 오늘 값 (6) 자체누적 안내 문구 제거 — 사용자 요청 2026-05-24.
+        out.append(
+            f"  수급:  외국인 {_fmt_qty(fq)} / 기관 {_fmt_qty(iq)} / 프로그램 {_fmt_qty(pq)}"
+        )
 
-        def _vs_avg(today_v: int, avg_v: float) -> str:
-            """오늘 vs 평균 비교 라벨 — 부호 다르면 전환 알림, 같으면 % 차이."""
-            if avg_v == 0 and today_v == 0:
-                return "—"
-            if avg_v == 0:
-                return f"→ {'매수' if today_v > 0 else '매도'} 전환 (평균 0)"
-            if today_v == 0:
-                return "→ 중립 전환"
-            if today_v * avg_v < 0:
-                return f"🔥 {'매수' if today_v > 0 else '매도'} 전환 (평균 {_qty(int(avg_v))})"
-            ratio = (today_v / avg_v - 1.0) * 100.0
-            return f"{'+' if ratio >= 0 else ''}{ratio:.0f}% vs 평균 {_qty(int(avg_v))}"
+        # (7) 3거래일 추이 — investor_daily 누적 ≥2일일 때만 (1일이면 위 줄과 중복).
+        supply_line = _supply_trend_line((trends or {}).get("supply"))
+        if supply_line:
+            out.append(supply_line)
 
+        # N일 평균 比 — 누적 평균 있을 때 컴팩트 한 줄 (외인/기관/프로그램 인라인).
         avg = signals.get("investor_nday_avg") or {}
         if avg:
             n_days = int(avg.get("n_days", 0))
@@ -270,16 +341,11 @@ def _intraday_signal_lines(signals: dict[str, Any]) -> list[str]:
             i_avg = float(avg.get("institution_net_buy_avg", 0) or 0)
             p_avg = float(avg.get("program_net_buy_avg", 0) or 0)
             n_label = "20일" if n_days >= 20 else f"{n_days}일"
-            out.append(f"  수급 ({n_label} 자체 누적 평균 대비):")
-            out.append(f"    외국인:  {_qty(fq):>10}   {_vs_avg(fq, f_avg)}")
-            out.append(f"    기관:    {_qty(iq):>10}   {_vs_avg(iq, i_avg)}")
-            out.append(f"    프로그램: {_qty(pq):>10}   {_vs_avg(pq, p_avg)}")
-        else:
-            # 누적 데이터 없음 (첫날 또는 KIS endpoint 미작동) — 오늘 값만 표시.
             out.append(
-                f"  수급:  외국인 {_qty(fq)} / 기관 {_qty(iq)} / 프로그램 {_qty(pq)}"
+                f"     └ {n_label}평균比  외인 {_vs_avg_short(fq, f_avg)}"
+                f"  ·  기관 {_vs_avg_short(iq, i_avg)}"
+                f"  ·  프로그램 {_vs_avg_short(pq, p_avg)}"
             )
-            out.append("         (자체 누적 시작 — 다음날부터 N일 평균 비교 표시)")
 
     return out
 

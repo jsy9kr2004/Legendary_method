@@ -237,6 +237,14 @@ def run_pipeline(
                     "institution_net_buy_value": 4_200_000_000,
                 },
             }
+    # 후보 3거래일 추이 (거래대금/회전율/수급 + 순위 변동) — 2026-05-24.
+    # demo/실데이터 공통 경로. 스냅샷/investor_daily 없으면 추이 셀만 비고 진행.
+    try:
+        from src.overnight.candidate_trends import attach_candidate_trends
+        attach_candidate_trends(candidates_with_stats, daily_ohlcv, data_dir, target_date)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[파이프라인] 후보 추이 계산 실패 — 추이 생략: {e}")
+
     report = build_decision_report(
         leading_themes, candidates_with_stats, snap_dt, market_stats=market_stats
     )

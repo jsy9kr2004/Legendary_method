@@ -190,6 +190,10 @@ def _parse_volume_rank_row(
         turnover = kis_turnover
     else:
         turnover = compute_turnover(trading_value, market_cap)
+    # 시총 fallback — master(KIS mst) 시총이 0(파싱 깨짐)이면 회전율로 역산.
+    # KIS 가 거래대금회전율을 직접 주므로 시총 = 거래대금 / (회전율/100) 으로 복원.
+    if market_cap <= 0:
+        market_cap = infer_market_cap_eok(trading_value, turnover)
     return {
         "rank": _to_int(row.get("data_rank"), 0),
         "turnover_rank": None,
@@ -329,6 +333,29 @@ def compute_turnover(trading_value: int, market_cap: int) -> float:
     return (trading_value / (market_cap * 1e8)) * 100.0
 
 
+def infer_market_cap_eok(trading_value: int, turnover_pct: float) -> int:
+    """거래대금 + 거래대금회전율 → 시가총액(억원) 역산.
+
+    KIS volume-rank / inquire-price 가 거래대금회전율(`tr_pbmn_tnrt`, %)을 자체
+    계산해서 주는데, 정의상 회전율 = 거래대금 / 시총 × 100 이다. 따라서
+        시총(원) = 거래대금(원) / (회전율 / 100)
+        시총(억) = 위 ÷ 1e8
+    로 역산할 수 있다. master(KIS mst) 의 시총 컬럼이 0 으로 깨져 들어오는
+    케이스(2026-05-24 사용자 보고: 모든 종목 시총 N/A)의 fallback.
+
+    `compute_turnover` 의 역함수라 두 값은 자기일관(self-consistent) — 화면에
+    표시되는 회전율과 시총이 정확히 맞물린다.
+
+    Returns:
+        시총(억원, 정수). 회전율/거래대금 0 이하면 0 (호출부에서 N/A 처리).
+    """
+    if turnover_pct is None or turnover_pct != turnover_pct or turnover_pct <= 0:
+        return 0
+    if trading_value <= 0:
+        return 0
+    return int(round(trading_value / (turnover_pct / 100.0) / 1e8))
+
+
 def fetch_quote(client: KISClient, code: str) -> dict[str, Any] | None:
     """단일 종목 현재가 조회.
 
@@ -366,6 +393,14 @@ def fetch_quote(client: KISClient, code: str) -> dict[str, Any] | None:
     trading_value = _to_int(out.get("acml_tr_pbmn"))
     lup = _is_limit_up_price(price, prev_close) if prev_close > 0 else False
 
+    # 시총/회전율 — inquire-price 는 hts_avls(시가총액, 억원) + tr_pbmn_tnrt
+    # (거래대금회전율, %) 를 직접 준다. hts_avls 가 비면 회전율로 역산.
+    market_cap = _to_int(out.get("hts_avls"))
+    kis_turnover = _to_float(out.get("tr_pbmn_tnrt"))
+    turnover = kis_turnover if (pd.notna(kis_turnover) and kis_turnover > 0) else compute_turnover(trading_value, market_cap)
+    if market_cap <= 0:
+        market_cap = infer_market_cap_eok(trading_value, turnover)
+
     return {
         "code": code,
         "name": str(out.get("hts_kor_isnm", "")),
@@ -377,8 +412,8 @@ def fetch_quote(client: KISClient, code: str) -> dict[str, Any] | None:
         "volume": volume,
         "trading_value": trading_value,
         "is_limit_up": lup,
-        "market_cap": 0,
-        "turnover": float("nan"),
+        "market_cap": market_cap,
+        "turnover": turnover,
     }
 
 
@@ -409,9 +444,12 @@ def fetch_quotes_bulk(
     for code in codes:
         q = fetch_quote(client, code)
         if q is not None:
+            # master 시총이 유효하면 우선 사용, 0(파싱 깨짐)이면 fetch_quote 가
+            # 이미 채운 hts_avls / 회전율 역산값을 보존.
             mc = master_lookup.get(code, 0)
-            q["market_cap"] = mc
-            q["turnover"] = compute_turnover(q["trading_value"], mc)
+            if mc > 0:
+                q["market_cap"] = mc
+                q["turnover"] = compute_turnover(q["trading_value"], mc)
             records.append(q)
     if not records:
         cols = [c for c in SNAPSHOT_COLUMNS if c != "rank"]

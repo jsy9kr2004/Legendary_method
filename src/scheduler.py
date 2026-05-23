@@ -481,7 +481,8 @@ def _enrich_candidates_with_quote(
     KIS volume-rank 응답이 stck_prdy_clpr / stck_hgpr / acml_tr_pbmn 등을 빈 값으로
     주는 케이스가 있어 snapshot 기반 후보 dict 의 prev_close/intraday_high/trading_value
     등이 0 으로 채워짐. 결정 레포트에서는 후보 수가 적으니 (1~5) 종목별 fetch_quote
-    추가 1콜로 정확한 값 확보. snapshot 의 rank/turnover/market_cap/themes 는 보존.
+    추가 1콜로 정확한 값 확보. snapshot 의 rank/themes 는 그대로 보존하고,
+    시총/회전율은 snapshot 값이 0(master 파싱 깨짐)일 때만 fetch_quote 값으로 보강.
     intraday_high_pct 도 보강된 prev_close/intraday_high 로 재계산.
     """
     from src.data.intraday import fetch_quote
@@ -490,6 +491,9 @@ def _enrich_candidates_with_quote(
     _MISSING_TARGETS = (
         "prev_close", "intraday_high", "intraday_low",
         "trading_value", "volume", "price", "daily_return", "is_limit_up",
+        # 2026-05-24: 시총/회전율도 보강 대상에 추가. 스냅샷 master 시총이 0(파싱
+        # 깨짐)이면 fetch_quote 의 hts_avls / 회전율 역산값으로 채운다.
+        "market_cap", "turnover",
     )
 
     def _is_missing(v: Any) -> bool:
@@ -504,8 +508,10 @@ def _enrich_candidates_with_quote(
     # daily_ohlcv fallback 용 — fetch_quote 도 0 으로 줄 때 어제 종가 사용
     daily_ohlcv = None
     try:
-        from src.data.daily import read_daily_ohlcv
-        from src.config import load_settings
+        # 2026-05-24 fix: read_daily_ohlcv 는 src.data.storage 에 있다 (src.data.daily
+        # 아님). 이 import 가 ImportError 로 조용히 삼켜져 daily_ohlcv=None 이 되면서
+        # prev_close fallback 이 영영 안 돌았고, 그 결과 결정 레포트 일봉이 "0 → X"
+        # 로 깨져 나왔다 (사용자가 05-21 에 정정 요청했던 버그가 미배포 상태였음).
         daily_ohlcv = read_daily_ohlcv(load_settings().data_dir)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[결정] daily_ohlcv fallback 로드 실패: {e}")
@@ -793,6 +799,15 @@ def _send_decision_report(
                     }, today)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[결정] 시장 외인기관프로그램 조회 실패: {e}")
+
+    # 후보 3거래일 추이 (거래대금/회전율/수급 + 순위 변동) — 2026-05-24 사용자 요청.
+    # 수급 추이는 investor_daily 누적을 읽으므로 위 14:50 시그널 fetch(=오늘 행 append)
+    # 이후에 실행해야 오늘 값이 포함된다.
+    try:
+        from src.overnight.candidate_trends import attach_candidate_trends
+        attach_candidate_trends(candidates_with_stats, daily_ohlcv, settings.data_dir, today)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[결정] 후보 추이 계산 실패 — 추이 생략: {e}")
 
     report = build_decision_report(
         leading, candidates_with_stats, dt,
