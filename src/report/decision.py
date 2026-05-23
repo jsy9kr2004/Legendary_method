@@ -72,7 +72,9 @@ def _value_trend_line(cells: list[dict[str, Any]] | None, kind: str) -> str | No
     """거래대금/회전율 3일 추이 한 줄.
 
     kind: "trading_value" (억) | "turnover" (%).
-    Example: "   └ 3일 360.5억 → 127.8억 → 721.0억   순위 권외 → 권외 → 43위"
+    값(억/%) + 순위(위) 두 묶음 — "3일"/"순위" 단어는 줄넘침 회피 위해 생략
+    (단위 억/%/위 로 충분히 구분, 사용자 정정 2026-05-24).
+    Example: "   └ 360.5억 → 127.8억 → 721.0억   권외 → 권외 → 43위"
     """
     if not cells:
         return None
@@ -86,7 +88,7 @@ def _value_trend_line(cells: list[dict[str, Any]] | None, kind: str) -> str | No
         else:
             vals.append(f"{v:.1f}%")
     ranks = [_rank_cell_str(c) for c in cells]
-    return f"   └ 3일 {' → '.join(vals)}   순위 {' → '.join(ranks)}"
+    return f"   └ {' → '.join(vals)}   {' → '.join(ranks)}"
 
 
 def _supply_trend_line(cells: list[dict[str, Any]] | None) -> str | None:
@@ -96,7 +98,7 @@ def _supply_trend_line(cells: list[dict[str, Any]] | None) -> str | None:
     f = "→".join(_fmt_qty(c["foreign"]) for c in cells)
     i = "→".join(_fmt_qty(c["institution"]) for c in cells)
     p = "→".join(_fmt_qty(c["program"]) for c in cells)
-    return f"     └ 3일 외인 {f}  ·  기관 {i}  ·  프로그램 {p}"
+    return f"     └ 외인 {f}  ·  기관 {i}  ·  프로그램 {p}"
 
 
 def _candidate_block(c: dict[str, Any]) -> str:
@@ -106,14 +108,15 @@ def _candidate_block(c: dict[str, Any]) -> str:
     price = c.get("price", 0)
     daily_return = c.get("daily_return", float("nan"))
     intraday_high = c.get("intraday_high", 0)
-    # (사용자 정정 2026-05-21) 일중 고점 표시 = 현재가가 일중 고점에서 얼마나 빠짐
-    # 옛 intraday_high_pct = (intraday_high - prev_close) / prev_close * 100
-    # 는 Eod.Pick (c) hard cut + 52w 신고가 판정용으로 candidate dict 에 유지하되,
-    # 결정 레포트 표시는 dist_from_high_pct 로 변경 — 현재가 vs 일중 고점.
+    # 일중 고점을 "현재가 대비" 로 표시 (사용자 정정 2026-05-24): 고점이 현재가보다
+    # 위에 있으므로 현재가 기준 +X% (= 고점이 현재가 대비 얼마나 위인가).
+    #   고점_대비_현재가 = (intraday_high - price) / price * 100  (고점>현재가면 양수)
+    # 옛 intraday_high_pct(= 고점 vs 전일종가) 는 Eod.Pick (c)/52w 판정용으로
+    # candidate dict 에 별도 유지.
     if intraday_high and intraday_high > 0 and price and price > 0:
-        dist_from_high_pct = (price - intraday_high) / intraday_high * 100.0
+        high_vs_price_pct = (intraday_high - price) / price * 100.0
     else:
-        dist_from_high_pct = float("nan")
+        high_vs_price_pct = float("nan")
     trading_value = c.get("trading_value", 0)
     rank = c.get("rank", 0)
     # 사용자 정정 2026-05-22: 거래량(주) 표시 → 회전율(거래대금/시총) + 시총.
@@ -148,8 +151,8 @@ def _candidate_block(c: dict[str, Any]) -> str:
     # (1) 현재가 + 전일 대비 상승률 (사용자 요청 2026-05-24: prev_close "0 → X" 표시 폐기,
     #     현재가 + 상승률만). prev_close 는 close_position 계산엔 여전히 쓰임 (표시만 제거).
     lines.append(f"현재가:    {fmt_price(price)}  ({fmt_pct(daily_return)})")
-    # (2) 일중 고점 대비 — "현재가" → "현재가 대비" 로 명확화 (음수, 0% = 현재가가 고점)
-    lines.append(f"일중 고점: {fmt_price(intraday_high)}  (현재가 대비 {fmt_pct(dist_from_high_pct)})")
+    # (2) 일중 고점 = 현재가 대비 +X% (고점이 현재가보다 위, 0% = 현재가가 고점)
+    lines.append(f"일중 고점: {fmt_price(intraday_high)}  (현재가 대비 {fmt_pct(high_vs_price_pct)})")
     # (3) 거래대금 + 순위 (중복 "거래대금" 단어 제거) + 3거래일 추이/순위 변동
     lines.append(f"거래대금:  {fmt_billion(trading_value)}  ({fmt_rank(rank)})")
     tv_line = _value_trend_line(trends.get("trading_value"), "trading_value")
@@ -244,13 +247,12 @@ def _candidate_block(c: dict[str, Any]) -> str:
     if chk_parts:
         lines.append(f"  Eod.Pick v2: {' / '.join(chk_parts)}")
 
-    # 14:50 시그널 (표시만, 점수화 X)
-    # (5) 사용자 요청 2026-05-24: "※ 표시만 — 사이징 미반영" 부연 제거.
+    # 14:50 시그널 (표시만, 점수화 X) — 호가/체결/수급 줄을 헤더 없이 바로 표시.
+    # 사용자 요청: "[14:50 시그널]" 섹션 헤더 자체도 생략 (2026-05-24).
     signals = c.get("intraday_signals") or {}
     signal_lines = _intraday_signal_lines(signals, trends)
     if signal_lines:
         lines.append("")
-        lines.append("[14:50 시그널]")
         lines.extend(signal_lines)
 
     return "\n".join(lines)

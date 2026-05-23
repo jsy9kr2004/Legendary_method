@@ -241,7 +241,8 @@ def test_decision_report_current_price_format():
     assert "현재가:" in report
     assert "3,180  (+22.31%)" in report
     assert "(0 → 3,180)" not in report      # prev_close 표기 폐기 (버그 회피)
-    assert "현재가 대비 -3.49%" in report     # (2) "현재가" → "현재가 대비"
+    # (2) 2026-05-24: 고점은 현재가보다 위 → "현재가 대비 +X%" (양수). (3295-3180)/3180
+    assert "현재가 대비 +3.62%" in report
 
 
 def test_decision_report_three_day_trend_lines():
@@ -273,7 +274,7 @@ def test_decision_report_three_day_trend_lines():
     assert "권외 → 30위 → 43위" in report             # 거래대금 순위 변동
     assert "20.0% → 5.0% → 10.0%" in report          # 회전율 값 추이
     assert "— → 8위 → 5위" in report                  # 회전율 순위 (NA → 위)
-    assert "3일 외인 +2.0만주→+8.2만주" in report      # 수급 3일 추이
+    assert "외인 +2.0만주→+8.2만주" in report      # 수급 3일 추이 ("3일" 단어 생략)
 
 
 def test_fmt_market_cap_units():
@@ -661,9 +662,9 @@ def test_decision_report_shows_intraday_signals():
         candidates=[_candidate_with_signals()],
         snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
     )
-    assert "[14:50 시그널]" in report
-    assert "표시만 — 사이징 미반영" not in report   # (5) 2026-05-24: 부연 제거
-    assert "체결강도 142" in report
+    assert "[14:50 시그널]" not in report           # 2026-05-24: 섹션 헤더 자체 생략
+    assert "표시만 — 사이징 미반영" not in report   # 부연 제거
+    assert "체결강도 142" in report                  # 시그널 줄은 헤더 없이 그대로 표시
     # 수급 — 오늘 값 한 줄 (수량 .1f 정밀) + N일 평균 比 컴팩트 한 줄 (2026-05-24)
     assert "외국인 +180.0만주" in report      # 오늘 외인
     assert "기관 +420.0만주" in report        # 오늘 기관
@@ -716,13 +717,15 @@ def test_decision_report_flags_sell_side_dominance():
 
 
 def test_decision_report_no_signal_section_when_signals_absent():
-    """signals 없으면 [14:50 시그널] 섹션 자체가 표시되지 않음."""
+    """signals 없으면 호가/체결/수급 줄 자체가 표시되지 않음 (헤더는 항상 생략)."""
     report = build_decision_report(
         leading_themes=[],
         candidates=[_make_candidate()],
         snapshot_dt=datetime(2026, 5, 6, 14, 50, tzinfo=KST),
     )
     assert "[14:50 시그널]" not in report
+    assert "호가:" not in report
+    assert "체결:" not in report
 
 
 # ── decision candidates persistence ──────────────────────────────────────────
