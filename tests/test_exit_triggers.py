@@ -218,6 +218,35 @@ def test_A4_no_trigger_above_required_profit():
     assert not any(e.kind == "A4_stop_time" for e in events)
 
 
+def test_A4_naive_now_with_aware_entry_time():
+    """영속화된 aware entry_time(+09:00) + naive now 혼재 — 빼기 충돌 없이 정상 평가.
+
+    data/state/holdings.json 의 entry_time 은 +09:00 aware 로 저장되는데 일부 호출의
+    now 는 naive 라, 옛 코드는 'can't subtract offset-naive and offset-aware datetimes'
+    로 터졌다 (2026-05-24 fix — _elapsed_seconds 가 KST wall-clock 으로 통일).
+    """
+    aware_entry = datetime.fromisoformat("2026-05-13T09:50:00+09:00")  # KST 10분 전
+    h = Holding(
+        code="091340", entry_price=100_000, entry_time=aware_entry,
+        entry_bar_low=99_000, time_stop_minutes=10,
+    )
+    naive_now = datetime(2026, 5, 13, 10, 0, 0)  # naive (KST wall-clock)
+    events = evaluate_triggers(h, now=naive_now, current_price=100_300)  # 10분 경과 + +0.3%
+    assert any(e.kind == "A4_stop_time" for e in events)
+
+
+def test_A4_aware_now_with_naive_entry_time():
+    """역방향 (naive entry + aware now) 도 충돌 없이 정상."""
+    h = Holding(
+        code="091340", entry_price=100_000,
+        entry_time=datetime(2026, 5, 13, 9, 50, 0),  # naive
+        entry_bar_low=99_000, time_stop_minutes=10,
+    )
+    aware_now = datetime.fromisoformat("2026-05-13T10:00:00+09:00")  # aware
+    events = evaluate_triggers(h, now=aware_now, current_price=100_300)
+    assert any(e.kind == "A4_stop_time" for e in events)
+
+
 # ── 익절 (B1/B2) — 멱등 ──────────────────────────────────────────────────────
 
 

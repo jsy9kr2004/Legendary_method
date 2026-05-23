@@ -41,7 +41,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal
 
-from src.config import load_settings
+from src.config import KST, load_settings
 from src.scalping.score.candle import CandleShape, is_bearish_exit_signal
 from src.scalping.score.thresholds import (
     ENTRY_BAR_MA_MINUTES,
@@ -209,6 +209,23 @@ def compute_c_signal_states(
     }
 
 
+def _elapsed_seconds(then: datetime, now: datetime) -> float:
+    """now - then 을 초로 환산. naive/aware 혼재 허용.
+
+    영속화된 entry_time 은 `data/state/holdings.json` 에 +09:00 aware 로 저장되는데,
+    호출자(테스트/일부 경로)의 now 는 naive 일 수 있어 그대로 빼면
+    "can't subtract offset-naive and offset-aware datetimes" 로 터진다.
+    시스템 전체가 Asia/Seoul 이므로 aware 는 KST 로 변환 후 wall-clock 으로 통일.
+    (`maybe_reset_holdings` 가 문서화한 "naive 또는 aware 모두 허용" 계약을 시각
+    연산에도 일관 적용 — 2026-05-24.)
+    """
+    def _kst_naive(dt: datetime) -> datetime:
+        if dt.tzinfo is not None:
+            return dt.astimezone(KST).replace(tzinfo=None)
+        return dt
+    return (_kst_naive(now) - _kst_naive(then)).total_seconds()
+
+
 def evaluate_triggers(
     holding: Holding,
     *,
@@ -299,7 +316,7 @@ def evaluate_triggers(
             f"EOD {now.hour:02d}:{now.minute:02d} 이평 {int(minute_ma_5):,} 밑 음봉",
         )
 
-    elapsed_min = (now - holding.entry_time).total_seconds() / 60.0
+    elapsed_min = _elapsed_seconds(holding.entry_time, now) / 60.0
     if elapsed_min >= holding.time_stop_minutes and pnl < TIME_STOP_REQUIRED_PROFIT_PCT:
         fire(
             "A4_stop_time", True,
@@ -367,7 +384,7 @@ def evaluate_triggers(
             if holding.vol_drain_since is None:
                 holding.vol_drain_since = now
             elif (
-                (now - holding.vol_drain_since).total_seconds() >= VOL_ACCEL_DRAIN_PERSIST_SECONDS
+                _elapsed_seconds(holding.vol_drain_since, now) >= VOL_ACCEL_DRAIN_PERSIST_SECONDS
                 and "E3_vol_drain" not in holding.triggers_fired
             ):
                 holding.triggers_fired.add("E3_vol_drain")
@@ -399,7 +416,7 @@ def evaluate_triggers(
     if (
         holding.vi_triggered_at is not None
         and not vi_recovered
-        and (now - holding.vi_triggered_at).total_seconds() >= VI_FAILURE_WINDOW_SECONDS
+        and _elapsed_seconds(holding.vi_triggered_at, now) >= VI_FAILURE_WINDOW_SECONDS
         and "E5_vi_failure" not in holding.triggers_fired
     ):
         holding.triggers_fired.add("E5_vi_failure")

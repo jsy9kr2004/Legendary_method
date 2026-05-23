@@ -10,6 +10,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pytest
 
 from src.dashboard.state import MonitoringSession, Source
 from src.dashboard.worker import (
@@ -18,6 +19,19 @@ from src.dashboard.worker import (
     reset_daily,
     start_command_thread,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_holdings():
+    """worker 테스트를 실제 data/state/holdings.json 에서 격리.
+
+    conftest 에 DATA_DIR 격리가 없어 worker 의 load_holdings() 가 실 파일을 읽으면
+    ①영속화된 aware entry_time(+09:00) 이 테스트의 naive now 와 빼기 충돌,
+    ②무관한 실보유 종목이 monitored 로 surface 돼 카드 단언 오염. 기본 빈 dict 로
+    패치하고, 보유 모드 테스트는 각자 로컬 patch 로 override (2026-05-24).
+    """
+    with patch("src.dashboard.worker.load_holdings", return_value={}):
+        yield
 
 
 def _empty_snapshot():
