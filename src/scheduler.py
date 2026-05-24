@@ -336,9 +336,11 @@ def _send_eod_entry_monitor(
     검증 단타 신호(체결강도 VP / 점상한가 / 고점대비 되돌림) 정보 제공. 종배 채널.
     """
     from src.data.intraday import fetch_quote
-    from src.data.intraday_realtime import fetch_ccnl_strength
+    from src.data.intraday_realtime import fetch_ccnl_strength, fetch_minute_bars
     from src.overnight.eod_entry import build_eod_entry_context, format_eod_entry_line
     from src.report.decision import load_decision_candidates
+    from src.scalping.score.accel import compute_accel_ratio
+    from src.scalping.score.candle import is_weak_candle, latest_completed_candle
 
     today = now_kst().date()
     cands = load_decision_candidates(settings.data_dir, today)
@@ -371,6 +373,18 @@ def _send_eod_entry_monitor(
                 vp = float(v) if (v is not None and v == v) else None
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[막판점검] {code} 체결강도 실패: {e}")
+        # 분봉 거래대금 가속 + 봉형태 (단타 funnel 함수 재사용 — 막판 매집/무너짐 포착)
+        vol_accel = None
+        weak_candle = None
+        try:
+            bars = fetch_minute_bars(client, code)
+            if bars is not None and not bars.empty:
+                a = compute_accel_ratio(bars)
+                vol_accel = float(a) if a == a else None
+                shape = latest_completed_candle(bars)
+                weak_candle = is_weak_candle(shape) if shape is not None else None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[막판점검] {code} 분봉 실패: {e}")
         try:
             ctx = build_eod_entry_context(
                 prev_close=float(prev),
@@ -378,6 +392,8 @@ def _send_eod_entry_monitor(
                 intraday_high=float(q.get("intraday_high") or price),
                 is_limit_up=bool(q.get("is_limit_up")),
                 vp=vp,
+                vol_accel=vol_accel,
+                weak_candle=weak_candle,
             )
         except ValueError:
             continue
