@@ -46,6 +46,34 @@ def _ok_resp(payload: dict) -> MagicMock:
 
 # ── _split_text ──────────────────────────────────────────────────────────────
 
+def test_dispatcher_routes_eod_reports_to_group(tmp_path):
+    """telegram_eod_chat_id 설정 시 종배 레포트는 그룹으로."""
+    import dataclasses
+    s = dataclasses.replace(_settings(tmp_path), telegram_eod_chat_id="GROUP")
+    d = Dispatcher(s)
+    with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
+        d.send_decision(["report"])
+    assert m.call_args.args[1] == "GROUP"  # chat_id = 그룹
+
+
+def test_dispatcher_falls_back_to_main_when_no_eod(tmp_path):
+    """telegram_eod_chat_id 비면 개인 DM(telegram_chat_id) 사용."""
+    d = Dispatcher(_settings(tmp_path))  # eod 기본 ""
+    with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
+        d.send_morning("morning")
+    assert m.call_args.args[1] == "12345"
+
+
+def test_dispatcher_error_alert_uses_main_chat(tmp_path):
+    """에러 알림은 그룹이 아니라 개인 DM(운영자) 으로."""
+    import dataclasses
+    s = dataclasses.replace(_settings(tmp_path), telegram_eod_chat_id="GROUP")
+    d = Dispatcher(s)
+    with patch("src.notify.dispatcher.send_error_alert", return_value={"ok": True}) as m:
+        d.telegram_error("boom", context="t")
+    assert m.call_args.args[1] == "12345"  # 그룹 아님
+
+
 def test_split_text_short():
     assert _split_text("hello") == ["hello"]
 

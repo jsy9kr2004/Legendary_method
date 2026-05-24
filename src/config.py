@@ -83,6 +83,11 @@ class Settings:
     smtp_host: str = "smtp." + "gmail" + ".com"
     smtp_port: int = 587
 
+    # 종배 레포트 전용 채팅/그룹 (2026-05-25). 비면 telegram_chat_id 로 fallback.
+    # 종배 동료를 그룹에 초대 → 종배 레포트(모닝/정기/결정/상한가/사후/청산)만 그룹으로.
+    # 단타 M6 카드 + 봇 명령 + 에러알림은 telegram_chat_id(개인 DM) 유지 → 단타 미노출.
+    telegram_eod_chat_id: str = ""
+
     # M6 모니터링 카드 텔레그램 발송 토글. False 면 dashboard_tick 의 카드 send/
     # edit/delete 만 skip — PWA 페이로드 / KIS fetch / 명령 응답 / 09:30 모닝 /
     # 11~14:00 periodic / 14:50 결정 / 16:00 사후 / 상한가 이벤트 / 09:01 시초
@@ -167,6 +172,7 @@ def load_settings() -> Settings:
         kis_api_mode=os.getenv("KIS_API_MODE", "mock"),
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+        telegram_eod_chat_id=os.getenv("TELEGRAM_EOD_CHAT_ID", ""),
         monitoring_telegram_cards_enabled=_bool_env(
             "MONITORING_TELEGRAM_CARDS_ENABLED", default=True,
         ),

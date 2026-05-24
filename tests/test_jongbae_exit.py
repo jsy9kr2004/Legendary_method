@@ -12,6 +12,8 @@ import pytest
 from src.overnight.exit import (
     JongbaeExitDecision,
     evaluate_jongbae_open_exit,
+    evaluate_overnight_exit_live,
+    format_overnight_exit_line,
 )
 
 
@@ -118,3 +120,76 @@ def test_decision_is_frozen():
     d = evaluate_jongbae_open_exit(open_price=110_000, prev_close=100_000)
     with pytest.raises((AttributeError, Exception)):
         d.action = "sell_all"  # type: ignore[misc]
+
+
+# ── 라이브 청산 (evaluate_overnight_exit_live, 2026-05-25) ───────────────────
+
+
+def test_live_strong_gap_still_high_partial():
+    """현재 +8% (고점 근처) → 강한 갭, 분할 (시초 룰과 동일 임계값)."""
+    ctx = evaluate_overnight_exit_live(
+        prev_close=100_000, current=108_000, intraday_high=108_500, open_price=107_000,
+    )
+    assert ctx.decision.action == "sell_partial"
+    assert ctx.current_gap_pct == pytest.approx(8.0)
+    assert ctx.open_gap_pct == pytest.approx(7.0)
+    assert ctx.pullback_from_high_pct < 0  # 고점 대비 되돌림
+
+
+def test_live_captures_fade_from_strong_open():
+    """★ 시초 +7%(분할 영역)였다가 현재 +2%로 fade → 현재가 기준 전량 매도.
+
+    이게 라이브 엔진의 핵심 — 시초 1회 룰이라면 분할(60% 관망)로 물렸을 상황을,
+    현재가 재평가로 '정상 갭 전량 익절' 로 전환해 fade 를 포착.
+    """
+    ctx = evaluate_overnight_exit_live(
+        prev_close=100_000, current=102_000, intraday_high=107_000, open_price=107_000,
+    )
+    assert ctx.decision.action == "sell_all"
+    assert ctx.current_gap_pct == pytest.approx(2.0)
+    # 고점(107k) 대비 현재(102k) 되돌림 ≈ -4.67%
+    assert ctx.pullback_from_high_pct == pytest.approx(-4.67, abs=0.1)
+
+
+def test_live_gap_collapsed_sells_all():
+    """현재 ≤ +1% (갭 소멸) → 전량 매도."""
+    ctx = evaluate_overnight_exit_live(
+        prev_close=100_000, current=100_500, intraday_high=105_000,
+    )
+    assert ctx.decision.action == "sell_all"
+    assert "고점대비" in ctx.note
+
+
+def test_live_open_optional_no_open_gap():
+    """open 미상이면 open_gap NaN, note 에 시초 줄 생략."""
+    ctx = evaluate_overnight_exit_live(
+        prev_close=100_000, current=104_000, intraday_high=104_000,
+    )
+    assert ctx.open_gap_pct != ctx.open_gap_pct  # NaN
+    assert "시초" not in ctx.note
+    assert ctx.current_gap_pct == pytest.approx(4.0)
+
+
+def test_live_high_below_current_clamped():
+    """일중고가가 현재가보다 작게 들어오면 현재가로 보정 (되돌림 0)."""
+    ctx = evaluate_overnight_exit_live(
+        prev_close=100_000, current=106_000, intraday_high=105_000,
+    )
+    assert ctx.pullback_from_high_pct == pytest.approx(0.0)
+
+
+def test_live_raises_on_nonpositive():
+    with pytest.raises(ValueError):
+        evaluate_overnight_exit_live(prev_close=0, current=100_000, intraday_high=100_000)
+    with pytest.raises(ValueError):
+        evaluate_overnight_exit_live(prev_close=100_000, current=0, intraday_high=100_000)
+
+
+def test_format_overnight_exit_line():
+    ctx = evaluate_overnight_exit_live(
+        prev_close=100_000, current=108_000, intraday_high=108_500, open_price=107_000,
+    )
+    line = format_overnight_exit_line("제룡전기", "033100", ctx)
+    assert "제룡전기(033100)" in line
+    assert "매도 40%" in line  # 분할 비중
+    assert "고점대비" in line

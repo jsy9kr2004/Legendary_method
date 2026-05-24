@@ -182,6 +182,7 @@ def run_pipeline(
         # Eod.Pick v2 보조 지표 (round 41 ④) — 1년 ret≥10 + 갭상 비율
         # 사용자 정정 2026-05-21: 12 케이스 매트릭스 추가
         from src.overnight.gap_stats import (
+            candle_count_aux,
             historical_aux_matrix,
             historical_ret10_gap_stats,
         )
@@ -195,6 +196,9 @@ def run_pipeline(
         c["sizing_stats"] = sizing_stats
         c["historical_aux"] = ret10_aux
         c["historical_aux_matrix"] = aux_matrix
+        c["candle_aux"] = candle_count_aux(daily_ohlcv, code, target_date)
+        from src.overnight.nxt import is_nxt_tradable, load_nxt_tradable
+        c["nxt_tradable"] = is_nxt_tradable(code, load_nxt_tradable(data_dir))
         c["sample_sufficient"] = sample_sufficient
         candidates_with_stats.append(c)
 
@@ -206,6 +210,33 @@ def run_pipeline(
             "sharpe": sizing_results["sharpe"][i],
             "equal":  sizing_results["equal"][i],
         }
+
+    # Eod.Sizing v2 (2026-05-25): 거래대금순위 버킷 rolling Kelly (scheduler 와 동일).
+    try:
+        from src.data.storage import read_stock_master
+        from src.overnight.sizing_bucket import build_bucket_stats, compute_bucket_sizing
+        _master_df = read_stock_master(data_dir)
+        _tradable = (
+            set(_master_df["code"].astype(str))
+            if _master_df is not None and not _master_df.empty
+            else set()
+        )
+        _bsize = compute_bucket_sizing(
+            candidates_with_stats,
+            build_bucket_stats(daily_ohlcv, target_date, _tradable),
+        )
+        for i, c in enumerate(candidates_with_stats):
+            c["sizing"]["kelly_bucket"] = _bsize["kelly_abs"][i]
+            c["sizing"]["kelly_bucket_rel"] = _bsize["kelly_rel"][i]
+            c["sizing_bucket"] = _bsize["buckets"][i]
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[파이프라인] 버킷 사이징 실패 — 생략: {e}")
+
+    # 거래대금순위 정렬 + top3 플래그 (hold-3) — scheduler 와 동일.
+    candidates_with_stats.sort(key=lambda c: (c.get("rank") or 9999))
+    for i, c in enumerate(candidates_with_stats):
+        c["rank_in_report"] = i + 1
+        c["is_top3"] = i < 3
 
     # ── 5. 레포트 생성 ────────────────────────────────────────────────────
     hh2, mm2 = snapshot_time.split(":")

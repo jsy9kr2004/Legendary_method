@@ -268,6 +268,8 @@ universe 와 backtest 일치 + 후보 다양성 확보).
 
 3가지 방법 모두 계산해서 레포트에 표시. Zeta가 보고 선택.
 
+**v2 (2026-05-25) — 거래대금순위 버킷 Kelly (`src/overnight/sizing_bucket.py`):** factor_edge backtest (250일 + 최근 3개월, `scripts/backtest_factor_edge.py`) 로 per-종목 historical(끼)·신고가·시총·종가위치·거래량이 모두 **노이즈(창 사이 뒤집힘)** 로 드러나고, 다음날 갭상을 robust 하게 가르는 유일한 일봉 팩터가 **거래대금순위** 임이 확인됨 (top10 갭상 1년 55%/3개월 64%, 단조). 따라서 사이징을 거래대금순위 버킷(1~10 / 11~25 / 26~50위)의 **rolling-window p/W/L → `kelly_fraction`** 으로 전환. 후보는 **거래대금순위 정렬 + top3 플래그**(사용자 hold-3: 시초 동시매도 부담 → top3 만 매수, `scripts/backtest_top3_selection.py` 검증), top3 종목별 **비중(절대 계좌% + top3내 상대 강약) + 현금버퍼** 표시. 같은 버킷이면 동률(엣지 같음 — 강약은 엣지 다를 때만; 점상한가 등 fat pitch 면 Kelly 가 자동 2~3배). 아래 per-종목 3방식(균등/Kelly/Sharpe)은 참고용으로 강등. ★ 선별 엣지(+0.7%)보다 **청산 타이밍 폭(~9%p)이 13배** 라, 다음 빌드는 시초/NXT 청산 지원.
+
 **방법 1: 균등**
 ```
 weight_i = 1 / N  (N = 시그널 종목 수)
@@ -316,8 +318,20 @@ weight_i = score_i / sum(score)
 
 구현: `src/overnight/exit.py:evaluate_overnight_open_exit()` — 시초가 + 전일종가 입력으로 `OvernightExitDecision(action, partial_ratio, reason)` 반환. **자동 주문 X** (CLAUDE.md 정책) — 09:00 텔레그램 알림 메시지에 권고 표시만.
 
+**Eod.Exit v2 라이브 청산 지원 (2026-05-25):** 시초 1회 판정은 fade 를 못 잡음 —
+`scripts/backtest_recent_kelly.py` 의 매도 시점 envelope (top3 시초 +0.7% / 일중최저
+−3.7% / 일중최고 +5.5%, 폭 **~9%p**) 에서 보듯 **청산 타이밍이 선별(+0.7%)보다 13배
+큰 변수.** 청산 타이밍은 분봉 히스토리 부재로 backtest 불가 → **새 자작 임계값 금지**,
+검증된 ≤1/1-6/≥6% 룰을 '시초' 대신 **'현재가' 에 라이브 재평가**(같은 임계값) + **고점
+대비 되돌림을 정보로 표시**. `evaluate_overnight_exit_live(prev_close, current,
+intraday_high, open_price=None)` → `OvernightExitContext` (current_gap / pullback_from_high
+/ decision / note) + `format_overnight_exit_line`. 아침 **다회 체크인** (09:01/10/20/30
+cron). 예: 시초 +7%(분할 권고)였다가 현재 +2%로 fade → 현재가 기준 '전량 익절' 자동
+전환. **자동 주문 X — 매도 시점은 사람이 결정.** `tests/test_jongbae_exit.py` 7 신규.
+
 **v1 (TODO):**
-- NXT 프리장 (08:00~08:50) 활용
+- NXT 프리장 (08:00~08:50) 활용 — KIS NXT 시세 API 검증 후. NXT 가능 시 08:00~09:00
+  프리마켓이 KRX 09:00 동시 매도 러시 전 분산 청산 창 (사용자 hold-3 시초 매도 부담 완화)
 - 종목별 NXT 거래 가능 여부 체크 후 우선 청산
 - 갭하락 시 30분 내 손절/홀딩 판단 룰
 
@@ -385,6 +399,9 @@ weight_i = score_i / sum(score)
 
 | Round | 잘못 알았던 것 | 정정 |
 |---|---|---|
+| 2026-05-25 (종배 빌드 batch) | 종배 동료 추가 시 그룹 운영 / 양봉·NXT 표시 / 수급·체결강도 누적 / 막판 진입 점검 요청 ("쭉 이어서 다 해줘"). | ①**텔레그램 종배 그룹 라우팅** (`TELEGRAM_EOD_CHAT_ID` — 종배 레포트만 그룹, 단타 M6 카드/봇명령/에러알림은 개인 DM). ②**양봉/장대양봉 카운트 표시** (`gap_stats.candle_count_aux`, 표시 전용 — factor_edge 상 갭 변별력 없음). ③**forward 로깅** (`src/overnight/forward_log.py`: 14:50 후보 벡터 + 다음날 실현 갭 join, 16:40 cron — 수급/체결강도 등 backtest 불가 신호의 미래 factor_edge + 청산 envelope 누적). ④**막판 진입 점검** (`src/overnight/eod_entry.py`: 15:00/10/20 cron, 14:50 top3 대상 VP/점상한가/고점대비 표시 — 새 매수 hard rule X, 표시만). ⑤**NXT 가능/불가/추정 표시** (`src/overnight/nxt.py`: nextrade.co.kr 목록 `data/meta/nxt_tradable.txt` pluggable; 크롤러·KIS NXT 시세/주문 API 는 v1). `fetch_quote` 에 시가(open) 추가. test +24, 1004 pass. |
+| 2026-05-25 (Eod.Exit v2 라이브) | 청산이 시초 1회(open vs prev_close) 판정뿐 — fade 를 못 잡음. | 매도 시점 envelope(~9%p)이 선별(+0.7%)보다 13배 큼(`backtest_recent_kelly.py`). 청산 타이밍은 분봉 부재로 backtest 불가 → 새 임계값 X, **검증된 ≤1/1-6/≥6% 룰을 '현재가'에 라이브 재평가 + 고점대비 되돌림 표시**. `evaluate_overnight_exit_live` / `format_overnight_exit_line` 신설, 아침 다회 체크인(09:01/10/20/30). fetch_quote 에 시가(open) 추가. 시초 +7%→현재 +2% fade 시 '전량 익절' 자동 전환. 자동 주문 X. test 7 신규, 980 pass. NXT 프리장(08:00~) 청산 분산은 KIS NXT API 검증 후 v1. |
+| 2026-05-25 (Eod.Sizing v2 + top3) | (보강) 사이징이 per-종목 historical(끼) 기반인데, 종목별 끼·신고가·시총·종가위치·거래량을 더 보면 비중을 더 가를 수 있지 않냐는 사용자 질문. | factor_edge backtest (250일 + 3개월, `scripts/backtest_factor_edge.py`/`factor_edge2.py`): 위 팩터 전부 노이즈(창 사이 뒤집힘, 다중비교), **거래대금순위만 robust 변별**(단조, 3개월 더 강함). ①사이징을 **거래대금순위 버킷 rolling Kelly** (`src/overnight/sizing_bucket.py`) 로 전환, per-종목 3방식은 참고 강등. ②후보 **거래대금순위 정렬 + top3 플래그** (사용자 hold-3 = 시초 동시매도 부담, `backtest_top3_selection.py`: top3 갭상 1년 55%/3개월 64%). ③top3 종목별 비중(절대+상대)+현금버퍼 표시. ④**청산 타이밍 envelope(~9%p) ≫ 선별(+0.7%) = 13배** (`backtest_recent_kelly.py`) — 다음 빌드는 시초/NXT 청산 지원. scheduler+pipeline 양쪽 wiring, `test_sizing_bucket.py` 6 신규, 973 pass. |
 | 2026-05-21 명명 마이그레이션 | docs/jongbae-strategy.md 한 파일에 단타 (R9~R15) + 종배 (R1~R8) 룰이 R 번호로 섞임. 사용자 (Zeta) 가 매매일지 작성 시 혼동 보고. | 명명 재설계 + 시스템 분리: ①R1 → Eod.Market, R4~R8 → Eod.* 의미있는 이름. ②docs/scalping-strategy.md (단타) + docs/eod-strategy.md (종배, 본 문서) 분리. ③src/jongbae/ → src/overnight/ + src/scalping/ + src/common/ 재구성. ④CLAUDE.md "현재 종배만 구현 중" 표현 정정. |
 | 41 후속 3 (backtest 재실행) | round 41 후속 2 에서 backtest 결과도 무효일까 우려. 사용자 (Zeta) "R4 v2 backtest 재실행도 해줘". 재실행 (`scripts/backtest_r4v2.py`, daily_ohlcv 기반): 최대 갭상 LG전자 5/14 +17.97% / 최악 엑스게이트 5/13 -4.88% **둘 다 round 41 본문 결과와 정확히 일치** → 본문 backtest 는 처음부터 daily_ohlcv 기반이라 거래대금 universe 가 정확했음을 확인. 운영 universe 만 거래량이었던 게 진짜 문제 (= 5일 연속 0종목의 본질). 종목 수 차이 (본문 17 vs 재실행 30) 는 (d)(f) hard→soft 정정 차이로 설명. **30 vs 50 universe 비교 (4영업일, hard=a,b,c,e)**: 30위 N=20 P=80.0% 평균+2.96% / 50위 N=30 P=70.0% 평균+2.04%. 다양성 vs 신호 강도 trade-off. | round 41 후속 3 (backtest 재실행 + strategy.md 정정): scripts/backtest_r4v2.py 신규, data/backtest/ 디렉터리 신설, docs/jongbae-strategy.md v2 결과 표 "정확성 재확인" 으로 정정. **다음 영업일 5/20 부터 운영 universe 도 backtest 일치 진입**. |
 | 41 후속 2 후속 (30→50 확장) | round 41 후속 2 직후 사용자(Zeta) "50위 가져오는 방법 찾자". KIS volume-rank 가 한 호출당 30개 hard cap. 진단: ctx 페이지네이션 미지원, **가격 범위 분할 작동 확인**. 3회 호출 합집합 90 고유 종목 → 거래대금 desc top 50 = 완벽 cover. | round 41 후속 3 (30→50 확장): _PRICE_BUCKETS 상수 + 가격 버킷 3회 호출 union + trading_value desc top_n. 회귀 테스트 5건. 906 pass. **다음 영업일 (2026-05-20) 14:50 cron 부터 진짜 거래대금 50위 universe 진입**. |

@@ -137,8 +137,13 @@ def _candidate_block(c: dict[str, Any]) -> str:
         "normal": "🟢 +10~27%",
     }.get(priority, "")
 
+    # 거래대금순위 + top3 플래그 (2026-05-25 hold-3). 후보 전체를 순위대로 나열,
+    # 상위 3개에 ⭐. top3 만 매수하는 사용자 워크플로우.
+    rir = c.get("rank_in_report")
+    top3_mark = "⭐ " if c.get("is_top3") else ""
+    rank_lbl = f"[{rir}위] " if rir else ""
     lines = [
-        f"▣ {name} ({code})  {priority_label}",
+        f"{top3_mark}{rank_lbl}▣ {name} ({code})  {priority_label}",
         "─" * 27,  # 사용자 정정: 80% 길이 (33 → 27)
     ]
 
@@ -165,6 +170,30 @@ def _candidate_block(c: dict[str, Any]) -> str:
     if to_line:
         lines.append(to_line)
     lines.append(f"시총:      {fmt_market_cap(market_cap)}")
+    # 비중(Kelly, 거래대금순위 버킷) — Eod.Sizing v2 (2026-05-25). 절대 = 계좌 대비.
+    sizing = c.get("sizing") or {}
+    kb = sizing.get("kelly_bucket")
+    bucket = c.get("sizing_bucket")
+    if kb is not None:
+        lines.append(f"비중(Kelly): {kb * 100:.1f}% (계좌 대비)  [{bucket or '—'}]")
+    elif bucket:
+        lines.append(f"비중(Kelly): — (버킷 표본부족)  [{bucket}]")
+    # 양봉/장대양봉 카운트 (표시 전용 — factor_edge 상 갭 변별력 없음, 점수/컷 X).
+    candle = c.get("candle_aux") or {}
+    if candle:
+        bt = int(candle.get("big_threshold", 10) or 10)
+        consec = int(candle.get("consec_up_days", 0) or 0)
+        bigc = int(candle.get("big_candle_count", 0) or 0)
+        nth = int(candle.get("today_is_nth_big", 0) or 0)
+        nth_str = f"오늘 {nth}번째 장대" if nth else "오늘은 장대 아님"
+        lines.append(
+            f"양봉추이:  연속상승 {consec}일 · 최근10일 장대 {bigc}회 "
+            f"({nth_str}, 장대=일봉 +{bt}%↑)"
+        )
+    # NXT 거래 가능 여부 (2026-05-25). 가능 시 애프터마켓 매수 / 프리장 분산청산.
+    if "nxt_tradable" in c:
+        from src.overnight.nxt import nxt_label
+        lines.append(nxt_label(c.get("nxt_tradable")))
 
     # Historical 통계 + Layer 정의 설명 (라벨에 사례 매칭 조건 명시).
     # 각 Layer 는 동일 종목 1년 일봉에서 유사 사례 추출 → 다음날 갭상 통계.
@@ -352,8 +381,34 @@ def _intraday_signal_lines(
     return out
 
 
+def _top3_sizing_block(candidates: list[dict[str, Any]]) -> str:
+    """오늘의 top3 비중 (거래대금순위 버킷 Kelly) — Eod.Sizing v2 (2026-05-25).
+
+    절대(계좌 대비) + top3 내 상대(강약) + 투입/현금. factor_edge backtest 로
+    거래대금순위만 robust 검증돼 그 버킷 p/W/L 로 Kelly. 같은 버킷=동률(엣지 같음).
+    """
+    top3 = [c for c in candidates if c.get("is_top3")][:3]
+    if not top3:
+        return ""
+    abs_pairs = [(c, (c.get("sizing") or {}).get("kelly_bucket")) for c in top3]
+    invested = sum(w for _, w in abs_pairs if w)
+    lines = [sep(), "[오늘의 top3 — 비중 (Kelly · 거래대금순위 버킷)]", sep()]
+    for c, w in abs_pairs:
+        name = c.get("name", "")
+        bucket = c.get("sizing_bucket") or "—"
+        if w:
+            rel = (w / invested * 100) if invested > 0 else 0.0
+            lines.append(f"  {name}: 계좌 {w * 100:.1f}%  |  top3내 {rel:.0f}%  [{bucket}]")
+        else:
+            lines.append(f"  {name}: 표본부족/0  [{bucket}]")
+    lines.append(f"  → 투입 합계 {invested * 100:.0f}%  /  현금 {(1 - invested) * 100:.0f}%")
+    lines.append("  * 같은 버킷이면 동률 — 엣지가 같다는 뜻. 강약은 엣지가 다를 때만 (factor_edge).")
+    lines.append("  * 현금 버퍼 = 대외 갭하락 대비. ★ 청산 타이밍(시초/NXT)이 본 게임 (~9%p).")
+    return "\n".join(lines)
+
+
 def _sizing_block(candidates: list[dict[str, Any]]) -> str:
-    """사이징 제안 블록."""
+    """사이징 참고 블록 (per-종목 historical 3방식 — 참고용)."""
     table_rows = []
     for c in candidates:
         stats = c.get("sizing_stats", {})
@@ -369,9 +424,10 @@ def _sizing_block(candidates: list[dict[str, Any]]) -> str:
 
     lines = [
         sep(),
-        "[사이징 제안]",
+        "[사이징 참고 — per-종목 historical (Kelly/Sharpe/Equal)]",
         sep(),
         code_block(fmt_sizing_table(table_rows)),
+        "* 권장 비중은 위 [오늘의 top3] (거래대금순위 버킷 Kelly). 아래는 참고용 per-종목 historical.",
         "* Kelly: 표본 보정 적용 (n<5 제외, n<20 ×0.6, n≥20 ×0.8), 25% 캡",
         "* 실제 사이징은 Zeta 판단",
     ]
@@ -452,7 +508,7 @@ def build_decision_report(
     else:
         lines.append("• 주도테마 없음 (임계값 미달)")
 
-    lines += ["", sep(), f"[종배 후보 — {len(accepted)}종목]", sep(), ""]
+    lines += ["", sep(), f"[종배 후보 — {len(accepted)}종목, 거래대금순위 정렬 · ⭐=top3]", sep(), ""]
 
     if not accepted:
         lines.append("⚠ 조건 만족 후보 없음")
@@ -462,6 +518,10 @@ def build_decision_report(
             lines.append("")
 
     if accepted:
+        top3_block = _top3_sizing_block(accepted)
+        if top3_block:
+            lines.append(top3_block)
+            lines.append("")
         lines.append(_sizing_block(accepted))
 
     lines += [

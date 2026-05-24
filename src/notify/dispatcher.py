@@ -52,9 +52,12 @@ class Dispatcher:
         if self._s.dry_run:
             logger.info(f"[DRY_RUN] 텔레그램 발송 스킵 ({len(text)}자):\n{text[:200]}...")
             return [{"ok": True, "dry_run": True}]
+        # 종배 레포트는 전용 그룹(telegram_eod_chat_id)으로 — 비면 개인 DM fallback.
+        # 단타 M6 카드(worker 직접 발송)/봇 명령/에러알림은 telegram_chat_id 유지.
+        target = self._s.telegram_eod_chat_id or self._s.telegram_chat_id
         return send_message(
             self._s.telegram_bot_token,
-            self._s.telegram_chat_id,
+            target,
             text,
             parse_mode=parse_mode,
         )
@@ -127,6 +130,11 @@ class Dispatcher:
         """사후 레포트 발송 (텔레그램, 4096자 초과 시 자동 분할)."""
         results = self.telegram(report)
         _log_results("사후", results)
+
+    def send_eod_entry(self, report: str) -> None:
+        """종배 막판 진입 점검 발송 (15:00/10/20, 종배 채널). 표시만 — 자동주문 X."""
+        results = self.telegram(report)
+        _log_results("막판점검", results)
 
     def send_jongbae_open_exit(self, report: str) -> None:
         """종배 청산 시초가 권고 발송 (round 32, P3-2 wiring).

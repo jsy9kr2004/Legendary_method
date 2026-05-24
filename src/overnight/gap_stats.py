@@ -205,6 +205,56 @@ def is_52w_high(
     return float(today_high) > past_max_close
 
 
+def candle_count_aux(
+    daily_ohlcv: pd.DataFrame,
+    code: str,
+    today: date,
+    lookback: int = 10,
+    big_threshold: float = 10.0,
+) -> dict[str, Any]:
+    """양봉/장대양봉 카운트 — 표시 전용 보조지표 (2026-05-25 사용자 요청).
+
+    영상[3] "이 종목이 장대양봉 첫번째냐 세번째냐" 맥락을 카드에 눈으로 보여주기 위함.
+    ★ factor_edge backtest 상 연속상승/장대양봉수는 다음날 갭 변별력 없음(노이즈) →
+       **점수/컷 X, 표시만.** 라벨에 "(장대=일봉 +N%↑)" 정의 명시.
+
+    Returns:
+        {consec_up_days, big_candle_count, today_is_nth_big, big_threshold}.
+        데이터 없으면 모두 0.
+    """
+    empty = {"consec_up_days": 0, "big_candle_count": 0,
+             "today_is_nth_big": 0, "big_threshold": big_threshold}
+    if daily_ohlcv is None or daily_ohlcv.empty:
+        return empty
+    df = daily_ohlcv[daily_ohlcv["code"].astype(str) == str(code).zfill(6)].copy()
+    if df.empty:
+        return empty
+    df = df.sort_values("date")
+    df["_ret"] = df["close"].pct_change() * 100.0
+    df = df[df["date"].apply(lambda d: (_coerce_date(d) is not None)
+                             and (_coerce_date(d) <= today))]
+    if df.empty:
+        return empty
+
+    rets = df["_ret"].tolist()
+    consec = 0
+    for r in reversed(rets):
+        if r is not None and r == r and r > 0:
+            consec += 1
+        else:
+            break
+    window = rets[-lookback:]
+    big = sum(1 for r in window if r is not None and r == r and r >= big_threshold)
+    today_big = bool(rets and rets[-1] is not None and rets[-1] == rets[-1]
+                     and rets[-1] >= big_threshold)
+    return {
+        "consec_up_days": consec,
+        "big_candle_count": big,
+        "today_is_nth_big": big if today_big else 0,
+        "big_threshold": big_threshold,
+    }
+
+
 def _compute_returns(df: pd.DataFrame) -> pd.DataFrame:
     """일봉 DF에 daily_return, next_day 메트릭 + 거래량 비율 추가.
 

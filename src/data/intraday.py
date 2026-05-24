@@ -406,6 +406,7 @@ def fetch_quote(client: KISClient, code: str) -> dict[str, Any] | None:
         "name": str(out.get("hts_kor_isnm", "")),
         "price": price,
         "prev_close": prev_close,
+        "open": _to_int(out.get("stck_oprc")),  # 당일 시가 — 종배 라이브 청산 open_gap 용
         "daily_return": daily_return,
         "intraday_high": intraday_high,
         "intraday_low": intraday_low,

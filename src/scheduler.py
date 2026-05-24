@@ -271,20 +271,26 @@ def _send_jongbae_open_exit_recommendation(
     settings: Settings,
     dispatcher: Dispatcher,
 ) -> None:
-    """09:01 보유 종목 시초가 청산 권고 (round 32, P3-2 wiring).
+    """09:00~09:30 보유 종목 라이브 청산 지원 (2026-05-25 강화).
 
-    `data/state/holdings.json` 의 보유 종목 각각에 대해 KIS 현재가 +
-    `evaluate_jongbae_open_exit` 호출 → 권고 메시지 발송. **자동 주문 X**.
+    `data/state/holdings.json` 보유 종목 각각에 KIS 현재가/시가/일중고가 +
+    `evaluate_overnight_exit_live` → 권고 + 고점대비 되돌림 표시. **자동 주문 X**.
+
+    시초 1회가 아니라 아침 다회 체크인 (09:00/10/20/30) — 청산 타이밍(~9%p)이
+    선별(+0.7%)보다 13배 큰 변수라 fade 를 잡으려면 시초 이후도 봐야 함
+    (backtest_recent_kelly / memory project-eod-factor-edge). 검증 임계값(≤1/1-6/≥6%)
+    을 '현재가' 에 재평가 — 새 자작 임계값 X.
     """
     from src.data.intraday import fetch_quote
     from src.scalping.exit.triggers import load_holdings
-    from src.overnight.exit import evaluate_jongbae_open_exit
+    from src.overnight.exit import evaluate_overnight_exit_live, format_overnight_exit_line
 
     holdings = load_holdings()
     if not holdings:
         return
 
-    lines = ["🌅 [종배 시초가 청산 권고]"]
+    hhmm = now_kst().strftime("%H:%M")
+    lines = [f"🌅 [종배 청산 지원 — {hhmm}]"]
     any_decision = False
     for code in holdings:
         q = fetch_quote(client, code)
@@ -297,25 +303,92 @@ def _send_jongbae_open_exit_recommendation(
             lines.append(f"• {code} — 시세 데이터 부족")
             continue
         try:
-            decision = evaluate_jongbae_open_exit(
-                open_price=float(price), prev_close=float(prev),
+            ctx = evaluate_overnight_exit_live(
+                prev_close=float(prev),
+                current=float(price),
+                intraday_high=float(q.get("intraday_high") or price),
+                open_price=float(q["open"]) if q.get("open") else None,
             )
         except ValueError:
             lines.append(f"• {code} — 시세 유효성 실패")
             continue
         any_decision = True
         name = q.get("name") or code
-        emoji = "🟢" if decision.action == "sell_partial" else "🟡"
-        lines.append(
-            f"{emoji} {name}({code}) — {decision.reason} "
-            f"[매도 비중 {int(decision.partial_ratio * 100)}%]"
-        )
+        lines.append(format_overnight_exit_line(name, code, ctx))
 
     if not any_decision:
         return  # 보유 종목 있어도 시세 모두 실패면 푸시 X
     lines.append("")
-    lines.append("_자동 주문 X — 사용자가 HTS 에서 직접 청산_")
+    lines.append("_자동 주문 X — 사용자가 HTS 에서 직접 청산. 매도 시점은 본인 판단._")
     dispatcher.send_jongbae_open_exit("\n".join(lines))
+
+
+@_business_day_only("종배 막판 진입 점검")
+def _send_eod_entry_monitor(
+    client: KISClient,
+    settings: Settings,
+    dispatcher: Dispatcher,
+) -> None:
+    """15:00/10/20 막판 진입 점검 — 14:50 top3 후보의 막판 신호 표시 (2026-05-25).
+
+    영상 통설: 장 막판(3시~3시30분) 흔들림 확인 후 진입. 무너지면 매수 보류,
+    매수세 역전/버팀 확인 시 진입. **자동 주문 X — 표시만.** 새 매수 hard rule 없이
+    검증 단타 신호(체결강도 VP / 점상한가 / 고점대비 되돌림) 정보 제공. 종배 채널.
+    """
+    from src.data.intraday import fetch_quote
+    from src.data.intraday_realtime import fetch_ccnl_strength
+    from src.overnight.eod_entry import build_eod_entry_context, format_eod_entry_line
+    from src.report.decision import load_decision_candidates
+
+    today = now_kst().date()
+    cands = load_decision_candidates(settings.data_dir, today)
+    accepted = [c for c in (cands or []) if c.get("priority") != "excluded"]
+    accepted = sorted(accepted, key=lambda c: (c.get("rank") or 9999))[:5]
+    if not accepted:
+        return
+
+    hhmm = now_kst().strftime("%H:%M")
+    lines = [
+        f"🛎 [종배 막판 진입 점검 — {hhmm}]",
+        "_14:50 후보 막판 흔들림. 무너지면 매수 보류 / 매수세·버팀 확인 시 진입. 자동주문 X._",
+        "",
+    ]
+    any_ok = False
+    for c in accepted:
+        code = str(c.get("code", "")).zfill(6)
+        q = fetch_quote(client, code)
+        if q is None:
+            continue
+        price = q.get("price", 0)
+        prev = q.get("prev_close", 0)
+        if not price or not prev or price <= 0 or prev <= 0:
+            continue
+        vp = None
+        try:
+            cs = fetch_ccnl_strength(client, code)
+            if cs:
+                v = cs.get("ccnl_strength")
+                vp = float(v) if (v is not None and v == v) else None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[막판점검] {code} 체결강도 실패: {e}")
+        try:
+            ctx = build_eod_entry_context(
+                prev_close=float(prev),
+                price=float(price),
+                intraday_high=float(q.get("intraday_high") or price),
+                is_limit_up=bool(q.get("is_limit_up")),
+                vp=vp,
+            )
+        except ValueError:
+            continue
+        any_ok = True
+        lines.append(format_eod_entry_line(
+            q.get("name") or code, code, ctx, is_top3=bool(c.get("is_top3")),
+        ))
+
+    if not any_ok:
+        return
+    dispatcher.send_eod_entry("\n".join(lines))
 
 
 @_business_day_only("모닝")
@@ -359,6 +432,34 @@ def _compact_tick_logs_today() -> None:
         compact_trades(today, delete_raw=False)
     except Exception as e:  # noqa: BLE001
         logger.error(f"[tick_log_compact] 사후 변환 실패: {e}")
+
+
+def _record_eod_forward_outcomes(settings: Settings) -> None:
+    """종배 forward 로깅 — 직전 영업일 14:50 후보 + 오늘 실현 갭 join (2026-05-25).
+
+    16:40 (일봉 incremental 16:30 + 사후 후) 실행. 직전 영업일(D) 결정의 outcome 은
+    오늘(D+1) 갭이므로 D 저장 후보 + 현재 daily_ohlcv 로 outcome 기록. 수급/체결강도
+    등 backtest 불가 신호의 미래 factor_edge 분석 + 청산 envelope 실측 누적.
+    """
+    from datetime import timedelta
+
+    from src.overnight.forward_log import append_outcomes
+
+    if not is_business_day(now_kst().date()):
+        return
+    daily = read_daily_ohlcv(settings.data_dir)
+    if daily is None or daily.empty:
+        logger.warning("[forward] 일봉 부재 — outcome 기록 skip")
+        return
+    prev = now_kst().date() - timedelta(days=1)
+    for _ in range(7):
+        if is_business_day(prev):
+            break
+        prev -= timedelta(days=1)
+    try:
+        append_outcomes(prev, daily, settings.data_dir)
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[forward] outcome 기록 실패: {e}")
 
 
 def _update_index_daily_job(settings: Settings, dispatcher: Dispatcher,
@@ -650,6 +751,9 @@ def _send_decision_report(
             f"[결정] Eod.Pick v2 (c)(d) post-filter: {before}→{len(accepted_dicts)}종목"
         )
 
+    from src.overnight.nxt import is_nxt_tradable, load_nxt_tradable
+    _nxt_set = load_nxt_tradable(settings.data_dir)
+
     candidates_with_stats: list[dict[str, Any]] = []
     for row in accepted_dicts:
         code = str(row.get("code", "")).zfill(6)
@@ -694,11 +798,13 @@ def _send_decision_report(
         # Eod.Pick v2 보조 지표 — 1년 ret≥10% 횟수 + 갭상 비율 (round 41 ④)
         # 사용자 정정 2026-05-21: 4 기간 × 3 임계 = 12 케이스 매트릭스 추가
         from src.overnight.gap_stats import (
+            candle_count_aux,
             historical_aux_matrix,
             historical_ret10_gap_stats,
         )
         ret10_aux = historical_ret10_gap_stats(daily_ohlcv, code, today)
         aux_matrix = historical_aux_matrix(daily_ohlcv, code, today)
+        candle_aux = candle_count_aux(daily_ohlcv, code, today)  # 표시 전용 보조
 
         c: dict[str, Any] = dict(row)
         c["themes"] = themes
@@ -707,6 +813,8 @@ def _send_decision_report(
         c["sizing_stats"] = sizing_stats
         c["historical_aux"] = ret10_aux
         c["historical_aux_matrix"] = aux_matrix  # 12 cells: (period, ret_th)
+        c["candle_aux"] = candle_aux  # 양봉/장대양봉 카운트 (표시 전용)
+        c["nxt_tradable"] = is_nxt_tradable(code, _nxt_set)  # NXT 가능/불가/추정
         c["sample_sufficient"] = sample_sufficient
         candidates_with_stats.append(c)
 
@@ -717,6 +825,38 @@ def _send_decision_report(
             "sharpe": sizing_results["sharpe"][i],
             "equal":  sizing_results["equal"][i],
         }
+
+    # Eod.Sizing v2 (2026-05-25): 거래대금순위 버킷 rolling Kelly — 검증된 사이징.
+    # per-stock historical(끼)/신고가/시총은 노이즈(factor_edge backtest) → 거래대금순위로
+    # 조건부화. 절대 비중(계좌 대비, 현금=1-Σ) + top3 내 상대 강약.
+    # (memory project-eod-factor-edge / scripts/backtest_factor_edge.py)
+    try:
+        from src.overnight.sizing_bucket import build_bucket_stats, compute_bucket_sizing
+        _master_df = read_stock_master(settings.data_dir)
+        _tradable = (
+            set(_master_df["code"].astype(str))
+            if _master_df is not None and not _master_df.empty
+            else set()
+        )
+        _bucket_stats = build_bucket_stats(daily_ohlcv, today, _tradable)
+        _bsize = compute_bucket_sizing(candidates_with_stats, _bucket_stats)
+        for i, c in enumerate(candidates_with_stats):
+            c.setdefault("sizing", {})
+            c["sizing"]["kelly_bucket"] = _bsize["kelly_abs"][i]
+            c["sizing"]["kelly_bucket_rel"] = _bsize["kelly_rel"][i]
+            c["sizing_bucket"] = _bsize["buckets"][i]
+        logger.info(
+            f"[결정] 버킷 사이징 — 투입 {_bsize['invested']*100:.0f}% / 현금 {_bsize['cash']*100:.0f}%"
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[결정] 버킷 사이징 실패 — 생략: {e}")
+
+    # 거래대금순위 정렬 + top3 플래그 (사용자 hold-3: 시초 동시매도 부담 → top3 만 매수).
+    # 검증: scripts/backtest_top3_selection.py (거래대금 top3 갭상 1년 55%/3개월 64%).
+    candidates_with_stats.sort(key=lambda c: (c.get("rank") or 9999))
+    for i, c in enumerate(candidates_with_stats):
+        c["rank_in_report"] = i + 1
+        c["is_top3"] = i < 3
 
     # 14:50 시그널 (호가/체결/투자자) — 표시만, Kelly에 반영 X (자작 가중합 금지)
     if client is not None:
@@ -1014,14 +1154,27 @@ def run() -> None:
         misfire_grace_time=600,
     )
 
-    # 09:01 종배 시초가 청산 권고 (round 32, P3-2 wiring)
-    # KRX 09:00 단일가 형성 직후 KIS 시세 안정화 1분 후. 보유 종목 없으면 no-op.
+    # 09:01/10/20/30 종배 라이브 청산 지원 (2026-05-25 강화 — 다회 체크인)
+    # 청산 타이밍(~9%p)이 선별(+0.7%)보다 13배 큰 변수라 시초 1회로는 fade 를 못 잡음.
+    # 검증 임계값(≤1/1-6/≥6%)을 현재가에 라이브 재평가 + 고점대비 되돌림 표시.
+    # 보유 종목 없으면 no-op. (NXT 프리장 08:00~ 청산 지원은 KIS NXT API 검증 후 v1.)
     scheduler.add_job(
         _send_jongbae_open_exit_recommendation,
-        trigger=CronTrigger(day_of_week="mon-fri", hour=9, minute=1),
+        trigger=CronTrigger(day_of_week="mon-fri", hour=9, minute="1,10,20,30"),
         args=[client, settings, dispatcher],
         id="jongbae_open_exit",
-        name="종배 시초 청산 권고",
+        name="종배 라이브 청산 지원",
+        misfire_grace_time=300,
+    )
+
+    # 15:00/10/20 종배 막판 진입 점검 (2026-05-25) — 14:50 top3 후보 막판 신호 표시.
+    # 영상 통설: 장 막판 흔들림 확인 후 진입. 무너지면 보류. 자동주문 X. 종배 채널.
+    scheduler.add_job(
+        _send_eod_entry_monitor,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=15, minute="0,10,20"),
+        args=[client, settings, dispatcher],
+        id="eod_entry_monitor",
+        name="종배 막판 진입 점검",
         misfire_grace_time=300,
     )
 
@@ -1080,6 +1233,17 @@ def run() -> None:
         trigger=CronTrigger(day_of_week="mon-fri", hour=16, minute=15),
         id="tick_log_compact",
         name="tick_log jsonl→parquet",
+        misfire_grace_time=3600,
+    )
+
+    # 16:40 종배 forward 로깅 — 직전 영업일 14:50 후보 + 오늘 실현 갭 join.
+    # 수급/체결강도(backtest 불가) 미래 factor_edge 분석 + 청산 envelope 누적.
+    scheduler.add_job(
+        _record_eod_forward_outcomes,
+        trigger=CronTrigger(day_of_week="mon-fri", hour=16, minute=40),
+        args=[settings],
+        id="eod_forward_log",
+        name="종배 forward 로깅",
         misfire_grace_time=3600,
     )
 
