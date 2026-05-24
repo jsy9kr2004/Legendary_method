@@ -6,7 +6,11 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from src.overnight.forward_log import append_outcomes, load_outcomes
+from src.overnight.forward_log import (
+    append_outcomes,
+    backfill_pending_outcomes,
+    load_outcomes,
+)
 from src.report.decision import save_decision_candidates
 
 
@@ -72,3 +76,29 @@ def test_no_next_day_bar_returns_none(tmp_path):
 def test_empty_inputs(tmp_path):
     assert append_outcomes(dt.date(2026, 5, 18), pd.DataFrame(), tmp_path) is None
     assert load_outcomes(tmp_path, dt.date(2026, 5, 18)) == []
+
+
+def test_backfill_self_heals_when_daily_catches_up(tmp_path):
+    # D1=5/18, D2=5/19 결정 저장
+    for d in (dt.date(2026, 5, 18), dt.date(2026, 5, 19)):
+        save_decision_candidates(
+            [{"code": "033100", "priority": "normal"}], tmp_path,
+            dt.datetime(d.year, d.month, d.day, 14, 50))
+
+    # 1차: 5/19 바까지만 있음 → D1(5/18)만 기록 가능 (D2 다음날 5/20 바 부재)
+    daily1 = pd.DataFrame([
+        {"code": "033100", "date": dt.date(2026, 5, 18), "open": 1, "high": 1, "low": 1, "close": 90000},
+        {"code": "033100", "date": dt.date(2026, 5, 19), "open": 93600, "high": 99000, "low": 88200, "close": 95000},
+    ])
+    rec1 = backfill_pending_outcomes(daily1, tmp_path)
+    assert rec1 == [dt.date(2026, 5, 18)]
+
+    # 2차: 5/20 바 추가 → D2(5/19) 기록, D1 은 이미 있어 skip
+    daily2 = pd.concat([daily1, pd.DataFrame([
+        {"code": "033100", "date": dt.date(2026, 5, 20), "open": 96000, "high": 97000, "low": 94000, "close": 95500},
+    ])], ignore_index=True)
+    rec2 = backfill_pending_outcomes(daily2, tmp_path)
+    assert rec2 == [dt.date(2026, 5, 19)]
+
+    # 3차: 더 기록할 것 없음
+    assert backfill_pending_outcomes(daily2, tmp_path) == []

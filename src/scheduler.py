@@ -441,9 +441,7 @@ def _record_eod_forward_outcomes(settings: Settings) -> None:
     오늘(D+1) 갭이므로 D 저장 후보 + 현재 daily_ohlcv 로 outcome 기록. 수급/체결강도
     등 backtest 불가 신호의 미래 factor_edge 분석 + 청산 envelope 실측 누적.
     """
-    from datetime import timedelta
-
-    from src.overnight.forward_log import append_outcomes
+    from src.overnight.forward_log import backfill_pending_outcomes
 
     if not is_business_day(now_kst().date()):
         return
@@ -451,13 +449,10 @@ def _record_eod_forward_outcomes(settings: Settings) -> None:
     if daily is None or daily.empty:
         logger.warning("[forward] 일봉 부재 — outcome 기록 skip")
         return
-    prev = now_kst().date() - timedelta(days=1)
-    for _ in range(7):
-        if is_business_day(prev):
-            break
-        prev -= timedelta(days=1)
+    # self-heal: 주식 일봉 incremental 이 데몬 cron 이 아니라(./go update/start) 16:40 에
+    # 오늘 바가 없을 수 있음 → 미기록 결정일을 모두 재시도. daily 갱신되면 다음 실행 기록.
     try:
-        append_outcomes(prev, daily, settings.data_dir)
+        backfill_pending_outcomes(daily, settings.data_dir)
     except Exception as e:  # noqa: BLE001
         logger.error(f"[forward] outcome 기록 실패: {e}")
 

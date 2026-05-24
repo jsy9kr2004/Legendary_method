@@ -114,6 +114,42 @@ def append_outcomes(
     return out
 
 
+def backfill_pending_outcomes(
+    daily_ohlcv: pd.DataFrame,
+    data_dir,
+    lookback_days: int = 15,
+) -> list[dt.date]:
+    """outcome 미기록 결정일을 일괄 처리 (self-heal).
+
+    주식 일봉 incremental 은 데몬 cron 이 아니라 `./go update`/`./go start` 로만 갱신됨.
+    16:40 cron 시점에 오늘 일봉이 아직 없으면 어제 결정의 outcome 을 못 구함 → 단일
+    prev-day 처리는 영구 누락 위험. 따라서 **최근 결정일 중 eod_forward 파일이 없는
+    것을 매 실행마다 모두 시도** — daily 가 나중에 갱신되면 다음 실행에서 자동 기록.
+
+    Returns:
+        이번에 새로 기록한 decision_date 리스트.
+    """
+    dec_dir = Path(data_dir) / "decisions"
+    if not dec_dir.exists() or daily_ohlcv is None or daily_ohlcv.empty:
+        return []
+    fwd_dir = Path(data_dir) / "eod_forward"
+    recorded: list[dt.date] = []
+    files = sorted(dec_dir.glob("*.json"))[-(lookback_days * 2):]  # 주말 포함 여유
+    for f in files:
+        try:
+            d = dt.date.fromisoformat(f.stem)
+        except ValueError:
+            continue
+        if (fwd_dir / f"{d.isoformat()}.json").exists():
+            continue  # 이미 기록됨
+        if append_outcomes(d, daily_ohlcv, data_dir) is not None:
+            recorded.append(d)
+    if recorded:
+        logger.info(f"[forward] backfill {len(recorded)}일 기록: "
+                    f"{[d.isoformat() for d in recorded]}")
+    return recorded
+
+
 def load_outcomes(data_dir, decision_date: dt.date) -> list[dict[str, Any]]:
     """기록된 eod_forward outcome 로드 (없으면 빈 리스트)."""
     p = Path(data_dir) / "eod_forward" / f"{decision_date.isoformat()}.json"
