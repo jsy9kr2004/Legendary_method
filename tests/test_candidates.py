@@ -7,6 +7,8 @@ import pandas as pd
 import pytest
 
 from src.overnight.candidates import (
+    MAX_DAILY_RETURN,
+    NXT_MAX_DAILY_RETURN,
     PRIORITY_EXCLUDED,
     PRIORITY_HIGH_PULL,
     PRIORITY_LIMIT_UP,
@@ -54,17 +56,31 @@ def test_classify_normal_between_5_and_20():
     assert p == PRIORITY_NORMAL
 
 
-def test_classify_normal_at_lower_bound_5pct():
-    """Eod.Pick v2 (e) 하한 5% 경계 — +6% 도 NORMAL (round 41 후속 2026-05-19)."""
+def test_classify_normal_small_positive_ret():
+    """작은 양봉(+6%)도 NORMAL — 하한이 0 초과라 통과."""
     p, _ = classify_priority(_row(daily_return=6.0, intraday_high_pct=7.0))
     assert p == PRIORITY_NORMAL
 
 
-def test_classify_excluded_below_5():
-    """+5% 미만은 Eod.Pick v2 (e) 하한 컷 (round 41 후속: 10→5)."""
-    p, reason = classify_priority(_row(daily_return=4.0, intraday_high_pct=30.0))
-    assert p == PRIORITY_EXCLUDED
-    assert "5" in reason
+def test_classify_normal_below_5_after_floor_0():
+    """round 42: 하한 5→0. 예전엔 컷되던 +4% 도 이제 NORMAL (ret>0 초과면 통과)."""
+    p, _ = classify_priority(_row(daily_return=4.0, intraday_high_pct=30.0))
+    assert p == PRIORITY_NORMAL
+
+
+def test_classify_excluded_at_zero_and_negative():
+    """round 42: 보합(0%)/하락 마감은 하한 컷 (ret>0 초과만 채택)."""
+    for ret in (0.0, -1.5):
+        p, reason = classify_priority(_row(daily_return=ret, intraday_high_pct=10.0))
+        assert p == PRIORITY_EXCLUDED
+        assert "보합/하락" in reason
+
+
+def test_classify_relaxed_max_for_nxt():
+    """round 42: NXT 가능 시 effective_max=29.5 → +28.5% 통과 (비-NXT 면 27% 컷)."""
+    row = _row(daily_return=28.5, intraday_high_pct=29.0)
+    assert classify_priority(row, effective_max=NXT_MAX_DAILY_RETURN)[0] != PRIORITY_EXCLUDED
+    assert classify_priority(row, effective_max=MAX_DAILY_RETURN)[0] == PRIORITY_EXCLUDED
 
 
 def test_classify_excluded_above_27_stuck_at_28():
@@ -162,6 +178,40 @@ def test_extract_candidates_no_theme_filter_r4v2():
     assert len(out_empty) == 2
     # accepted 는 +20% A 만 (B 는 상한 컷)
     assert set(accepted_candidates(out_none)["code"]) == {"000001"}
+
+
+def test_extract_candidates_nxt_relaxes_cap():
+    """round 42: +28.5% 종목은 NXT 가능/추정 시 채택(29.5 상한), 불가/미전달 시 27% 컷."""
+    snap = _snapshot_full([
+        {"rank": 1, "code": "000001", "daily_return": 28.5, "is_limit_up": False,
+         "prev_close": 1000, "intraday_high": 1295},
+    ])
+    # NXT 가능 (set 포함) → 채택
+    out_ok = extract_candidates(snap, leading_theme_codes=None, nxt_set={"000001"})
+    assert set(accepted_candidates(out_ok)["code"]) == {"000001"}
+    # NXT 불가 (빈 set → False) → 27% 컷 제외
+    out_no = extract_candidates(snap, leading_theme_codes=None, nxt_set=set())
+    assert accepted_candidates(out_no).empty
+    # 목록 미적재 (None → 추정 가능) → 채택
+    out_est = extract_candidates(snap, leading_theme_codes=None, nxt_set=None)
+    assert set(accepted_candidates(out_est)["code"]) == {"000001"}
+    # nxt_set 미전달 (backward-compat) → 27% 컷 제외
+    out_default = extract_candidates(snap, leading_theme_codes=None)
+    assert accepted_candidates(out_default).empty
+
+
+def test_extract_candidates_excludes_flat_and_down_close():
+    """round 42: 보합(0%)/하락 마감은 후보에서 제외 (하한 0 초과)."""
+    snap = _snapshot_full([
+        {"rank": 1, "code": "000001", "daily_return": 0.0,
+         "prev_close": 1000, "intraday_high": 1010},
+        {"rank": 2, "code": "000002", "daily_return": -3.0,
+         "prev_close": 1000, "intraday_high": 1005},
+        {"rank": 3, "code": "000003", "daily_return": 2.0,
+         "prev_close": 1000, "intraday_high": 1030},
+    ])
+    out = extract_candidates(snap, leading_theme_codes=None)
+    assert set(accepted_candidates(out)["code"]) == {"000003"}
 
 
 def test_extract_candidates_theme_filter_backward_compat():

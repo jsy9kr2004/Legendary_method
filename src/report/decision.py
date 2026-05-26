@@ -129,12 +129,12 @@ def _candidate_block(c: dict[str, Any]) -> str:
     layers = c.get("layers", {})
     sizing_layer = c.get("sizing_layer", "")
 
-    # Eod.Pick v2 (e) round 41 — normal 범위 10~27% (이전 20%↑). limit_up 은 27% 상한
-    # 컷에 자동 제외되므로 더는 후보로 안 나오나 backward-compat 위해 라벨 유지.
+    # Eod.Pick (e) round 42 — normal 범위 0%< ret ≤상한(NXT 29.5/비-NXT 27).
+    # limit_up 은 NXT 불가 시 상한 컷 자동 제외 (backward-compat 라벨 유지).
     priority_label = {
         "limit_up": "🔴 상한가",
         "high_pull": "🟡 고점풀백",
-        "normal": "🟢 +10~27%",
+        "normal": "🟢 양봉",
     }.get(priority, "")
 
     # 거래대금순위 + top3 플래그 (2026-05-25 hold-3). 후보 전체를 순위대로 나열,
@@ -605,7 +605,7 @@ def build_decision_report(
     lines += [
         "",
         "• 본 레포트는 14:50 기준. 종가 직전 상황 변동 가능",
-        "• Eod.Pick v2 hard cut: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 + (e) 10≤ret≤27%",
+        "• Eod.Pick hard cut: (a) 거래대금 50위 + (b) 일봉상승 + (c) 종가 고가-10% 이내 + (e) 0<ret≤상한(NXT 29.5/비-NXT 27)",
         "• Eod.Pick v2 보조 지표 (표시만): (d) 52주 신고가 + (f) Layer 표본≥5 + 종목별 ret 빈도 매트릭스",
         "• NXT 청산 가능 여부: v1 예정",
     ]

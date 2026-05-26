@@ -710,7 +710,12 @@ def _send_decision_report(
     # Eod.Pick v2 (a) round 41 — 결정 후보 universe 는 주도섹터 우회, 전체 snapshot (top 50)
     # 사용. 주도테마는 레포트 헤더의 [최종 주도테마] 섹션 표시용으로만 식별.
     # docs/scalping-strategy.md line 206 참조.
-    candidates_df = extract_candidates(snapshot_df, leading_theme_codes=None)
+    # round 42 — 상한 NXT 조건부(29.5/27) 적용 위해 nxt_set 주입. 아래 카드 표시와 동일 set 재사용.
+    from src.overnight.nxt import is_nxt_tradable, load_nxt_tradable
+    _nxt_set = load_nxt_tradable(settings.data_dir)
+    candidates_df = extract_candidates(
+        snapshot_df, leading_theme_codes=None, nxt_set=_nxt_set
+    )
     accepted = accepted_candidates(candidates_df)
 
     # 진단 로깅 (2026-05-19 round 41 후속) — 사용자 보고: "후보가 top 50 밖 종목"
@@ -762,8 +767,7 @@ def _send_decision_report(
             f"[결정] Eod.Pick v2 (c)(d) post-filter: {before}→{len(accepted_dicts)}종목"
         )
 
-    from src.overnight.nxt import is_nxt_tradable, load_nxt_tradable
-    _nxt_set = load_nxt_tradable(settings.data_dir)
+    # _nxt_set / is_nxt_tradable 은 후보 추출 단계(위)에서 이미 로드됨 — 동일 set 재사용.
 
     candidates_with_stats: list[dict[str, Any]] = []
     for row in accepted_dicts:

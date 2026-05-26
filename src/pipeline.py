@@ -114,9 +114,14 @@ def run_pipeline(
     if not leading_themes:
         logger.info("주도테마 없음 — 후보 없이 레포트 생성")
 
-    # ── 3. 종배 후보 추출 (Eod.Pick v2 round 41) ────────────────────────────────
-    # leading_codes 우회 — 거래대금 50위 전체 universe + 10~27% 컷
-    candidates_df = extract_candidates(snapshot_df, leading_theme_codes=None)
+    # ── 3. 종배 후보 추출 (Eod.Pick round 42) ────────────────────────────────
+    # leading_codes 우회 — 거래대금 50위 전체 universe + 0%< ret ≤상한 컷.
+    # 상한은 NXT 가능/추정 29.5% / 불가 27% (nxt_set 주입). round 42.
+    from src.overnight.nxt import load_nxt_tradable
+    _nxt_set = load_nxt_tradable(data_dir)
+    candidates_df = extract_candidates(
+        snapshot_df, leading_theme_codes=None, nxt_set=_nxt_set
+    )
     accepted = accepted_candidates(candidates_df)
 
     # Eod.Pick v2 (c) 종가 고가-10% 이내 + (d) 52주 신고가 post-filter.
@@ -197,8 +202,8 @@ def run_pipeline(
         c["historical_aux"] = ret10_aux
         c["historical_aux_matrix"] = aux_matrix
         c["candle_aux"] = candle_count_aux(daily_ohlcv, code, target_date)
-        from src.overnight.nxt import is_nxt_tradable, load_nxt_tradable
-        c["nxt_tradable"] = is_nxt_tradable(code, load_nxt_tradable(data_dir))
+        from src.overnight.nxt import is_nxt_tradable
+        c["nxt_tradable"] = is_nxt_tradable(code, _nxt_set)  # 후보 추출과 동일 set 재사용
         c["sample_sufficient"] = sample_sufficient
         candidates_with_stats.append(c)
 

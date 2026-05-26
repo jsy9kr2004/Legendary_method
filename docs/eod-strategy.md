@@ -151,9 +151,9 @@
 
 **Hard cut (탈락 조건, 모두 만족):**
 - (a) **거래대금 50위** (단일 종목 — `is_tradable_for_jongbae` 통과, ETF/ETN/리츠/스팩/펀드/우선주 제외)
-- (b) **일봉 상승** (`ret > 0`) — (e) 의 strict subset 이라 별도 코드 X
+- (b) **일봉 상승** (`ret > 0`) — (e) 와 동일 (round 42 하한 0 초과로 일치)
 - (c) **종가 고가 대비 -10% 이내** (`(high - close) / high ≤ 0.10`) — 매물 소화 후 강세 마감
-- (e) **`5% ≤ ret ≤ 27%`** — 하한 5% (round 41 후속 2026-05-19: 10→5, 사용자 정정 — 후보 폭 확보), 상한 27% 는 ret≥29% 점상한가 14:50 매수 불가 회피 (안전 마진 3%)
+- (e) **`0% < ret ≤ 상한`** — 하한 0 초과 (보합/하락 제외, round 42 2026-05-25: 5→0 — 레전드 픽/1년 backtest 검증, 0~5% 구간 56% 갭상 양의 EV + 통설상 선정축은 수급/시장이지 일봉 % 아님). **상한 = NXT 가능/추정 29.5% / 비-NXT 27%** (round 42: NXT 애프터마켓 ~20:00 매수 가능 → 점상한가도 종배 가능. 기존 27% 단일컷이 NXT 표시보다 먼저 상한가를 제외하던 모순 해소). 비-NXT 27% 는 14:50 KRX 점상한가 매수 불가 회피 (안전마진 3%)
 
 **Soft 보조 지표 (표시만, 탈락 X — 2026-05-19 사용자 정정):**
 - (d) **52주 신고가** — 일중 고가가 직전 250 거래일 종가 최대치 갱신. 카드에 ✓/✗/— 로 표시만, 후보 탈락 X.
@@ -165,9 +165,9 @@
 - **종목별 1년 historical**: 그 종목의 ret≥10% 횟수 + 그중 다음날 갭상 횟수 + 비율. 카드에 한 줄 표기 — `📊 1년 ret≥10: N회 / 갭상 K회 (X%)`. 5일 backtest 결과 50% 이상 컷을 룰에 박으면 갭상 확률이 오히려 약간 떨어져서(58.8 → 55.6%) **컷으로는 사용 X**. 다만 단골 종배 종목 (대한광통신 78%, 빛과전자 80%, 한화갤러리아 100% 등) 식별엔 유용.
 
 **진입 우선순위 (v0 의 1~2순위 그대로):**
-1. **1순위 (`limit_up`):** 상한가 도달 — 도달 순간 매수 (ret≤27 cap 이라 상한가 직전까지)
-2. **2순위 (`high_pull`):** 일중 +28%↑ → +20~25% 정리 (ret≤27 cap 안에서)
-3. **3순위 (`normal`):** ret ≥10% + (a)~(e) 모든 조건 통과
+1. **1순위 (`limit_up`):** 상한가 도달 — 도달 순간 매수 (NXT 가능 시 ret≤29.5, 비-NXT ret≤27)
+2. **2순위 (`high_pull`):** 일중 +28%↑ → +20~25% 정리 (상한 cap 안에서)
+3. **3순위 (`normal`):** ret > 0 + (a)~(e) 모든 조건 통과
 
 **제외 (애매한 케이스):**
 - +28% 찍고 안 빠지고 그대로 마감 (상한가 못 갔는데 자리 잡힘)
@@ -399,6 +399,7 @@ cron). 예: 시초 +7%(분할 권고)였다가 현재 +2%로 fade → 현재가 
 
 | Round | 잘못 알았던 것 | 정정 |
 |---|---|---|
+| 42 (2026-05-25, 레전드 픽 정합) | 사용자(Zeta) "레전드 종배 픽(image/jb.png)이랑 내 후보가 안 맞는 것 같다". 분석(`scripts/analyze_legend_picks.py`): 레전드 픽 64개 중 시스템 Eod.Pick v2 통과 50%뿐. 일봉상승률 중앙값 +7.2% (39%가 +5% 미만, 10개는 하락마감)인데도 레전드는 픽 — 종배 선정축이 일봉 % 가 아님(통설=수급/미야간선물). **결정타:** 시스템이 탈락시킨 픽이 오히려 더 갭상(+3.16% vs 통과 +1.71%), 0~5% 구간 갭상 80%. 1년 top50 backtest(`scripts/backtest_eod_floor.py`)도 0~5% 버킷 56%/+0.41% 양의 EV. 또 사용자 "ret 0 초과로 푼 것 같은데?" → 실제로는 **단타** LEADER_MIN_DAILY_RETURN_PCT 만 0, **종배** MIN_DAILY_RETURN 은 5 그대로(단타/종배 혼동). NXT 표시도 27% 상한이 먼저 상한가를 제외해 무력화되던 모순. | round 42 (사용자 지시, 튜닝 리추얼 통설+backtest 통과): ①**MIN_DAILY_RETURN 5→0** (ret>0 초과, 보합/하락 제외 — 단타와 일관). ②**상한 NXT 조건부** — `extract_candidates(nxt_set=...)` 행별 effective_max: NXT 가능(True)/추정(None=목록미적재) 29.5% / 불가(False) 27%. ③pipeline·scheduler 가 nxt_set 을 후보추출에 주입(카드 표시와 동일 set 재사용). ④decision 레포트 라벨/푸터 갱신. test +5 (NXT 상한·보합컷), 전체 pass. **dry-run(demo) 통과, 운영 1일 검증 후 확정.** NXT 정밀화는 nextrade.co.kr 크롤러로 `data/meta/nxt_tradable.txt` 적재 필요 (현재 전 종목 '추정 가능'으로 29.5 적용). |
 | 2026-05-25 (종배 빌드 batch) | 종배 동료 추가 시 그룹 운영 / 양봉·NXT 표시 / 수급·체결강도 누적 / 막판 진입 점검 요청 ("쭉 이어서 다 해줘"). | ①**텔레그램 종배 그룹 라우팅** (`TELEGRAM_EOD_CHAT_ID` — 종배 레포트만 그룹, 단타 M6 카드/봇명령/에러알림은 개인 DM). ②**양봉/장대양봉 카운트 표시** (`gap_stats.candle_count_aux`, 표시 전용 — factor_edge 상 갭 변별력 없음). ③**forward 로깅** (`src/overnight/forward_log.py`: 14:50 후보 벡터 + 다음날 실현 갭 join, 16:40 cron — 수급/체결강도 등 backtest 불가 신호의 미래 factor_edge + 청산 envelope 누적). ④**막판 진입 점검** (`src/overnight/eod_entry.py`: 15:00/10/20 cron, 14:50 top3 대상 VP/점상한가/고점대비 표시 — 새 매수 hard rule X, 표시만). ⑤**NXT 가능/불가/추정 표시** (`src/overnight/nxt.py`: nextrade.co.kr 목록 `data/meta/nxt_tradable.txt` pluggable; 크롤러·KIS NXT 시세/주문 API 는 v1). `fetch_quote` 에 시가(open) 추가. test +24, 1004 pass. |
 | 2026-05-25 (Eod.Exit v2 라이브) | 청산이 시초 1회(open vs prev_close) 판정뿐 — fade 를 못 잡음. | 매도 시점 envelope(~9%p)이 선별(+0.7%)보다 13배 큼(`backtest_recent_kelly.py`). 청산 타이밍은 분봉 부재로 backtest 불가 → 새 임계값 X, **검증된 ≤1/1-6/≥6% 룰을 '현재가'에 라이브 재평가 + 고점대비 되돌림 표시**. `evaluate_overnight_exit_live` / `format_overnight_exit_line` 신설, 아침 다회 체크인(09:01/10/20/30). fetch_quote 에 시가(open) 추가. 시초 +7%→현재 +2% fade 시 '전량 익절' 자동 전환. 자동 주문 X. test 7 신규, 980 pass. NXT 프리장(08:00~) 청산 분산은 KIS NXT API 검증 후 v1. |
 | 2026-05-25 (Eod.Sizing v2 + top3) | (보강) 사이징이 per-종목 historical(끼) 기반인데, 종목별 끼·신고가·시총·종가위치·거래량을 더 보면 비중을 더 가를 수 있지 않냐는 사용자 질문. | factor_edge backtest (250일 + 3개월, `scripts/backtest_factor_edge.py`/`factor_edge2.py`): 위 팩터 전부 노이즈(창 사이 뒤집힘, 다중비교), **거래대금순위만 robust 변별**(단조, 3개월 더 강함). ①사이징을 **거래대금순위 버킷 rolling Kelly** (`src/overnight/sizing_bucket.py`) 로 전환, per-종목 3방식은 참고 강등. ②후보 **거래대금순위 정렬 + top3 플래그** (사용자 hold-3 = 시초 동시매도 부담, `backtest_top3_selection.py`: top3 갭상 1년 55%/3개월 64%). ③top3 종목별 비중(절대+상대)+현금버퍼 표시. ④**청산 타이밍 envelope(~9%p) ≫ 선별(+0.7%) = 13배** (`backtest_recent_kelly.py`) — 다음 빌드는 시초/NXT 청산 지원. scheduler+pipeline 양쪽 wiring, `test_sizing_bucket.py` 6 신규, 973 pass. |
