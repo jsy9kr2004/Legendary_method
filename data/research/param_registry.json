@@ -1,0 +1,114 @@
+{
+  "live": "baseline_current",
+  "history": [
+    {
+      "run_at": "2026-05-25T13:20:26.963460+09:00",
+      "status": "ok",
+      "n_days": 3,
+      "days": [
+        "2026-05-20",
+        "2026-05-21",
+        "2026-05-22"
+      ],
+      "walk_forward": {
+        "oos_days": 2,
+        "sel_trades": 19,
+        "sel_net": -0.742,
+        "baseline_net": -0.205,
+        "folds": [
+          {
+            "train_days": [
+              "2026-05-20"
+            ],
+            "test_day": "2026-05-21",
+            "chosen": "breakout_gated_v5",
+            "test_net": 0.042,
+            "test_n": 8,
+            "baseline_net": -0.114,
+            "baseline_n": 72
+          },
+          {
+            "train_days": [
+              "2026-05-20",
+              "2026-05-21"
+            ],
+            "test_day": "2026-05-22",
+            "chosen": "breakout_gated_v5",
+            "test_net": -1.312,
+            "test_n": 11,
+            "baseline_net": -0.283,
+            "baseline_n": 85
+          }
+        ]
+      },
+      "verdict": {
+        "adopt": false,
+        "reasons": [
+          "OOS 거래일 부족 (2<10)",
+          "OOS 거래 부족 (19<30)",
+          "OOS net 음수 (-0.74% — 비용 못 넘음)"
+        ]
+      },
+      "candidates": [
+        "baseline_current",
+        "breakout_gated_v5",
+        "pullback_gated_v5"
+      ]
+    },
+    {
+      "run_at": "2026-05-25T13:41:25.718696+09:00",
+      "status": "ok",
+      "n_days": 3,
+      "days": [
+        "2026-05-20",
+        "2026-05-21",
+        "2026-05-22"
+      ],
+      "walk_forward": {
+        "oos_days": 2,
+        "sel_trades": 19,
+        "sel_net": -0.742,
+        "baseline_net": -0.205,
+        "folds": [
+          {
+            "train_days": [
+              "2026-05-20"
+            ],
+            "test_day": "2026-05-21",
+            "chosen": "breakout_regime_v6",
+            "test_net": 0.042,
+            "test_n": 8,
+            "baseline_net": -0.114,
+            "baseline_n": 72
+          },
+          {
+            "train_days": [
+              "2026-05-20",
+              "2026-05-21"
+            ],
+            "test_day": "2026-05-22",
+            "chosen": "breakout_gated_v5",
+            "test_net": -1.312,
+            "test_n": 11,
+            "baseline_net": -0.283,
+            "baseline_n": 85
+          }
+        ]
+      },
+      "verdict": {
+        "adopt": false,
+        "reasons": [
+          "OOS 거래일 부족 (2<10)",
+          "OOS 거래 부족 (19<30)",
+          "OOS net 음수 (-0.74% — 비용 못 넘음)"
+        ]
+      },
+      "candidates": [
+        "baseline_current",
+        "breakout_gated_v5",
+        "pullback_gated_v5",
+        "breakout_regime_v6"
+      ]
+    }
+  ]
+}
