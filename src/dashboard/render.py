@@ -8,6 +8,7 @@ Pure 함수 — fetch 결과 dict 받아 마크다운 텍스트 반환.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any
 
@@ -262,6 +263,22 @@ def render_monitor_message(
     ]
     if monitored.buy_reasons:
         lines.append("사유: " + " / ".join(monitored.buy_reasons[:3]))
+
+    # 매매법 라벨 (P1-4) — opt-in (MONITOR_METHOD_LABEL=1). 미검증 = 렌즈/경고용.
+    # 기본 OFF 라 데몬 기본 표시 무변. none 은 노이즈라 표시 X.
+    if os.getenv("MONITOR_METHOD_LABEL", "0") == "1":
+        _setup = getattr(monitored, "setup_label", None)
+        if getattr(monitored, "setup_chase_warning", False):
+            lines.append("🎯 매매법: ⚠ 추격 구간 — 회피")
+        elif _setup == "breakout":
+            lines.append(f"🎯 매매법: 돌파 ({getattr(monitored, 'setup_score_breakout', 0) or 0:.1f}) — 미검증")
+        elif _setup == "pullback":
+            lines.append(f"🎯 매매법: 눌림 ({getattr(monitored, 'setup_score_pullback', 0) or 0:.1f}) — 미검증")
+        _bf = getattr(monitored, "market_breadth_up_frac", None)
+        if _bf is not None:
+            _n5 = getattr(monitored, "market_n_up5", None) or 0
+            _regime = "🟢강세" if _bf >= 0.6 else ("🟡중립" if _bf >= 0.4 else "🔴약세")
+            lines.append(f"📊 시장 폭: {_bf * 100:.0f}% 상승 / +5%↑ {_n5}종목 {_regime}")
 
     # a1 카드일 때 TRANSITION/GRACE 부상 후보 표시 (round 19 — 카드 통합)
     if transition_info is not None:

@@ -571,3 +571,41 @@ def test_render_omits_turnover_rank_when_missing():
     )
     assert "회전율: +0.10%" in msg
     assert "(위)" not in msg, f"빈 rank 인데 (위) 출력됨: {msg}"
+
+def test_method_label_opt_in(monkeypatch):
+    """P1-4: MONITOR_METHOD_LABEL=1 일 때만 매매법 라벨 표시 (기본 OFF)."""
+    s = _stock()
+    s.setup_label = "pullback"
+    s.setup_score_pullback = 8.5
+    snap = {"price": 91300, "daily_return": 12.0}
+    kw = dict(accel_ratio=2.0, recent_bar_value=5_000_000_000, ccnl=None,
+              asking=None, investor=None, sparkline="", now=datetime(2026, 5, 25, 9, 32, 0))
+    monkeypatch.delenv("MONITOR_METHOD_LABEL", raising=False)
+    assert "매매법" not in render_monitor_message(s, snap, **kw)   # 기본 OFF
+    monkeypatch.setenv("MONITOR_METHOD_LABEL", "1")
+    assert "눌림" in render_monitor_message(s, snap, **kw)         # ON → 표시
+
+
+def test_method_label_chase_warning(monkeypatch):
+    s = _stock()
+    s.setup_label = "chase"
+    s.setup_chase_warning = True
+    snap = {"price": 91300, "daily_return": 22.0}
+    monkeypatch.setenv("MONITOR_METHOD_LABEL", "1")
+    msg = render_monitor_message(s, snap, accel_ratio=2.0, recent_bar_value=1, ccnl=None,
+                                 asking=None, investor=None, sparkline="",
+                                 now=datetime(2026, 5, 25, 9, 32, 0))
+    assert "추격" in msg
+
+def test_market_breadth_line(monkeypatch):
+    """P2-7: 플래그 ON 시 시장 폭 라인 표시 (강세/중립/약세)."""
+    s = _stock()
+    s.market_breadth_up_frac = 0.78
+    s.market_n_up5 = 42
+    snap = {"price": 91300, "daily_return": 12.0}
+    monkeypatch.setenv("MONITOR_METHOD_LABEL", "1")
+    msg = render_monitor_message(s, snap, accel_ratio=2.0, recent_bar_value=1, ccnl=None,
+                                 asking=None, investor=None, sparkline="",
+                                 now=datetime(2026, 5, 25, 9, 32, 0))
+    assert "시장 폭: 78%" in msg
+    assert "강세" in msg

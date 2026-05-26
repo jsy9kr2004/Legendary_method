@@ -127,6 +127,12 @@ class TickLogRow:
     buy_grade: str | None = None          # STRONG / WATCH / NEUTRAL / AVOID
     buy_reasons: list[str] = field(default_factory=list)
 
+    # ── 매매법 분류 (P1-4, docs §11.1) — 로깅 전용 dry-run. 카드 표시는 검증 후 ──
+    setup_label: str | None = None        # breakout / pullback / chase / none
+    setup_score_breakout: float | None = None
+    setup_score_pullback: float | None = None
+    setup_chase_warning: bool = False
+
     # ── Exit.Triggers 청산 트리거 발화 상태 ─────────────────────────────────────────
     # 감시 모드: C1~C4 만 유효 (C5 는 보유 모드만)
     # 보유 모드: A1~A5, B1~B3, C1~C5 모두 유효
@@ -386,6 +392,11 @@ def build_tick_log_row(
         buy_score=_float_safe(getattr(monitored, "buy_score", None)),
         buy_grade=getattr(monitored, "buy_grade", None),
         buy_reasons=list(getattr(monitored, "buy_reasons", []) or []),
+        # 매매법 분류 (P1-4) — worker 가 monitored 에 stash, buy_score 와 동일 패턴
+        setup_label=getattr(monitored, "setup_label", None),
+        setup_score_breakout=_float_safe(getattr(monitored, "setup_score_breakout", None)),
+        setup_score_pullback=_float_safe(getattr(monitored, "setup_score_pullback", None)),
+        setup_chase_warning=bool(getattr(monitored, "setup_chase_warning", False)),
         # Exit.Triggers 트리거
         trigger_a1_stop_price=bool(trigger_states.get("A1_stop_price", False)),
         trigger_a2_stop_bar_low=bool(trigger_states.get("A2_stop_bar_low", False)),

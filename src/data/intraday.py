@@ -333,6 +333,32 @@ def compute_turnover(trading_value: int, market_cap: int) -> float:
     return (trading_value / (market_cap * 1e8)) * 100.0
 
 
+def compute_market_breadth(snap_by_code: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """시장 폭(breadth) — 거래대금 상위 스냅샷 중 상승 종목 비율 + +5%↑ 수.
+
+    국면 proxy (docs §10.2-7): 돌파/모멘텀 엣지는 강세 폭에서만 통함. 진입 시점 시장이
+    실제로 강한지 *확인* 하는 게이지 — 컨센서스(예상 상승장) 가 아니라 사실.
+
+    Args:
+        snap_by_code: fetch_volume_rank 결과 code→row (daily_return 포함, top_n).
+
+    Returns:
+        {"breadth_up_frac", "n_up", "n_up5", "n_total"} 또는 데이터 없으면 None.
+    """
+    drs: list[float] = []
+    for row in snap_by_code.values():
+        dr = _to_float(row.get("daily_return"))
+        if dr != dr or abs(dr) > 200:  # NaN / 이상치 제외
+            continue
+        drs.append(dr)
+    n = len(drs)
+    if n == 0:
+        return None
+    n_up = sum(1 for d in drs if d > 0)
+    n_up5 = sum(1 for d in drs if d >= 5)
+    return {"breadth_up_frac": n_up / n, "n_up": n_up, "n_up5": n_up5, "n_total": n}
+
+
 def infer_market_cap_eok(trading_value: int, turnover_pct: float) -> int:
     """거래대금 + 거래대금회전율 → 시가총액(억원) 역산.
 

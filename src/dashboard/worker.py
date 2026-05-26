@@ -38,7 +38,7 @@ from src.dashboard.state import (
     MonitoredStock,
     MonitoringSession,
 )
-from src.data.intraday import compute_turnover, fetch_volume_rank
+from src.data.intraday import compute_market_breadth, compute_turnover, fetch_volume_rank
 from src.data.intraday_realtime import (
     fetch_asking_price,
     fetch_ccnl_strength,
@@ -67,6 +67,7 @@ from src.scalping.exit.triggers import (
     load_holdings,
 )
 from src.scalping.score.grader import GraderSnapshot, calculate_buy_score
+from src.scalping.score.method_label import classify_method
 from src.common.theme import (
     identify_early_morning_leaders,
     identify_rising_candidates,
@@ -433,6 +434,9 @@ def dashboard_tick(
         logger.info(f"[모니터링] {ch}")
 
     snap_by_code = {str(r["code"]): r.to_dict() for _, r in snapshot.iterrows()}
+
+    # 시장 폭(breadth) — 국면 게이지 (P2-7). top_n 스냅샷의 상승종목 비율. tick 1회 계산.
+    tick_breadth = compute_market_breadth(snap_by_code)
 
     # /buy CODE (가격 인자 생략) UX 를 위해 최근 시세를 세션에 노출 (round 20).
     for code, row in snap_by_code.items():
@@ -825,6 +829,29 @@ def dashboard_tick(
         monitored.buy_score = sc.score
         monitored.buy_grade = sc.grade
         monitored.buy_reasons = list(sc.reasons)
+
+        # P1-4 (docs §11.1) dry-run: 매매법 분류 로깅. 카드 표시 X — tick_log 누적만
+        # (연구 루프/매매일지용). 채택(운영 가중치 확정)은 OOS 게이트 통과 후.
+        _ml = classify_method(
+            dist_high_pct=dist_high if dist_high == dist_high else float("nan"),
+            daily_return_pct=dr_for_grade,
+            vol_accel_5m=accel if accel == accel else float("nan"),
+            vol_accel_1m=accel_1m if accel_1m == accel_1m else float("nan"),
+            vp=vp_now,
+            candle_bullish=(getattr(candle_for_trig, "type", None) == "bullish"),
+            candle_upper_wick=getattr(candle_for_trig, "upper_wick_ratio", float("nan")) if candle_for_trig else float("nan"),
+            candle_lower_wick=getattr(candle_for_trig, "lower_wick_ratio", float("nan")) if candle_for_trig else float("nan"),
+            price_vs_ma5_pct=ma5_pct_g,
+            volume_ratio_vs_prev_day=vol_ratio_g,
+            divergence_bullish=bool(getattr(divergence_state, "bullish", False)),
+        )
+        monitored.setup_label = _ml.setup
+        monitored.setup_score_breakout = _ml.score_breakout
+        monitored.setup_score_pullback = _ml.score_pullback
+        monitored.setup_chase_warning = _ml.chase_warning
+        if tick_breadth:
+            monitored.market_breadth_up_frac = tick_breadth["breadth_up_frac"]
+            monitored.market_n_up5 = tick_breadth["n_up5"]
 
         # round 36 후속: 수급 Δ — KIS 갱신 주기 자동 추종 (윈도우 고정 X).
         # 값이 이전과 다른 시점에만 새 Δ 기록, 같은 응답이면 기존 Δ + 늘어난 elapsed.

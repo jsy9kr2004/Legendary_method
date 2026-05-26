@@ -84,6 +84,14 @@ class MonitoredStock:
     buy_score: float | None = None
     buy_grade: str | None = None
     buy_reasons: list[str] = field(default_factory=list)
+    # 매매법 분류 (P1-4, docs §11.1) — 현재 로깅 전용, 카드 표시는 검증 후.
+    setup_label: str | None = None        # breakout / pullback / chase / none
+    setup_score_breakout: float | None = None
+    setup_score_pullback: float | None = None
+    setup_chase_warning: bool = False
+    # 시장 폭(breadth) — 국면 게이지 (P2-7). tick 마다 동일값 (시장 레벨).
+    market_breadth_up_frac: float | None = None
+    market_n_up5: int | None = None
 
     def has_any_flag(self) -> bool:
         """auto/rising/manual 중 하나라도 켜져 있는지. HOLD 는 별도."""
