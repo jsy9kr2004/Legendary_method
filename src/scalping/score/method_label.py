@@ -57,13 +57,27 @@ def _score_breakout(dist_high, va5, bullish, upper_wick, vp, volratio, daily_ret
     return s
 
 
-def _score_pullback(dist_high, daily_return, ma5, va1, lower_wick, vp, divbull) -> float:
+def _score_pullback(dist_high, daily_return, ma5, va1, lower_wick, vp, divbull,
+                    bid_ask_ratio=float("nan"), volume_ratio_vs_prev_day=float("nan"),
+                    vp_5ma_delta=float("nan")) -> float:
+    """눌림 매매 점수.
+
+    가설 D2 (2026-05-27) — 가중치 재설계. core 게이트는 통설 그대로 (1차 급등 + 5MA 지지
+    + 거래량 재유입). 가산은 5일 데이터에서 marginal 효과 측정된 시그널만:
+      pulled (dist_high≤-1.0)  : Δ+0.112%p p=0.0001  → w=2.5
+      vp (vp≥100)              : Δ+0.022%p p=0.45    → w=1.0 (약하지만 양수)
+      bid_ask (≥1.5)           : Δ+0.119%p p<0.0001  → w=1.5 (신규)
+      volratio (≥2.0)          : Δ+0.190%p p<0.0001  → w=2.0 (신규, 가장 강)
+      vp_5ma_delta>0 페널티     : Δ-0.111%p p=0.0001  → w=-1.0 (정점 음의 시그널)
+    제거: hammer (5일 0건 발화) / divbull (효과 없음).
+    """
     if not (_ok(daily_return) and _ok(ma5) and _ok(va1)):
         return 0.0
     core = (daily_return >= _PB.pb_surge_min) and (_PB.pb_ma5_lo <= ma5 <= _PB.pb_ma5_hi) and (va1 >= _PB.pb_reentry_min)
     if not core:
         return 0.0
     s = 4.0
+    # 기존 가산 (가중치 0 일 수 있음 — 프리셋에서 죽인 항목)
     if _ok(lower_wick) and lower_wick >= _PB.pb_hammer_min:
         s += _PB.pb_w_hammer
     if divbull:
@@ -72,6 +86,14 @@ def _score_pullback(dist_high, daily_return, ma5, va1, lower_wick, vp, divbull) 
         s += _PB.pb_w_pulled
     if _ok(vp) and vp >= 100:
         s += _PB.pb_w_vp
+    # 신규 가산 (가설 D2)
+    if _ok(bid_ask_ratio) and bid_ask_ratio >= _PB.pb_bid_ask_min:
+        s += _PB.pb_w_bid_ask
+    if _ok(volume_ratio_vs_prev_day) and volume_ratio_vs_prev_day >= _PB.pb_volratio_min:
+        s += _PB.pb_w_volratio
+    # 신규 페널티 — VP_5MA delta > 0 = VP 상승 중 = 정점 진입 음의 시그널
+    if _ok(vp_5ma_delta) and vp_5ma_delta > 0:
+        s += _PB.pb_w_vpdelta_pen
     return s
 
 
@@ -88,6 +110,8 @@ def classify_method(
     price_vs_ma5_pct: float = float("nan"),
     volume_ratio_vs_prev_day: float = float("nan"),
     divergence_bullish: bool = False,
+    bid_ask_ratio: float = float("nan"),
+    vp_5ma_delta: float = float("nan"),
 ) -> MethodLabel:
     """현재 tick 신호 → 매매법 라벨.
 
@@ -97,7 +121,10 @@ def classify_method(
     sbo = _score_breakout(dist_high_pct, vol_accel_5m, candle_bullish,
                           candle_upper_wick, vp, volume_ratio_vs_prev_day, daily_return_pct)
     spb = _score_pullback(dist_high_pct, daily_return_pct, price_vs_ma5_pct,
-                          vol_accel_1m, candle_lower_wick, vp, divergence_bullish)
+                          vol_accel_1m, candle_lower_wick, vp, divergence_bullish,
+                          bid_ask_ratio=bid_ask_ratio,
+                          volume_ratio_vs_prev_day=volume_ratio_vs_prev_day,
+                          vp_5ma_delta=vp_5ma_delta)
 
     chase = (
         _ok(dist_high_pct) and dist_high_pct >= CHASE_NEAR_HIGH_PCT

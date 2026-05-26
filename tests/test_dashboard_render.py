@@ -597,6 +597,132 @@ def test_method_label_chase_warning(monkeypatch):
                                  now=datetime(2026, 5, 25, 9, 32, 0))
     assert "추격" in msg
 
+
+# 가설 C (data/journal/2026-05-26.md 토론 #1, 사용자 결정 2026-05-27):
+# setup_label='none' 인데 buy_grade STRONG/WATCH = 매수 결정 시점인데 매매법 분류 X.
+# 사용자한테 "추격/어중간 의심" 명시 표시. Buy.Score 본체 변경 X (단순 표시).
+
+def test_method_label_none_with_strong_shows_warning(monkeypatch):
+    """가설 C: setup_label='none' + buy_grade=STRONG → '분류 X — 추격/어중간 의심' 표시."""
+    s = _stock()
+    s.setup_label = "none"
+    s.setup_chase_warning = False
+    s.buy_grade = "STRONG"
+    s.buy_score = 5.5
+    snap = {"price": 5480, "daily_return": 12.41}
+    monkeypatch.setenv("MONITOR_METHOD_LABEL", "1")
+    msg = render_monitor_message(s, snap, accel_ratio=1.1, recent_bar_value=1, ccnl=None,
+                                 asking=None, investor=None, sparkline="",
+                                 now=datetime(2026, 5, 26, 10, 42, 0))
+    assert "분류 X" in msg
+    assert "추격/어중간" in msg
+
+
+def test_method_label_none_with_watch_shows_warning(monkeypatch):
+    """가설 C: WATCH 도 매수 결정 시점이라 동일 표시."""
+    s = _stock()
+    s.setup_label = "none"
+    s.setup_chase_warning = False
+    s.buy_grade = "WATCH"
+    s.buy_score = 4.0
+    snap = {"price": 26300, "daily_return": 8.23}
+    monkeypatch.setenv("MONITOR_METHOD_LABEL", "1")
+    msg = render_monitor_message(s, snap, accel_ratio=1.5, recent_bar_value=1, ccnl=None,
+                                 asking=None, investor=None, sparkline="",
+                                 now=datetime(2026, 5, 26, 11, 24, 0))
+    assert "분류 X" in msg
+
+
+def test_method_label_none_with_neutral_no_warning(monkeypatch):
+    """가설 C: NEUTRAL/AVOID 는 어차피 진입 시점 아님 → 표시 X (노이즈 회피)."""
+    s = _stock()
+    s.setup_label = "none"
+    s.setup_chase_warning = False
+    s.buy_grade = "NEUTRAL"
+    s.buy_score = 1.0
+    snap = {"price": 5480, "daily_return": 12.41}
+    monkeypatch.setenv("MONITOR_METHOD_LABEL", "1")
+    msg = render_monitor_message(s, snap, accel_ratio=1.1, recent_bar_value=1, ccnl=None,
+                                 asking=None, investor=None, sparkline="",
+                                 now=datetime(2026, 5, 26, 10, 42, 0))
+    assert "매매법" not in msg, f"NEUTRAL 인데 매매법 라벨 표시됨: {msg}"
+
+
+def test_method_label_pullback_redesign_d2(monkeypatch):
+    """가설 D2 (2026-05-27): bid_ask / volratio / vp_5ma_delta 신규 입력 반영.
+
+    core 통과 + (dist_high≤-1 +2.5) + (vp≥100 +1.0) + (bid_ask≥1.5 +1.5)
+    + (volratio≥2.0 +2.0) = base 4.0 + 7.0 = 11.0 ≥ cut 6.0 → 'pullback' 발화.
+    """
+    from src.scalping.score.method_label import classify_method
+    ml = classify_method(
+        dist_high_pct=-1.5,
+        daily_return_pct=8.0,
+        vol_accel_5m=2.0,
+        vol_accel_1m=2.0,           # core 통과
+        vp=120,                      # +1.0
+        candle_bullish=True,
+        price_vs_ma5_pct=0.0,        # core 통과
+        volume_ratio_vs_prev_day=2.5,  # 신규 +2.0
+        bid_ask_ratio=1.7,           # 신규 +1.5
+        vp_5ma_delta=-0.5,           # 페널티 X (음수)
+    )
+    assert ml.setup == "pullback", f"기대: pullback, 실제: {ml.setup} score={ml.score_pullback}"
+    # 4.0 + 2.5 + 1.0 + 1.5 + 2.0 = 11.0
+    assert ml.score_pullback >= 6.0
+
+
+def test_method_label_pullback_vpdelta_penalty(monkeypatch):
+    """가설 D2 페널티: vp_5ma_delta>0 = 정점 진입 음의 시그널 → -1.0."""
+    from src.scalping.score.method_label import classify_method
+    # 동일 입력인데 vp_5ma_delta>0 만 추가
+    ml_no_pen = classify_method(
+        dist_high_pct=-1.5, daily_return_pct=8.0, vol_accel_5m=2.0, vol_accel_1m=2.0,
+        vp=120, price_vs_ma5_pct=0.0, volume_ratio_vs_prev_day=2.5, bid_ask_ratio=1.7,
+        vp_5ma_delta=-0.5,
+    )
+    ml_pen = classify_method(
+        dist_high_pct=-1.5, daily_return_pct=8.0, vol_accel_5m=2.0, vol_accel_1m=2.0,
+        vp=120, price_vs_ma5_pct=0.0, volume_ratio_vs_prev_day=2.5, bid_ask_ratio=1.7,
+        vp_5ma_delta=+0.5,   # 정점 신호
+    )
+    assert ml_pen.score_pullback == ml_no_pen.score_pullback - 1.0
+
+
+def test_method_label_pullback_old_hammer_killed(monkeypatch):
+    """가설 D2: hammer 가중치 0 → lower_wick 만으론 cut 미달."""
+    from src.scalping.score.method_label import classify_method
+    # 망치형 봉만 있고 다른 신규 가산 X → core 통과 + vp 만 가산 = base+vp = 5.0 < cut 6.0
+    ml = classify_method(
+        dist_high_pct=0.0,            # pulled X
+        daily_return_pct=8.0,
+        vol_accel_5m=2.0, vol_accel_1m=2.0,   # core 통과
+        vp=120,                       # +1.0
+        candle_lower_wick=0.8,        # hammer 0.5↑ — 구 가중치였으면 +3.0
+        price_vs_ma5_pct=0.0,         # core 통과
+        # volratio / bid_ask 둘 다 부재
+    )
+    # 4.0 + 1.0 (vp) = 5.0 < cut 6.0 → 라벨 'none'
+    assert ml.score_pullback == 5.0, f"hammer killed: 기대 5.0, 실제 {ml.score_pullback}"
+    assert ml.setup == "none"
+
+
+def test_method_label_chase_takes_priority_over_none(monkeypatch):
+    """가설 C 충돌 가드: chase_warning=True 면 기존 '추격 구간 회피' 라인이 우선."""
+    s = _stock()
+    s.setup_label = "none"
+    s.setup_chase_warning = True   # 충돌 — 기존 분기 우선
+    s.buy_grade = "STRONG"
+    s.buy_score = 5.5
+    snap = {"price": 5480, "daily_return": 22.0}
+    monkeypatch.setenv("MONITOR_METHOD_LABEL", "1")
+    msg = render_monitor_message(s, snap, accel_ratio=3.5, recent_bar_value=1, ccnl=None,
+                                 asking=None, investor=None, sparkline="",
+                                 now=datetime(2026, 5, 26, 10, 42, 0))
+    assert "추격 구간 — 회피" in msg
+    assert "분류 X" not in msg
+
+
 def test_market_breadth_line(monkeypatch):
     """P2-7: 플래그 ON 시 시장 폭 라인 표시 (강세/중립/약세)."""
     s = _stock()

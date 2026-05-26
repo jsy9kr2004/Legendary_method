@@ -830,8 +830,9 @@ def dashboard_tick(
         monitored.buy_grade = sc.grade
         monitored.buy_reasons = list(sc.reasons)
 
-        # P1-4 (docs §11.1) dry-run: 매매법 분류 로깅. 카드 표시 X — tick_log 누적만
-        # (연구 루프/매매일지용). 채택(운영 가중치 확정)은 OOS 게이트 통과 후.
+        # P1-4 (docs §11.1) — 매매법 분류. 가설 D2 재설계 (2026-05-27): pullback 가중치
+        # 재학습 + bid_ask / volratio / vp_5ma_delta 신규 입력 추가. 자세한 ritual 은
+        # data/journal/2026-05-26.md 토론 #4.
         _ml = classify_method(
             dist_high_pct=dist_high if dist_high == dist_high else float("nan"),
             daily_return_pct=dr_for_grade,
@@ -844,6 +845,8 @@ def dashboard_tick(
             price_vs_ma5_pct=ma5_pct_g,
             volume_ratio_vs_prev_day=vol_ratio_g,
             divergence_bullish=bool(getattr(divergence_state, "bullish", False)),
+            bid_ask_ratio=bid_ask if bid_ask == bid_ask else float("nan"),
+            vp_5ma_delta=getattr(divergence_state, "vp_5ma_delta", float("nan")),
         )
         monitored.setup_label = _ml.setup
         monitored.setup_score_breakout = _ml.score_breakout

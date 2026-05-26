@@ -44,11 +44,20 @@ class StrategyConfig:
     pb_ma5_lo: float = -1.5         # 5MA 지지 밴드 하한 (price_vs_ma5 %)
     pb_ma5_hi: float = 0.5          # 상한
     pb_reentry_min: float = 1.5     # 거래량 재유입 (vol_accel_1m) 필수 = 바운스 트리거
-    pb_w_hammer: float = 3.0        # 망치형(아래꼬리) 가산
+    # 가산 가중치 (가설 D2 재설계, 2026-05-27, data/journal/2026-05-26.md 토론 #4).
+    # 기존 hammer/divbull 은 5일 표본 데이터에서 dead weight 또는 음의 시그널이라 0 으로.
+    # pulled 는 가장 강한 양의 marginal(+0.112%p, p=0.0001) — 가중치 상향. bid_ask/volratio
+    # 는 신규 강력 시그널(p<0.0001). vpdelta_pen 은 음의 시그널 페널티(-0.111%p, p=0.0001).
+    pb_w_hammer: float = 3.0        # 망치형(아래꼬리) 가산 — 프리셋에서 0 으로 끔
     pb_hammer_min: float = 0.5      # lower_wick_ratio 임계
-    pb_w_divbull: float = 1.5       # 매집(Bullish 다이버전스) 가산
-    pb_w_pulled: float = 1.0        # 진짜 눌림(고점서 내려옴) 가산
-    pb_w_vp: float = 1.0            # 체결강도 회복 가산
+    pb_w_divbull: float = 1.5       # 매집(Bullish 다이버전스) 가산 — 프리셋에서 0 으로 끔
+    pb_w_pulled: float = 1.0        # 진짜 눌림(고점서 내려옴) 가산 (가산 임계 dist_high≤-1.0)
+    pb_w_vp: float = 1.0            # 체결강도 회복 가산 (vp≥100)
+    pb_w_bid_ask: float = 0.0       # 호가 매수 잔량 우위 가산 (bid_ask_ratio≥pb_bid_ask_min)
+    pb_bid_ask_min: float = 1.5
+    pb_w_volratio: float = 0.0      # 전일거래량 대비 가산 (vol/prev_day≥pb_volratio_min)
+    pb_volratio_min: float = 2.0
+    pb_w_vpdelta_pen: float = 0.0   # VP_5MA delta>0 (정점 신호) 페널티 (음수 권장)
 
     # ── 청산 ──
     # 돌파: 레벨이탈 빨리 자름 여부 + 트레일링 (느슨할수록 winner 태움)
@@ -94,10 +103,27 @@ def candidate_configs() -> list[StrategyConfig]:
                        exit_kind="breakout", bo_level_lost_cut=False,
                        bo_trail_arm=2.0, bo_trail_give=2.0,
                        cost_pct=0.4),  # 돌파=따라붙기 슬리피지 큼
-        # 눌림 — 게이트 + 절반목표 (v4/v5 최선), 지정가라 비용 낮게
-        StrategyConfig(label="pullback_gated_v5", method="pullback", cut=7.0,
+        # 눌림 — 게이트 + 절반목표 (v4/v5 최선), 지정가라 비용 낮게.
+        # 가설 D2 재설계 (2026-05-27 사용자 결정, data/journal/2026-05-26.md 토론 #4):
+        # 5/22+5/26 5일 데이터 가중치 효과 분석 결과 적용.
+        #   hammer(+3.0) → 0  (5일 표본에 한 번도 발화 X = dead weight)
+        #   divbull(+1.5) → 0  (Δmean -0.070%p, 부호 역방향 — 가산 정당성 0)
+        #   pulled(+1.0) → +2.5 (Δmean +0.112%p p=0.0001 — 가장 강한 양의 시그널)
+        #   vp(+1.0) 유지 (약한 양수)
+        #   신규 bid_ask(+1.5) (bid_ask_ratio≥1.5, Δ+0.119%p p<0.0001)
+        #   신규 volratio(+2.0) (volume_ratio_vs_prev_day≥2.0, Δ+0.190%p p<0.0001 가장 강)
+        #   신규 vpdelta_pen(-1.0) (divergence_vp_5ma_delta>0, Δ-0.111%p p=0.0001 음의 시그널)
+        #   cut 5.0 → 6.0 (새 score 분포 시뮬: n=2086, mean +0.118%, win 46%, -2%loss 1.63%
+        #   = 구 cut 5.0 대비 mean 1.9x, -2%loss 절반).
+        # ⚠ 5일 표본 한정 — 과적합 위험. 5/27~6/5 누적 후 OOS 검증 권고.
+        StrategyConfig(label="pullback_gated_v5", method="pullback", cut=6.0,
                        exit_kind="pullback", pb_target_mode="halfway",
-                       cost_pct=0.25),  # 눌림=약세매수 지정가 쉬움 → 슬리피지 작음
+                       cost_pct=0.25,  # 눌림=약세매수 지정가 쉬움 → 슬리피지 작음
+                       pb_w_hammer=0.0, pb_w_divbull=0.0,
+                       pb_w_pulled=2.5, pb_w_vp=1.0,
+                       pb_w_bid_ask=1.5, pb_bid_ask_min=1.5,
+                       pb_w_volratio=2.0, pb_volratio_min=2.0,
+                       pb_w_vpdelta_pen=-1.0),
         # 돌파 + 국면(breadth) 게이트 — 강세장(상승종목 ≥50%)에서만 진입 (P2-7)
         StrategyConfig(label="breakout_regime_v6", method="breakout", cut=6.0,
                        exit_kind="breakout", bo_level_lost_cut=False,

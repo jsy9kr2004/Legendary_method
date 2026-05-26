@@ -265,7 +265,10 @@ def render_monitor_message(
         lines.append("사유: " + " / ".join(monitored.buy_reasons[:3]))
 
     # 매매법 라벨 (P1-4) — opt-in (MONITOR_METHOD_LABEL=1). 미검증 = 렌즈/경고용.
-    # 기본 OFF 라 데몬 기본 표시 무변. none 은 노이즈라 표시 X.
+    # 기본 OFF 라 데몬 기본 표시 무변.
+    # 가설 C (data/journal/2026-05-26.md 토론 #1 사용자 결정, 2026-05-27):
+    #   setup_label='none' + STRONG/WATCH 시점 = 매수 결정 시점인데 매매법 분류 X →
+    #   추격/어중간 의심 라벨 명시. 단순 표시 변경 (Buy.Score 본체 X).
     if os.getenv("MONITOR_METHOD_LABEL", "0") == "1":
         _setup = getattr(monitored, "setup_label", None)
         if getattr(monitored, "setup_chase_warning", False):
@@ -274,6 +277,8 @@ def render_monitor_message(
             lines.append(f"🎯 매매법: 돌파 ({getattr(monitored, 'setup_score_breakout', 0) or 0:.1f}) — 미검증")
         elif _setup == "pullback":
             lines.append(f"🎯 매매법: 눌림 ({getattr(monitored, 'setup_score_pullback', 0) or 0:.1f}) — 미검증")
+        elif _setup == "none" and monitored.buy_grade in ("STRONG", "WATCH"):
+            lines.append("🎯 매매법: 분류 X — 추격/어중간 의심")
         _bf = getattr(monitored, "market_breadth_up_frac", None)
         if _bf is not None:
             _n5 = getattr(monitored, "market_n_up5", None) or 0
