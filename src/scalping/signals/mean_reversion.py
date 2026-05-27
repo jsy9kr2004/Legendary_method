@@ -41,6 +41,7 @@ import numpy as np
 import pandas as pd
 
 from src.scalping.bars import add_candle_features, add_mean_reversion, add_swing_labels
+from src.scalping.signals.weighted_score import add_score_features, grade as score_grade
 
 
 # 임계 (튜닝 가능, system tuning ritual 통과 후만 변경)
@@ -110,19 +111,22 @@ def classify(bars: pd.DataFrame) -> pd.DataFrame:
     return bars
 
 
-def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple[bool, bool, str | None]:
-    """KIS 1분봉 fetch 결과 → 마지막 봉의 (sigB, sigS, reason).
+def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple[bool, bool, str | None, float, str]:
+    """KIS 1분봉 fetch 결과 → 마지막 봉의 (sigB, sigS, reason, score, grade).
 
     bars_minute: src/data/intraday_realtime.fetch_minute_bars 결과
                  (columns: time/open/high/low/close/volume/trading_value).
 
     1분봉 frame 이지만 평균회귀 지표는 그대로 적용 (ma20 = 20분 평균).
-    표본 ≥ 25 봉 (= 25분) 필요. 미달 시 (False, False, None) 반환.
+    표본 ≥ 25 봉 (= 25분) 필요. 미달 시 (False, False, None, 0.0, "NEUTRAL") 반환.
+
+    score: v10b weighted score (매물대 + 추세선 + 평균회귀 + 변동성 합산).
+    grade: STRONG (≥2) / WATCH (≥1) / NEUTRAL.
 
     M6 worker dry-run 통합용 — 매 tick KIS 분봉 fetch 후 호출.
     """
     if bars_minute is None or len(bars_minute) < 25:
-        return False, False, None
+        return False, False, None, 0.0, "NEUTRAL"
     df = bars_minute.copy()
     if "time" in df.columns and not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df["time"], format="%H%M%S", errors="coerce")
@@ -133,12 +137,15 @@ def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple[bool, bool, str | No
     add_mean_reversion(df)
     add_swing_labels(df, lookback=3)
     classify(df)
+    add_score_features(df)
     last = df.iloc[-1]
     sigB = bool(last.get("sigB", False))
     sigS = bool(last.get("sigS", False))
-    if not (sigB or sigS):
-        return False, False, None
-    parts: list[str] = []
+    score = float(last.get("score", 0.0) or 0.0)
+    g = score_grade(score)
+    if not (sigB or sigS or score >= 1.0):
+        return False, False, None, score, g
+    parts: list[str] = [f"score {score:.1f} ({g})"]
     if sigB:
         parts.append("단저")
         for k, v, fmt, t in [
@@ -159,8 +166,15 @@ def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple[bool, bool, str | No
             val = last.get(k)
             if pd.notna(val) and val >= t:
                 parts.append(f"{v}={fmt.format(val)}")
+    # v10b 가산 항목 (매물대/추세선/변동성)
+    if pd.notna(last.get("atr_pct")) and last["atr_pct"] <= 0.7:
+        parts.append(f"atr{last['atr_pct']:.2f}%")
+    if pd.notna(last.get("support_dist_pct")) and abs(last["support_dist_pct"]) <= 0.5:
+        parts.append("추세선")
+    if pd.notna(last.get("touch_count")) and last["touch_count"] >= 5:
+        parts.append(f"매물대{int(last['touch_count'])}")
     reason = " ".join(parts) if parts else None
-    return sigB, sigS, reason
+    return sigB, sigS, reason, score, g
 
 
 def classify_tick_realtime(

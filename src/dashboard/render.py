@@ -285,19 +285,25 @@ def render_monitor_message(
             _regime = "🟢강세" if _bf >= 0.6 else ("🟡중립" if _bf >= 0.4 else "🔴약세")
             lines.append(f"📊 시장 폭: {_bf * 100:.0f}% 상승 / +5%↑ {_n5}종목 {_regime}")
 
-    # 단저단고 시그널 (docs/scalping-redesign-2026-05-27.md, 2026-05-27).
+    # 단저단고 시그널 + v10b score (2026-05-27/28).
     # 환경변수 MONITOR_MEAN_REVERSION=1 시 dry-run 표시. 라이브 매매 영향 X — 사용자
-    # 가 카드 보고 직접 매매 결정. 검증 누적 후 정식 운영 전환.
+    # 가 카드 보고 직접 매매 결정. score ≥ 2 (STRONG) = 사용자 매수 권고 신호.
     if os.getenv("MONITOR_MEAN_REVERSION", "0") == "1":
         _mrb = getattr(monitored, "mr_sigB", False)
         _mrs = getattr(monitored, "mr_sigS", False)
         _mrr = getattr(monitored, "mr_reason", None)
-        if _mrb and _mrs:
-            lines.append(f"🔁 단저단고: 🟢단저 + 🔴단고 동시 — {_mrr or '—'}")
-        elif _mrb:
-            lines.append(f"🔁 단저단고: 🟢 단저 매수 — {_mrr or '—'}")
-        elif _mrs:
-            lines.append(f"🔁 단저단고: 🔴 단고 매도 — {_mrr or '—'}")
+        _score = getattr(monitored, "mr_score", 0.0) or 0.0
+        _grade = getattr(monitored, "mr_grade", "NEUTRAL")
+        if _grade != "NEUTRAL" or _mrb or _mrs:
+            grade_emoji = {"STRONG": "🟢", "WATCH": "🟡"}.get(_grade, "⚫")
+            sig_emoji = ""
+            if _mrb and _mrs:
+                sig_emoji = "🟢단저+🔴단고"
+            elif _mrb:
+                sig_emoji = "🟢 단저"
+            elif _mrs:
+                sig_emoji = "🔴 단고"
+            lines.append(f"🔁 단저단고 {grade_emoji}{_grade} {_score:+.1f} {sig_emoji} — {_mrr or '—'}")
 
     # a1 카드일 때 TRANSITION/GRACE 부상 후보 표시 (round 19 — 카드 통합)
     if transition_info is not None:

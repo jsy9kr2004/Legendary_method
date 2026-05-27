@@ -116,6 +116,18 @@ def add_mean_reversion(bars: pd.DataFrame, n_ma: int = 20, n_rsi: int = 14, n_st
 
     bars["vol_ma20"] = bars["bar_tv"].rolling(n_ma).mean()
     bars["vol_spike"] = bars["bar_tv"] / bars["vol_ma20"].replace(0, np.nan)
+
+    # VWAP (cumulative typical price × volume / cumulative volume).
+    # 단저단고 v10b 의 vwap_above feature 입력.
+    if bars["bar_tv"].sum() > 0:
+        vol_proxy = bars["bar_tv"] / bars["close"]
+        cum_vol = vol_proxy.cumsum()
+        cum_tp_vol = (bars["close"] * vol_proxy).cumsum()
+        bars["vwap"] = cum_tp_vol / cum_vol.replace(0, np.nan)
+        bars["vwap_dist_pct"] = (bars["close"] / bars["vwap"] - 1) * 100
+    else:
+        bars["vwap"] = np.nan
+        bars["vwap_dist_pct"] = np.nan
     return bars
 
 

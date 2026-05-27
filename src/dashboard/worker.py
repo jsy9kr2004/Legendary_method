@@ -880,15 +880,17 @@ def dashboard_tick(
         _in_mr_universe = (not mr_universe) or (code in mr_universe) or _user_pinned
         try:
             if _in_mr_universe:
-                mr_b, mr_s, mr_r = analyze_minute_bars(bars)
+                mr_b, mr_s, mr_r, mr_score, mr_g = analyze_minute_bars(bars)
             else:
-                mr_b, mr_s, mr_r = False, False, None
+                mr_b, mr_s, mr_r, mr_score, mr_g = False, False, None, 0.0, "NEUTRAL"
         except Exception as e:
             logger.warning(f"{code} mean_reversion 분석 실패: {e}")
-            mr_b, mr_s, mr_r = False, False, None
+            mr_b, mr_s, mr_r, mr_score, mr_g = False, False, None, 0.0, "NEUTRAL"
         monitored.mr_sigB = mr_b
         monitored.mr_sigS = mr_s
         monitored.mr_reason = mr_r
+        monitored.mr_score = mr_score
+        monitored.mr_grade = mr_g
 
         if tick_breadth:
             monitored.market_breadth_up_frac = tick_breadth["breadth_up_frac"]
