@@ -284,7 +284,7 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 새 코드 작성 전 반드시 읽을 것:
 
 - 데이터 모듈 작성 시: `docs/data-infra.md`
-- 단타 (주도주 매매) 분석 모듈 작성 시: `docs/scalping-strategy.md`
+- 단타 (주도주 매매) 분석 모듈 작성 시: `docs/scalping-strategy.md` + **단저단고 재설계 후속 (2026-05-27): `docs/scalping-redesign-2026-05-27.md` ★** — 모멘텀/돌파(Buy.Score) → 분봉 단저단고(intraday mean reversion) 패러다임 전환. 모듈: `src/scalping/bars.py`, `src/scalping/signals/mean_reversion.py`, `src/common/universe.py`, `src/research/backtest_mean_reversion.py`, `src/analysis/mr_alignment.py`. 라이브 dry-run 활성화 (`.env` MONITOR_MEAN_REVERSION=1) — 카드 표시만, 사용자 매매 영향 X
 - 종배 분석 모듈 작성 시: `docs/eod-strategy.md`
 - Buy.Score 재설계 작업 시: `docs/buy-score-revision-proposal.md`
 - 레포트 모듈 작성 시: `docs/report-spec.md`
@@ -320,6 +320,24 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
   trades/YYYY-MM-DD.parquet`, 필요 시 `data/daily/ohlcv.parquet`
 - 분석 도구 — `python -m src.analysis.replay CODE DATE`, `python -m src.analysis.
   regret DATE`. 더 세밀한 분석은 직접 pandas 쿼리.
+
+### ★ 매매일지 요청 시 자동 실행 (2026-05-28 사용자 명시)
+
+매매일지 작성 요청 받으면 다음 두 가지를 **항상 자동으로 같이 실행**:
+
+1. **단저단고 시그널 정합도** — `python -m src.analysis.mr_alignment YYYY-MM-DD`
+   - 사용자 매매 ts ±윈도우에 mr_sigB/mr_sigS 발화 여부 자동 평가.
+   - 결과 `data/journal/auto/YYYY-MM-DD.md` 저장. 매매일지에 해당 결과 요약 포함.
+   - 사용자 매매 vs 단저단고 패러다임 정합도 누적 (검증 데이터).
+
+2. **백테스트 (요청 시)** — 사용자가 "백테스트 해줘" / "백테스트 결과 보자" 같은
+   요청 시 `python -m src.research.backtest_mean_reversion` 자동 실행.
+   - 결과 `data/backtest/mr_v3_baseline.json` 갱신. 비용 시나리오 3개 (시장가
+     0.4% / 지정가 0.2% / 유동리더 0.15%) 자동 계산.
+   - 매매일지 작성 중 시그널 변경 가설 나오면 두 번 실행 (변경 전/후) 후 비교.
+
+별도 명시 X — 매매일지 / 백테스트 요청 시 사용자 추가 명령 없이 자동 실행. 결과는
+매매일지 본문에 요약 포함.
 
 출력 — Markdown 매매일지:
 - 매매 개요 표 / 종목별 분석 (매수·매도 결정 시점 시그널 breakdown / 보유 중 Exit.Triggers

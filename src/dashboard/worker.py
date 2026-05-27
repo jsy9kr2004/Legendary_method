@@ -23,6 +23,7 @@ I/O 분리:
 """
 from __future__ import annotations
 
+import os
 import threading
 from datetime import datetime
 from time import perf_counter
@@ -68,6 +69,7 @@ from src.scalping.exit.triggers import (
 )
 from src.scalping.score.grader import GraderSnapshot, calculate_buy_score
 from src.scalping.score.method_label import classify_method
+from src.scalping.signals.mean_reversion import analyze_minute_bars
 from src.common.theme import (
     identify_early_morning_leaders,
     identify_rising_candidates,
@@ -437,6 +439,17 @@ def dashboard_tick(
 
     # 시장 폭(breadth) — 국면 게이지 (P2-7). top_n 스냅샷의 상승종목 비율. tick 1회 계산.
     tick_breadth = compute_market_breadth(snap_by_code)
+
+    # 단저단고 universe — 거래대금 30위 ∩ 회전율 30위 (사용자 비전 1, 2026-05-27).
+    # 환경변수 MONITOR_MR_UNIVERSE=1 시 sigB/sigS 게이트로 사용.
+    # 미설정 시 빈 set (게이트 무효 = 모든 종목 분석).
+    if os.getenv("MONITOR_MR_UNIVERSE", "0") == "1":
+        from src.common.universe import intersect_universe
+        _rank_series = pd.Series({c: r.get("rank") for c, r in snap_by_code.items() if r.get("rank")})
+        _turnover_series = pd.Series({c: r.get("turnover") for c, r in snap_by_code.items() if r.get("turnover")})
+        mr_universe: set[str] = intersect_universe(_rank_series, _turnover_series)
+    else:
+        mr_universe = set()
 
     # /buy CODE (가격 인자 생략) UX 를 위해 최근 시세를 세션에 노출 (round 20).
     for code, row in snap_by_code.items():
@@ -852,6 +865,31 @@ def dashboard_tick(
         monitored.setup_score_breakout = _ml.score_breakout
         monitored.setup_score_pullback = _ml.score_pullback
         monitored.setup_chase_warning = _ml.chase_warning
+
+        # 단저단고 시그널 (docs/scalping-redesign-2026-05-27.md, 2026-05-27).
+        # KIS 1분봉 bars 그대로 사용 (≥25봉 필요). dry-run 표시 — 라이브 매매
+        # 영향 X. analyze_minute_bars 는 NaN-safe + 미달 시 (False, False, None).
+        # universe 게이트 (MONITOR_MR_UNIVERSE=1 시) — 거래대금 30위 ∩ 회전율
+        # 30위 통과 종목만 분석. 빈 set 이면 게이트 무효 (모든 종목).
+        # 단 auto/rising/manual/holding 종목 (사용자 명시 관심) 은 항상 분석 —
+        # universe 게이트는 자동 추가 종목 풀 좁힘 용도, 사용자 관심 종목 막지 X.
+        _user_pinned = (
+            monitored.is_auto or monitored.is_rising or monitored.is_manual
+            or (holdings is not None and code in holdings)
+        )
+        _in_mr_universe = (not mr_universe) or (code in mr_universe) or _user_pinned
+        try:
+            if _in_mr_universe:
+                mr_b, mr_s, mr_r = analyze_minute_bars(bars)
+            else:
+                mr_b, mr_s, mr_r = False, False, None
+        except Exception as e:
+            logger.warning(f"{code} mean_reversion 분석 실패: {e}")
+            mr_b, mr_s, mr_r = False, False, None
+        monitored.mr_sigB = mr_b
+        monitored.mr_sigS = mr_s
+        monitored.mr_reason = mr_r
+
         if tick_breadth:
             monitored.market_breadth_up_frac = tick_breadth["breadth_up_frac"]
             monitored.market_n_up5 = tick_breadth["n_up5"]

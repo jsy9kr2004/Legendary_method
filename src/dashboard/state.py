@@ -89,6 +89,11 @@ class MonitoredStock:
     setup_score_breakout: float | None = None
     setup_score_pullback: float | None = None
     setup_chase_warning: bool = False
+    # 단저단고 시그널 (docs/scalping-redesign-2026-05-27.md, 2026-05-27).
+    # 매 tick 봉 단위 분석으로 마지막 봉의 sigB/sigS 갱신. 카드 dry-run 표시.
+    mr_sigB: bool = False
+    mr_sigS: bool = False
+    mr_reason: str | None = None  # 발화 사유 (예: "단저 STOCH 28 / RSI 35")
     # 시장 폭(breadth) — 국면 게이지 (P2-7). tick 마다 동일값 (시장 레벨).
     market_breadth_up_frac: float | None = None
     market_n_up5: int | None = None
