@@ -63,6 +63,8 @@ data/state/
 data/tick_logs/
 data/trades/
 data/journal/
+data/backtest/
+data/eod_forward/
 !data/daily/.gitkeep
 !data/intraday/.gitkeep
 !data/meta/.gitkeep
