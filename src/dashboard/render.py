@@ -724,6 +724,21 @@ def build_monitor_payload(
         divergence=divergence,
     )
 
+    # 단저단고 v10b (2026-05-28) — PWA 도 카드와 동일하게 노출. NEUTRAL + 시그널
+    # X 면 None 반환해서 프론트에서 라인 자체 생략 가능.
+    mr_grade = getattr(monitored, "mr_grade", "NEUTRAL")
+    mr_sigB = bool(getattr(monitored, "mr_sigB", False))
+    mr_sigS = bool(getattr(monitored, "mr_sigS", False))
+    mean_reversion_block: dict[str, Any] | None = None
+    if mr_grade != "NEUTRAL" or mr_sigB or mr_sigS:
+        mean_reversion_block = {
+            "grade": mr_grade,
+            "score": _clean(getattr(monitored, "mr_score", 0.0)),
+            "sigB": mr_sigB,
+            "sigS": mr_sigS,
+            "reason": getattr(monitored, "mr_reason", None),
+        }
+
     return {
         "code": monitored.code,
         "name": monitored.name or monitored.code,
@@ -742,6 +757,7 @@ def build_monitor_payload(
         "divergence": divergence_block,
         "holding": holding_block,
         "transition": transition_block,
+        "mean_reversion": mean_reversion_block,
         "grace_remaining_sec": grace_remaining_seconds,
         "trigger_states": dict(trigger_states) if trigger_states else None,
         "trigger_lines": trigger_lines,

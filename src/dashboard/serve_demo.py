@@ -107,6 +107,20 @@ def _build_demo_payload(monitored: MonitoredStock, holding: Any = None) -> dict:
         "elapsed_sec": random.randint(15, 280),
     }
 
+    # 단저단고 v10b mock — 운영 worker.analyze_minute_bars 가 채우는 필드.
+    # build_monitor_payload 가 monitored.mr_* 를 읽으므로 여기서 세팅.
+    mr_score = round(random.uniform(-1.0, 3.0), 1)
+    if mr_score >= 2.0:
+        monitored.mr_grade = "STRONG"
+    elif mr_score >= 1.0:
+        monitored.mr_grade = "WATCH"
+    else:
+        monitored.mr_grade = "NEUTRAL"
+    monitored.mr_score = mr_score
+    monitored.mr_sigB = (mr_score >= 2.0 and random.random() < 0.3)
+    monitored.mr_sigS = (mr_score < 0 and random.random() < 0.2)
+    monitored.mr_reason = "atr_low +1.0 / at_support +0.6 / touch_high +0.4" if mr_score >= 1.0 else None
+
     return build_monitor_payload(
         monitored=monitored,
         snapshot_row=snapshot_row,

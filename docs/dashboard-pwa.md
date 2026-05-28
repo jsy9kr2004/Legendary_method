@@ -130,6 +130,12 @@ def build_monitor_payload(stock: MonitoredStock, ...) -> dict:
             "pnl_pct": 2.6,
             "triggers": {"A1": False, "A2": True, ...},
         },
+        "mean_reversion": None | {  # 2026-05-28 단저단고 v10b. NEUTRAL+시그널X 면 None.
+            "grade": "STRONG" | "WATCH" | "NEUTRAL",
+            "score": 2.3,
+            "sigB": True, "sigS": False,
+            "reason": "atr_low +1.0 / at_support +0.6 / ...",
+        },
         "updated_at": "2026-05-14T10:23:45+09:00",
         "stale": False,  # 마지막 tick 으로부터 10s 초과 시 True
     }
