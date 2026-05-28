@@ -156,6 +156,7 @@
     const triggers = payload.trigger_states || {};
     const triggerLines = payload.trigger_lines || [];
     const transition = payload.transition;
+    const mr = payload.mean_reversion;  // 2026-05-28: 단저단고 v10b. NEUTRAL+시그널X 면 null.
 
     const grade = header.grade || "";
     const gradeSpan = grade
@@ -242,6 +243,22 @@
       return `<div class="text-slate-400">수급${headerSuffix}: 외인 ${fmtSignedBillion(fv)}${paren(dfv, fmtSignedBillion)} / 기관 ${fmtSignedBillion(iv)}${paren(div_, fmtSignedBillion)} / 프로그램 ${fmtSignedShares(pq)}${paren(dpq, fmtSignedShares)}</div>`;
     })();
 
+    // 단저단고 v10b — score ≥2 STRONG = 매수 권고, sigB/sigS 발화 시 옆에 표시.
+    // 텔레그램 카드 render.py:289~306 과 동일한 가시화.
+    const mrLine = (() => {
+      if (!mr) return "";
+      const grade = mr.grade || "NEUTRAL";
+      const score = (typeof mr.score === "number") ? mr.score.toFixed(1) : "—";
+      const gradeCls = gradeClass(grade);
+      const gradeEmoji = grade === "STRONG" ? "🟢" : grade === "WATCH" ? "🟡" : "⚫";
+      let sig = "";
+      if (mr.sigB && mr.sigS) sig = ' <span class="text-emerald-300">🟢단저</span>+<span class="text-rose-300">🔴단고</span>';
+      else if (mr.sigB) sig = ' <span class="text-emerald-300">🟢 단저</span>';
+      else if (mr.sigS) sig = ' <span class="text-rose-300">🔴 단고</span>';
+      const reason = mr.reason ? `<span class="text-slate-400 ml-1">— ${escapeHtml(mr.reason)}</span>` : "";
+      return `<div><span class="text-slate-400">🔁 단저단고</span> <span class="${gradeCls} font-semibold">${gradeEmoji}${grade} ${score}</span>${sig}${reason}</div>`;
+    })();
+
     el.innerHTML = `
       <div class="flex items-center gap-2">
         <span class="font-bold text-slate-100">${escapeHtml(payload.name)}</span>
@@ -293,6 +310,7 @@
         <span class="text-slate-500">(${fmtRatio(ask.ratio)})</span>
       </div>
       ${investorLine}
+      ${mrLine}
       ${triggerBlock}
     `;
     return el;
