@@ -29,14 +29,14 @@ from src.dashboard.state import MonitoredStock, MonitoringSession
 # leaders + candidates 합쳐서 update_auto_leaders 에 전달.
 DEMO_AUTO_LEADERS = [
     {"code": "091340", "name": "대한광통신",
-     "themes": ["AI데이터센터"], "sector_role": "leader",
+     "themes": ["AI데이터센터"], "sector_role": "leader", "sector_rank": 1,
+     "surface_sector_name": "AI데이터센터"},
+    {"code": "012200", "name": "계양전기",
+     "themes": ["AI"], "sector_role": "candidate", "sector_rank": 1,
      "surface_sector_name": "AI데이터센터"},
     {"code": "075180", "name": "제룡전기",
-     "themes": ["전기/전선"], "sector_role": "leader",
+     "themes": ["전기/전선"], "sector_role": "leader", "sector_rank": 2,
      "surface_sector_name": "전기/전선"},
-    {"code": "012200", "name": "계양전기",
-     "themes": ["AI"], "sector_role": "candidate",
-     "surface_sector_name": "AI데이터센터"},
 ]
 # LEGACY 부상 후보 풀 — LEGACY_RISING_FUNNEL=1 시 demo 에서도 surface (back-out 검증용).
 DEMO_RISING_CANDIDATES: list[dict] = []

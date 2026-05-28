@@ -237,10 +237,12 @@ def render_monitor_message(
         flag_labels.append("🔵 수동")
     if monitored.is_auto:
         _role = getattr(monitored, "sector_role", None)
+        _rank = getattr(monitored, "sector_rank", None)
+        _rank_str = f" #{_rank}" if _rank else ""
         if _role == "leader":
-            flag_labels.append("⭐ 주도주")
+            flag_labels.append(f"⭐ 주도주{_rank_str}")
         elif _role == "candidate":
-            flag_labels.append("🌟 주도주 후보")
+            flag_labels.append(f"🌟 주도주 후보{_rank_str}")
         else:
             # LEGACY_RISING_FUNNEL=1 또는 fallback — 옛 라벨
             flag_labels.append("⭐ 자동")
@@ -741,6 +743,7 @@ def build_monitor_payload(
 
     # surface_sector_name — 카드 테마 라인이 단일 섹터로 좁아진 경우 표시.
     surface_sector_name = getattr(monitored, "surface_sector_name", None)
+    sector_rank = getattr(monitored, "sector_rank", None)
 
     return {
         "code": monitored.code,
@@ -750,6 +753,7 @@ def build_monitor_payload(
         "themes": list(monitored.themes),
         "surface_sector_name": surface_sector_name,
         "sector_role": getattr(monitored, "sector_role", None),
+        "sector_rank": sector_rank,
         "header": header,
         "price": price_block,
         "volume": volume_block,

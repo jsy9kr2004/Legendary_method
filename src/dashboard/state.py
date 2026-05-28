@@ -116,6 +116,7 @@ class MonitoredStock:
     mr_grade: str = "NEUTRAL"      # STRONG (≥2) / WATCH (≥1) / NEUTRAL
     # 단저단고 surface 룰 (2026-05-29). 자동 surface 종목의 역할 + 소속 섹터.
     sector_role: str | None = None          # "leader" | "candidate" | None
+    sector_rank: int | None = None          # 1=주도섹터 / 2=2위 / 3=3위 (카드 라벨 분기)
     surface_sector_name: str | None = None  # 첫 출현 주도섹터명 (카드 테마 라인용)
     # 단저단고 발화 이력 (최대 3개 FIFO, prepend = 최신이 [0]).
     mr_history: list[MrHistoryEntry] = field(default_factory=list)
@@ -328,29 +329,33 @@ class MonitoringSession:
         changes: list[str] = []
         new_codes = {e["code"] for e in entries}
 
-        # 기존 is_auto 중 풀에서 빠진 것 — flag + sector role / surface_sector_name off
+        # 기존 is_auto 중 풀에서 빠진 것 — flag + sector role / rank / sector_name off
         for code, m in self.monitored.items():
             if m.is_auto and code not in new_codes:
                 m.is_auto = False
                 m.sector_role = None
+                m.sector_rank = None
                 m.surface_sector_name = None
                 changes.append(f"⭐→ {code} {m.name} 자동 풀 이탈")
 
-        # 새 entries — is_auto flag set + sector_role / surface_sector_name 갱신
+        # 새 entries — is_auto flag set + sector_role / sector_rank / sector_name 갱신
         for entry in entries:
             code = entry["code"]
             new_themes = list(entry.get("themes", []))
             sector_role = entry.get("sector_role")
+            sector_rank = entry.get("sector_rank")
             surface_sector_name = entry.get("surface_sector_name")
             if code in self.monitored:
                 m = self.monitored[code]
                 if not m.is_auto:
                     role_label = "주도주" if sector_role == "leader" else "주도주 후보"
+                    rank_label = f" (섹터 {sector_rank}위)" if sector_rank else ""
                     changes.append(
-                        f"⭐ {entry.get('name', code)} ({code}) {role_label} 진입"
+                        f"⭐ {entry.get('name', code)} ({code}) {role_label}{rank_label} 진입"
                     )
                 m.is_auto = True
                 m.sector_role = sector_role
+                m.sector_rank = sector_rank
                 m.surface_sector_name = surface_sector_name
                 if new_themes:
                     m.themes = list(set(m.themes + new_themes))
@@ -359,11 +364,13 @@ class MonitoringSession:
                     code=code, name=entry.get("name", code),
                     added_at=now, is_auto=True, themes=new_themes,
                     sector_role=sector_role,
+                    sector_rank=sector_rank,
                     surface_sector_name=surface_sector_name,
                 )
                 role_label = "주도주" if sector_role == "leader" else "주도주 후보"
+                rank_label = f" (섹터 {sector_rank}위)" if sector_rank else ""
                 changes.append(
-                    f"⭐ {role_label} 신규: {entry.get('name', code)} ({code})"
+                    f"⭐ {role_label}{rank_label} 신규: {entry.get('name', code)} ({code})"
                 )
 
         return changes

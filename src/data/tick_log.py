@@ -58,6 +58,7 @@ class TickLogRow:
     is_holding: bool = False
     # 단저단고 surface 룰 (2026-05-29)
     sector_role: str | None = None          # "leader" | "candidate" | None
+    sector_rank: int | None = None          # 1=주도섹터 / 2=2위 / 3=3위
     surface_sector_name: str | None = None  # 첫 출현 주도섹터명
     surface_source: str | None = None       # "leader"/"candidate"/"manual"/"hold" (사후 분석용)
 
@@ -355,6 +356,7 @@ def build_tick_log_row(
         is_manual=bool(getattr(monitored, "is_manual", False)),
         is_holding=is_holding,
         sector_role=sector_role_val,
+        sector_rank=getattr(monitored, "sector_rank", None),
         surface_sector_name=getattr(monitored, "surface_sector_name", None),
         surface_source=surface_source_val,
         # 가격

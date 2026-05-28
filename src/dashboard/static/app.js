@@ -73,15 +73,21 @@
     return grade ? `grade-${grade}` : "";
   }
 
-  // round 35: multi-flag 라벨 조합. payload.flags = {auto, rising, manual, hold}
-  // 켜진 flag 만 모아서 표시 — 예: "💎 보유 / 🔵 수동 / ⭐ 자동"
-  function flagsLabel(flags) {
+  // 2026-05-29 단저단고 카드 라벨 (header_kind 4종 + 섹터 순위).
+  // payload.flags = {auto, rising, manual, hold} + payload.sector_role + payload.sector_rank.
+  // 예: "💎 보유 / 🔵 수동 / ⭐ 주도주 #1" / "🌟 주도주 후보 #2".
+  function flagsLabel(flags, sectorRole, sectorRank) {
     const parts = [];
     if (!flags) return "";
     if (flags.hold) parts.push("💎 보유");
     if (flags.manual) parts.push("🔵 수동");
-    if (flags.auto) parts.push("⭐ 자동");
-    if (flags.rising) parts.push("⚡ 후보");
+    if (flags.auto) {
+      const rankStr = sectorRank ? ` #${sectorRank}` : "";
+      if (sectorRole === "leader") parts.push(`⭐ 주도주${rankStr}`);
+      else if (sectorRole === "candidate") parts.push(`🌟 주도주 후보${rankStr}`);
+      else parts.push("⭐ 자동");  // LEGACY_RISING_FUNNEL=1 fallback
+    }
+    if (flags.rising) parts.push("⚡ 부상(legacy)");
     return parts.join(" / ");
   }
 
@@ -261,7 +267,7 @@
       <div class="flex items-center gap-2">
         <span class="font-bold text-slate-100">${escapeHtml(payload.name)}</span>
         <span class="text-slate-400">${code}</span>
-        <span class="text-[10px] text-slate-300">${flagsLabel(payload.flags)}</span>
+        <span class="text-[10px] text-slate-300">${flagsLabel(payload.flags, payload.sector_role, payload.sector_rank)}</span>
         <span class="ml-auto">${actions}</span>
       </div>
       <div><span class="text-slate-400">테마</span> <span class="text-slate-200">${escapeHtml(themes)}</span></div>

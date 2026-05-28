@@ -602,7 +602,9 @@ def select_leaders_and_candidates(
     if df.empty:
         return [], []
 
-    def _row_to_entry(row: pd.Series, sector_name: str, role: str) -> dict[str, Any]:
+    def _row_to_entry(
+        row: pd.Series, sector_name: str, role: str, sector_rank: int,
+    ) -> dict[str, Any]:
         return {
             "code": str(row["code"]),
             "name": str(row.get("name", "")),
@@ -618,6 +620,7 @@ def select_leaders_and_candidates(
             "market_cap": int(row.get("market_cap", 0))
                 if pd.notna(row.get("market_cap")) else 0,
             "sector_role": role,
+            "sector_rank": sector_rank,  # 1=주도섹터, 2=2위, 3=3위
             "surface_sector_name": sector_name,
             "themes": [sector_name],
         }
@@ -626,7 +629,8 @@ def select_leaders_and_candidates(
     candidates: list[dict[str, Any]] = []
     seen_codes: set[str] = set()
 
-    for sector in leading_sectors:
+    # leading_sectors 는 score 내림차순 정렬됨 → enumerate 가 1=주도섹터, 2=2위, 3=3위
+    for sector_idx, sector in enumerate(leading_sectors, start=1):
         sector_name = str(sector.get("theme", ""))
         sector_codes = {str(c) for c in sector.get("codes", [])}
         if not sector_name or not sector_codes:
@@ -654,7 +658,7 @@ def select_leaders_and_candidates(
         if trading_top1_code == turnover_top1_code:
             # 단일 주도주
             if trading_top1_code not in seen_codes:
-                leaders.append(_row_to_entry(trading_top1, sector_name, "leader"))
+                leaders.append(_row_to_entry(trading_top1, sector_name, "leader", sector_idx))
                 seen_codes.add(trading_top1_code)
 
             # 후보 평가
@@ -664,7 +668,7 @@ def select_leaders_and_candidates(
                 if str(trading_top2["code"]) == str(turnover_top2["code"]):
                     cand_code = str(trading_top2["code"])
                     if cand_code not in seen_codes:
-                        candidates.append(_row_to_entry(trading_top2, sector_name, "candidate"))
+                        candidates.append(_row_to_entry(trading_top2, sector_name, "candidate", sector_idx))
                         seen_codes.add(cand_code)
         else:
             # 공동 주도주 — 후보 평가 X
@@ -673,7 +677,7 @@ def select_leaders_and_candidates(
                 (turnover_top1, turnover_top1_code),
             ]:
                 if code not in seen_codes:
-                    leaders.append(_row_to_entry(row, sector_name, "leader"))
+                    leaders.append(_row_to_entry(row, sector_name, "leader", sector_idx))
                     seen_codes.add(code)
 
     logger.info(

@@ -391,10 +391,11 @@ def _maybe_push_mr_strong_alert(
 
     # 새 kind — push + alert_kind 갱신
     name = monitored.name or monitored.code
+    rank_str = f" #{monitored.sector_rank}" if monitored.sector_rank else ""
     if monitored.sector_role == "leader":
-        source_label = "⭐ 주도주"
+        source_label = f"⭐ 주도주{rank_str}"
     elif monitored.sector_role == "candidate":
-        source_label = "🌟 주도주 후보"
+        source_label = f"🌟 주도주 후보{rank_str}"
     elif monitored.is_manual:
         source_label = "🔵 수동"
     else:

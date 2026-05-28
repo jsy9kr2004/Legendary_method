@@ -74,6 +74,26 @@ def test_single_leader_candidate_mismatch():
     assert candidates == []
 
 
+def test_sector_rank_assigned_1_2_3():
+    """leading_sectors 순서대로 sector_rank 1/2/3 부여 (score 내림차순 가정)."""
+    snapshot = _make_snapshot([
+        {"code": "A00001", "rank": 1, "turnover": 50.0},
+        {"code": "A00002", "rank": 5, "turnover": 30.0},
+        {"code": "B00001", "rank": 2, "turnover": 40.0},
+        {"code": "C00001", "rank": 3, "turnover": 20.0},
+    ])
+    sectors = [
+        {"theme": "섹터A", "codes": ["A00001", "A00002"]},
+        {"theme": "섹터B", "codes": ["B00001"]},
+        {"theme": "섹터C", "codes": ["C00001"]},
+    ]
+    leaders, candidates = select_leaders_and_candidates(snapshot, sectors)
+    by_code = {l["code"]: l for l in leaders}
+    assert by_code["A00001"]["sector_rank"] == 1
+    assert by_code["B00001"]["sector_rank"] == 2
+    assert by_code["C00001"]["sector_rank"] == 3
+
+
 def test_top_sector_less_than_three_no_padding():
     """주도섹터 1개만 있어도 surface 자리 강제 padding X — 자연스럽게 줄어듦."""
     snapshot = _make_snapshot([
