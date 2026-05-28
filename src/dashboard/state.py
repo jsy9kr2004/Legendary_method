@@ -65,6 +65,19 @@ class LeaderState(str, Enum):
 
 
 @dataclass
+class MrHistoryEntry:
+    """단저단고 시그널 발화 이력 한 건 (카드 히스토리 섹션용).
+
+    매 tick 에서 mr_sigB OR mr_sigS 발화 시 MonitoredStock.push_mr_event() 가 prepend.
+    최대 3개 FIFO. 같은 kind 연속 발화는 score/reason 만 갱신 (중복 노이즈 회피).
+    """
+    ts: datetime
+    kind: str              # "단저" (sigB) | "단고" (sigS)
+    score: float
+    reason: str | None = None
+
+
+@dataclass
 class MonitoredStock:
     """한 종목의 모니터링 카드. 4 상태 flag 동시 ON 가능 (round 35).
 
@@ -72,6 +85,10 @@ class MonitoredStock:
     - is_manual: 사용자 명시 핀.
     - HOLD: holdings.json 기반 derived — 본 dataclass 에는 없음.
       worker 가 build_payload 시 외부 인자로 전달.
+
+    2026-05-29 단저단고 패러다임 전환:
+    - sector_role / surface_sector_name: 자동 surface 종목의 역할/소속 섹터.
+    - mr_history: 단저단고 시그널 발화 이력 (카드 히스토리 섹션).
     """
     code: str
     name: str
@@ -97,6 +114,14 @@ class MonitoredStock:
     mr_reason: str | None = None  # 발화 사유 + score breakdown
     mr_score: float = 0.0          # v10b weighted score
     mr_grade: str = "NEUTRAL"      # STRONG (≥2) / WATCH (≥1) / NEUTRAL
+    # 단저단고 surface 룰 (2026-05-29). 자동 surface 종목의 역할 + 소속 섹터.
+    sector_role: str | None = None          # "leader" | "candidate" | None
+    surface_sector_name: str | None = None  # 첫 출현 주도섹터명 (카드 테마 라인용)
+    # 단저단고 발화 이력 (최대 3개 FIFO, prepend = 최신이 [0]).
+    mr_history: list[MrHistoryEntry] = field(default_factory=list)
+    # 단저단고 STRONG 푸시 알림 추적 — 마지막 push 한 kind ("단저" / "단고" / None).
+    # 같은 kind 연속 발화 시 중복 push 방지. STRONG 영역 벗어나면 None 으로 reset.
+    mr_alert_kind: str | None = None
     # 시장 폭(breadth) — 국면 게이지 (P2-7). tick 마다 동일값 (시장 레벨).
     market_breadth_up_frac: float | None = None
     market_n_up5: int | None = None
@@ -117,6 +142,32 @@ class MonitoredStock:
             return Source.RISING
         # 어떤 flag 도 없으면 보유로 surface 된 케이스 — 호출자가 is_held=True 줘야
         return Source.HOLD
+
+    def push_mr_event(
+        self,
+        ts: datetime,
+        kind: str,
+        score: float,
+        reason: str | None,
+        max_history: int = 3,
+    ) -> None:
+        """단저단고 시그널 발화 이력 prepend (최대 max_history 개).
+
+        같은 kind 가 직전에 연속 발화한 경우 새 entry 추가 X, score/reason 만 갱신.
+        kind 가 바뀐 첫 발화일 때만 prepend. 결과: 히스토리는 항상 최신순.
+        """
+        if kind not in ("단저", "단고"):
+            return
+        if self.mr_history and self.mr_history[0].kind == kind:
+            # 연속 발화 — score/reason 만 갱신 (시각도 최신으로)
+            self.mr_history[0].ts = ts
+            self.mr_history[0].score = score
+            self.mr_history[0].reason = reason
+            return
+        entry = MrHistoryEntry(ts=ts, kind=kind, score=score, reason=reason)
+        self.mr_history.insert(0, entry)
+        if len(self.mr_history) > max_history:
+            self.mr_history[:] = self.mr_history[:max_history]
 
 
 @dataclass
@@ -222,77 +273,98 @@ class MonitoringSession:
         return cleared, f"🧹 수동 핀 {cleared}개 해제. 자동/후보/보유는 유지."
 
     def list_monitored(self) -> str:
-        """/list — 현재 모니터링 종목. flag 조합으로 표시."""
+        """/list — 현재 모니터링 종목. flag 조합으로 표시 (2026-05-29 단저단고 라벨)."""
         if not self.monitored:
-            return "📋 모니터링 중인 종목 없음."
-        lines = [f"📋 [현재 모니터링 — {len(self.monitored)}개]"]
+            return "📋 단저단고 모니터링 중인 종목 없음."
+        lines = [f"📋 [단저단고 모니터링 — {len(self.monitored)}개]"]
         for m in self.monitored.values():
             flags = []
             if m.is_manual:
                 flags.append("🔵수동")
             if m.is_auto:
-                flags.append("⭐자동")
+                role = m.sector_role
+                if role == "leader":
+                    flags.append("⭐주도주")
+                elif role == "candidate":
+                    flags.append("🌟주도주후보")
+                else:
+                    flags.append("⭐자동")
             if m.is_rising:
-                flags.append("⚡후보")
+                flags.append("⚡부상(legacy)")
             label = " / ".join(flags) if flags else "(no flag)"
-            themes = " / ".join(m.themes) if m.themes else "—"
+            themes = m.surface_sector_name or (" / ".join(m.themes) if m.themes else "—")
             lines.append(f"  • {m.code} {m.name} [{label}] ({themes})")
         return "\n".join(lines)
 
     def set_on(self) -> tuple[bool, str]:
-        """/on /start — 모니터링 ON (멱등)."""
+        """/on /start — 단저단고 모니터링 ON (멱등)."""
         if not self.paused:
-            return False, "▶ 이미 모니터링 ON 상태"
+            return False, "▶ 이미 단저단고 모니터링 ON 상태"
         self.paused = False
-        return True, "▶ 모니터링 ON — 카드 갱신 시작"
+        return True, "▶ 단저단고 모니터링 ON — 카드 갱신 시작"
 
     def set_off(self) -> tuple[bool, str]:
-        """/off — 모니터링 OFF (멱등)."""
+        """/off — 단저단고 모니터링 OFF (멱등)."""
         if self.paused:
-            return False, "⏸ 이미 모니터링 OFF 상태"
+            return False, "⏸ 이미 단저단고 모니터링 OFF 상태"
         self.paused = True
         self.off_cleanup_pending = True
-        return True, "⏸ 모니터링 OFF — /on 으로 재개 (다음 평일 09:00 자동 ON)"
+        return True, "⏸ 단저단고 모니터링 OFF — /on 으로 재개 (다음 평일 09:00 자동 ON)"
 
     # ── 자동 주도주 (시스템) ──────────────────────────────────────────────────
 
     def update_auto_leaders(
         self,
-        leaders: list[dict[str, Any]],
+        entries: list[dict[str, Any]],
         now: datetime,
     ) -> list[str]:
-        """주도주 풀로 is_auto flag 동기화.
+        """주도주/후보 풀로 is_auto flag 동기화 (2026-05-29 단저단고 surface 룰).
 
-        (round 35) 이전엔 source=AUTO 종목을 통째로 갈아엎었으나, 이제는 flag
-        만 set/clear. 사용자가 [→ 수동] 으로 is_manual 켜둔 종목이 자동 풀에서
-        빠져도 카드 유지.
+        entries = leaders + candidates (select_leaders_and_candidates() 결과 합치기).
+        각 entry 의 "sector_role" / "surface_sector_name" 키로 MonitoredStock 갱신.
+
+        (round 35) flag 모델 — 자동 풀에서 빠져도 manual/hold flag 있으면 카드 유지.
         """
         changes: list[str] = []
-        new_codes = {l["code"] for l in leaders}
+        new_codes = {e["code"] for e in entries}
 
-        # 기존 is_auto 중 풀에서 빠진 것 — flag 만 off
+        # 기존 is_auto 중 풀에서 빠진 것 — flag + sector role / surface_sector_name off
         for code, m in self.monitored.items():
             if m.is_auto and code not in new_codes:
                 m.is_auto = False
+                m.sector_role = None
+                m.surface_sector_name = None
                 changes.append(f"⭐→ {code} {m.name} 자동 풀 이탈")
 
-        # 새 leaders — is_auto flag set + 신규 종목이면 entry 추가
-        for ld in leaders:
-            code = ld["code"]
-            new_themes = list(ld.get("themes", []))
+        # 새 entries — is_auto flag set + sector_role / surface_sector_name 갱신
+        for entry in entries:
+            code = entry["code"]
+            new_themes = list(entry.get("themes", []))
+            sector_role = entry.get("sector_role")
+            surface_sector_name = entry.get("surface_sector_name")
             if code in self.monitored:
                 m = self.monitored[code]
                 if not m.is_auto:
-                    changes.append(f"⭐ {ld.get('name', code)} ({code}) 자동 진입")
+                    role_label = "주도주" if sector_role == "leader" else "주도주 후보"
+                    changes.append(
+                        f"⭐ {entry.get('name', code)} ({code}) {role_label} 진입"
+                    )
                 m.is_auto = True
+                m.sector_role = sector_role
+                m.surface_sector_name = surface_sector_name
                 if new_themes:
                     m.themes = list(set(m.themes + new_themes))
             else:
                 self.monitored[code] = MonitoredStock(
-                    code=code, name=ld.get("name", code),
+                    code=code, name=entry.get("name", code),
                     added_at=now, is_auto=True, themes=new_themes,
+                    sector_role=sector_role,
+                    surface_sector_name=surface_sector_name,
                 )
-                changes.append(f"⭐ 자동 추가: {ld.get('name', code)} ({code})")
+                role_label = "주도주" if sector_role == "leader" else "주도주 후보"
+                changes.append(
+                    f"⭐ {role_label} 신규: {entry.get('name', code)} ({code})"
+                )
 
         return changes
 

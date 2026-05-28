@@ -4,7 +4,21 @@
 
 ## 프로젝트 한 문장 요약
 
-한국 주식 매매(주도주/종배/스윙)에 대한 의사결정 보조 레포트를 텔레그램/이메일로 자동 발송하는 프로그램. 매수/매도는 사람이 직접 한다. 현재는 **종배 매매** 모듈만 구현 중이다.
+한국 주식 매매 의사결정 보조 시스템. **핵심은 두 축이다 (둘 다 운영 중)**:
+
+1. **주도주 단타 (09:00~10:30) — 단저단고 모니터링** ★
+   주도섹터 Top 3 의 주도주/후보 + 사용자 종목을 텔레그램 카드 / PWA 대시보드 에
+   1~3초 단위로 갱신. 분봉 단저단고(intraday mean reversion) 시그널 발화 시
+   STRONG 푸시 알림. 사용자가 카드 보고 직접 매수 결정 (HTS 클릭).
+2. **종배 (장 마감 전 14:50) — 결정 레포트** ★
+   주도섹터 + 일봉 +20%↑ 종목 후보 + 4-Layer 갭상 통계 + Kelly/Sharpe/Equal 사이징
+   을 14:50 텔레그램 발송. 사용자가 매수 → 다음날 시초가 매도.
+
+매수/매도 실주문은 **사람이 직접** 한다 (자동 매매 영구 X — `docs/dashboard-pwa.md` §6).
+"단타" = "주도주 단타" = "단저단고 모니터링" 모두 같은 것 (사용자가 자주 혼용).
+"종배" 시스템은 `src/overnight/`, "단타" 시스템은 `src/scalping/` 에 분리.
+
+스윙 매매 (수 일~수 주) 는 v0 범위 X.
 
 ## 사용자 (Zeta) 컨텍스트
 
@@ -105,8 +119,9 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 | R12 | `Buy.Candle` / CDL | 봉 패턴 |
 | R12.5 | `Buy.Position` / POS | 위치/맥락 |
 | R13 | `Buy.Div` / DIV | 다이버전스 |
-| R14 | `Buy.Score` / B | 매수 점수 + 등급 (메인) |
-| R15 | `Exit.Triggers` / E | 매도 트리거 + 상태 머신 (메인) |
+| R14 | `Buy.Score` / B | 매수 점수 + 등급 (**2026-05-29 카드 표시 폐기, tick_log 로깅만 유지**) |
+| R15 | `Exit.Triggers` / E | 매도 트리거 + 상태 머신 (**2026-05-29 카드 표시 폐기, tick_log 로깅만 유지**) |
+| — | `MR` (mean reversion) | **단저단고 v10b — 카드 메인 시그널 (2026-05-29 운영 전환)**. `src/scalping/signals/mean_reversion.py` + `weighted_score.py` |
 
 **Exit 하위 알파벳** (각 글자가 단어 의미):
 - **A**1~A5 = **A**uto-stop (자동 손절 — 가격/봉/이평/시간/EOD)
@@ -147,7 +162,9 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 | 종배 (jongbae, Eod) | 종가 베팅. 장 마감 직전 매수 → 다음날 시초 매도 |
 | 주도테마(주도섹터) | (v0) 거래대금 30위 내 같은 테마 ≥3종목. (v1, M5.5) 테마별 breadth + 동일가중 평균상승률 + 회전율 합계의 z-score 합산 상위 N개 |
 | 주도주 (정통, 결정 레포트용) | 주도테마 내 first-mover 상한가 도달 종목. `identify_leading_stocks()` |
-| 주도주 (고주파, 09:00~10:30 모니터링용) | 주도테마 내 **회전율 1위** 종목. pre-limit-up 진입 후보. 상승률/거래대금 절대값은 표시만 (점수화 X). `identify_early_morning_leaders()` |
+| 주도주 (고주파, 옛 09:00~10:30 모니터링용 — 2026-05-29 폐기) | 주도테마 내 **회전율 1위** 종목. pre-limit-up 진입 후보. `identify_early_morning_leaders()`. **2026-05-29 단저단고 surface 룰로 대체** |
+| 주도주 (단저단고 surface 룰, 2026-05-29~) | 주도섹터 내 **거래대금 1위 ∩ 회전율 1위** (다르면 공동 주도주 2종목). `select_leaders_and_candidates()` (`src/common/theme.py`) |
+| 주도주 후보 (단저단고 surface 룰) | 주도섹터 내 **거래대금 2위 == 회전율 2위** (같은 종목일 때만, 다르면 후보 없음). 공동 주도주 케이스에선 평가 X |
 | 거래량 (volume) | 누적 체결주식수 (주). KIS `acml_vol`. ★ universe 정렬 기준으로 쓰면 ETF/저가주 편향 — 종배 universe엔 부적합 |
 | 거래대금 (trading_value) | 누적 체결금액 (원). KIS `acml_tr_pbmn`. ★ 종배/주도섹터 universe의 정답 정렬축. KIS volume-rank 사용 시 `FID_BLNG_CLS_CODE="3"` |
 | 회전율 (turnover) | 거래대금 ÷ 시가총액. 시총 정규화로 대형주 편향 제거. 단타 자금 유입의 진짜 강도 |
@@ -156,7 +173,9 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 | 분봉 거래대금 임계 | 분봉(1~5분) 거래대금 20억 이상 (실무 기준봉 임계, i-whale) |
 | TRANSITION | 주도주 교체 가능성 상태 — a2 가속 ≥ 5배 + 분봉거래대금 ≥ 20억 + a2 회전율 ≥ a1 × 0.6 |
 | GRACE | 실제 교체 후 5분 유예기 — a1, a2 함께 표시 (엎치락뒤치락 대비) |
-| 부상 후보 (RISING) | (round 21) "매수 점수 부상 후보". 회전율 단일 기준 surface 가 아니라 4단계 funnel (snapshot → 모멘텀 → VP → Buy.Score 풀스코어) 통과 + Buy.Score 점수 ≥ 2.0 (WATCH 이상). +29% 도달 종목은 Stage 0 에서 자동 제외 |
+| 부상 후보 (RISING) | (round 21) "매수 점수 부상 후보". 4단계 funnel + Buy.Score ≥ 2.0. **2026-05-29 카드 surface 폐기** — `LEGACY_RISING_FUNNEL=1` env 시만 부활 (back-out 용) |
+| 단저단고 (intraday mean reversion) | 분봉 swing low/high + oversold/overbought 시그널. mr_sigB=매수 트리거, mr_sigS=매도 트리거. mr_grade=v10b weighted score 등급 (STRONG≥2 / WATCH≥1 / NEUTRAL). 2026-05-29 단타 카드 메인 시그널 |
+| 단저단고 히스토리 | 카드 옛 청산 시그널 자리에 sigB/sigS 발화 이력 최대 3개 (시간 + kind + score + reason). MonitoredStock.mr_history FIFO. 2026-05-29 신규 |
 | 일봉 +20%↑ | 종가 기준 전일 대비 수익률 +20% 이상 |
 | 갭상 (gap up) | 다음날 시가가 전일 종가보다 높은 것 |
 | 상한가 | KOSPI/KOSDAQ +30%. 종배의 1순위 진입 시점 |
@@ -188,6 +207,8 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 - "거래대금 1위 = 주도주"는 **함정** — 항상 하이닉스/삼전이 1위. 단타용은 **회전율 1위**
 - **검증되지 않은 자작 종합 스코어 X** — 한국 단타 통설(상승률/회전율/breadth/가속배율) 그대로 따른다. AI가 임의로 가중합/공식 만들지 X
 - ETF/ETN/리츠/스팩/펀드는 **주도주 후보에서 제외** — 단타 대상 아님 (M5.5)
+- **Buy.Score / Exit.Triggers 카드 표시 X (2026-05-29~)** — 단타 모니터링 카드에서 헤더 등급 라벨 / 사유 라인 / `─ 청산 시그널 ─` C 그룹 라인 모두 폐기. tick_log 의 `buy_score`/`buy_grade`/`buy_reasons`/`trigger_a*/p*/e*` 컬럼은 사후 비교/매매일지 용으로 계속 기록. Back-out: `LEGACY_RISING_FUNNEL=1` env 토글
+- **단저단고 surface 룰 (2026-05-29~)**: `select_leaders_and_candidates()` 의 leaders + candidates + manual + holdings 만 카드 surface. 권외 종목 mr_sigB 발화는 tick_log 만 (카드 X). Top 섹터 < 3 인 약세장은 강제 padding X (섹터 수만큼만)
 - 메시지 1~2초마다 send 하면 푸시 폭주 → **`editMessageText`로 메시지 1개 갱신**, 푸시는 신규 종목 진입/임계 초과 시점만
 - 주도주 교체는 **2단계 상태 머신** (TRANSITION → GRACE 5분 유예) — 순간 이벤트 X, 엎치락뒤치락 대비
 - 주도섹터 1:1 주도주 매핑 X — 한 섹터 여러 후보, 한 종목 여러 섹터 가능
@@ -195,10 +216,53 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 ## 매매 전략별 상태
 
 ```
-1. 주도주 매매 (스윙/중기, 수 주~수 개월)  → TODO
-2. 종배 매매 (오버나잇, 1일)              → 개발 중 ★
-3. 스윙 매매 (수 일~수 주)                → TODO
+1. 주도주 단타 (09:00~10:30, 분봉 단저단고) → **운영 중 ★ (2026-05-29 단저단고 패러다임 전환)**
+2. 종배 매매 (오버나잇, 14:50 결정 레포트)  → **운영 중 ★**
+3. 스윙 매매 (수 일~수 주)                  → v0 범위 X
 ```
+
+위 1, 2 가 본 프로젝트의 두 핵심 산물. 매일 09:00 카드 자동 ON + 14:50 종배 레포트.
+
+## 단저단고 모니터링 정량 룰 (2026-05-29~)
+
+전체 시그널 정의는 [`docs/scalping-redesign-2026-05-27.md`](docs/scalping-redesign-2026-05-27.md). surface 3단계:
+
+**Step (1) — 거래대금 30위 ∩ 회전율 30위 풀 추출** ★ (사용자 비전 1 핵심)
+  `intersect_universe()` (`src/common/universe.py`) — RANK_MAX=30 / TURNOVER_RANK_MAX=30.
+  교집합이 곧 scalping universe (보통 10~20 종목). 권외 종목은 자동 surface X.
+
+**Step (2) — 주도섹터 식별 (Top 3)**
+  Step (1) 풀로 `score_leading_sectors()` 호출 — 테마별 breadth + 동일가중
+  평균상승률 + 회전율 합계의 z-score 합산 상위 3개 = 주도섹터 1·2·3위.
+
+**Step (3) — 주도섹터별 주도주 + 후보 식별**
+  `select_leaders_and_candidates()` (`src/common/theme.py`):
+  - **주도주** = 섹터 내 **거래대금 1위 ∩ 회전율 1위** (같은 종목)
+    - 다르면 공동 주도주 2종목 (이 경우 후보 평가 X)
+  - **주도주 후보** = 섹터 내 **거래대금 2위 == 회전율 2위** (같은 종목일 때만)
+    - 다르면 후보 없음
+  - Top 섹터 < 3 약세장은 강제 padding X (섹터 수만큼만)
+
+**Step (4) — surface universe**
+  자동 = leaders ∪ candidates (최대 6종) ∪ 사용자 수동 ∪ 보유.
+
+**시그널** — `mean_reversion.py`:
+  - mr_sigB = 매수 트리거 (swing low + oversold; STOCH ≤ 30 OR Z ≤ -1.0)
+  - mr_sigS = 매도 트리거 (swing high + overbought + 음봉 패턴)
+  - mr_grade STRONG (score ≥ 2.0) / WATCH (≥ 1.0) / NEUTRAL — v10b weighted score
+
+**카드 표시**: 헤더 4종 (⭐주도주 / 🌟주도주 후보 / 🔵수동 / 💎보유) + 테마 1개
+  (surface 된 주도섹터) + 단저단고 라인 + 보조 (가격/가속/체결강도/호가/수급) +
+  단저단고 히스토리 (최대 3).
+
+**STRONG 푸시 알림 (2026-05-29 신규)**: `MR_STRONG_ALERT=1` (default) 인 경우, 자동
+  surface 6종 + 수동 + 보유 종목의 mr_grade==STRONG + (sigB OR sigS) 시 별도
+  텔레그램 메시지 send. `/on`/`/off` 와 무관 (paused 일 때도 push). 종목별로 같은
+  kind 연속 발화는 1회만 push (kind 전환 또는 STRONG 영역 벗어났다 재진입 시만 재 push).
+
+**자동 청산 X**: 사용자가 카드 보고 직접 매매. CLAUDE.md 자동 매매 금지 정책 유지.
+
+**Back-out**: `LEGACY_RISING_FUNNEL=1` env 토글로 옛 Buy.Score funnel surface 부활.
 
 ## 종배 매매 정량 룰 (간략)
 
@@ -234,12 +298,13 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 
 | 시점 | 채널 | 내용 |
 |---|---|---|
-| **사용자 `/on` ~ `/off`** | **텔레그램 (메시지 편집) + PWA 대시보드 (M7)** | **실시간 모니터링 — 주도주/사용자 종목 1~2초 갱신. 평일 09:00 자동 ON, /off 로만 종료 (10:30 자동 OFF 폐지, round 18). PWA 는 아이패드 한 화면 카드 그리드 + 보유 토글 버튼 (holdings.json input only, KIS 주문 X, `docs/dashboard-pwa.md`)** ★ |
+| **사용자 `/on` ~ `/off`** | **텔레그램 (메시지 편집) + PWA "단저단고 모니터링"** | **실시간 단저단고 모니터링 — 주도주(거래대금∩회전율 1위)/주도주 후보(2위)/사용자 종목 1~2초 갱신. 평일 09:00 자동 ON, /off 로만 종료. PWA 는 한 화면 카드 그리드 + 보유 토글 버튼 (holdings.json input only, KIS 주문 X)** ★ |
+| **단저단고 STRONG 발화** | **텔레그램 (별도 send, /on/off 무관)** | **자동 6종 + 수동 + 보유 종목의 mr_grade==STRONG + sigB/sigS 발화 시 1회 push** (kind 전환/STRONG 재진입 시만 재 push). `MR_STRONG_ALERT=1` default. 사용자가 자리 비울 때 놓치는 시점 대비 ★ |
 | 09:30 모닝 | 텔레그램 | 시장 국면 + 어제 보유 종목 갭 분석 |
 | 11:00 / 13:00 / 14:00 | 텔레그램 | 주도테마 변화, 신규 상한가 |
 | 14:50 결정 | 텔레그램 | **최종 종배 후보 + 사이징** ★ |
 | 상한가 진입 | 텔레그램 | 즉시 푸시 (이벤트 트리거) ★ |
-| 모니터링 카드 내부 (부상/교체/이탈/매수점수/매도트리거) | 텔레그램 (편집) | **별도 푸시 X** — 카드 색상/이모지/사유 한 줄로 통합 표시 |
+| 모니터링 카드 내부 (단저단고 시그널/히스토리/주도주 surface 변경) | 텔레그램 (편집) | **별도 푸시 X** — 카드 색상/이모지/단저단고 라인 1줄 통합 표시 |
 | 16:00 사후 | 텔레그램 | 상세 마크다운 레포트 (4096자 초과 시 자동 분할) |
 
 ★ 가 표시된 것이 가장 중요한 알림이다.

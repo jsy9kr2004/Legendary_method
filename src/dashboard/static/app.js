@@ -153,32 +153,28 @@
     const inv = payload.investor;  // round 36: null 또는 {foreign_value, institution_value, program_qty, ...}
     const invDelta = payload.investor_delta;  // round 36 후속: 마지막 변화량 + elapsed_sec
     const holding = payload.holding;
-    const triggers = payload.trigger_states || {};
-    const triggerLines = payload.trigger_lines || [];
     const transition = payload.transition;
     const mr = payload.mean_reversion;  // 2026-05-28: 단저단고 v10b. NEUTRAL+시그널X 면 null.
+    const mrHistory = payload.mr_history || [];  // 2026-05-29: 단저단고 발화 이력 (최대 3).
 
-    const grade = header.grade || "";
-    const gradeSpan = grade
-      ? `<span class="${gradeClass(grade)} font-bold">${grade} ${fmtScore(header.score)}점</span>`
-      : "";
+    // Buy.Score 등급 헤더 + Exit.Triggers 청산 시그널 라인은 2026-05-29 폐기 (로깅만).
+    // 단저단고 패러다임 카드는 헤더 라벨(주도주/후보/수동/보유)만 표시.
     const lupMark = price.is_limit_up ? ' <span class="text-rose-400">🔴상한가</span>' : "";
 
     const actions = buildActionButtons(payload);
 
-    // 청산 시그널 — payload.trigger_lines 그대로 출력. round 36: 마크 ▢ / 🚧.
-    // 발화 항목 (🚧) 있으면 카드 빨간 펄스 + 라인 amber 강조.
-    const anyFired = Object.values(triggers).some((v) => v);
-    if (anyFired) el.classList.add("pulse-trigger");
-    else el.classList.remove("pulse-trigger");
-    let triggerBlock = "";
-    if (triggerLines.length) {
-      const html = triggerLines.map((line) => {
-        const fired = line.includes("🚧");
-        const cls = fired ? "text-amber-300 font-semibold" : "text-slate-400";
-        return `<div class="${cls}">${escapeHtml(line)}</div>`;
+    // 단저단고 히스토리 (옛 Exit.Triggers 자리) — 최대 3개 최신순.
+    let historyBlock = "";
+    if (mrHistory.length) {
+      const html = mrHistory.map((h) => {
+        const tsLabel = h.ts ? new Date(h.ts).toLocaleTimeString("ko-KR", { hour12: false }) : "--:--:--";
+        const emoji = h.kind === "단저" ? "🟢" : "🔴";
+        const cls = h.kind === "단저" ? "text-emerald-300" : "text-rose-300";
+        const score = (typeof h.score === "number") ? h.score.toFixed(1) : "—";
+        const reason = h.reason ? escapeHtml(h.reason).slice(0, 60) : "—";
+        return `<div class="${cls}">${tsLabel} ${emoji} ${h.kind} <span class="font-semibold">score ${score}</span> <span class="text-slate-400">${reason}</span></div>`;
       }).join("");
-      triggerBlock = `<div class="mt-1 pt-1 border-t border-slate-700">${html}</div>`;
+      historyBlock = `<div class="mt-1 pt-1 border-t border-slate-700"><div class="text-slate-500 text-[10px]">─ 단저단고 히스토리 ─</div>${html}</div>`;
     }
 
     // Transition (a1 카드에 a2 부상 후보 표시)
@@ -213,8 +209,10 @@
         </div>`;
     }
 
-    const themes = (payload.themes || []).join(" / ") || "—";
-    const reasons = (header.reasons || []).slice(0, 3).join(" / ");
+    // 테마 라인 — 2026-05-29: surface_sector_name 1개만 (자동 surface 종목).
+    // 수동/보유 + 주도섹터 미속하면 전체 themes list. CLAUDE.md 단저단고 카드 정책.
+    const themes = payload.surface_sector_name
+      || ((payload.themes || []).join(" / ") || "—");
 
     // round 36: 라벨/값 분리 — 라벨은 slate-400 흐림, 값은 slate-100 + font-semibold 또렷.
     // 위계: 라벨 < 단위/괄호 < 값. 슬쩍 보면 숫자가 먼저 들어오게.
@@ -243,8 +241,8 @@
       return `<div class="text-slate-400">수급${headerSuffix}: 외인 ${fmtSignedBillion(fv)}${paren(dfv, fmtSignedBillion)} / 기관 ${fmtSignedBillion(iv)}${paren(div_, fmtSignedBillion)} / 프로그램 ${fmtSignedShares(pq)}${paren(dpq, fmtSignedShares)}</div>`;
     })();
 
-    // 단저단고 v10b — score ≥2 STRONG = 매수 권고, sigB/sigS 발화 시 옆에 표시.
-    // 텔레그램 카드 render.py:289~306 과 동일한 가시화.
+    // 단저단고 시그널 라인 (2026-05-29: "🔁 단저단고" 라벨 제거 — 페이지 자체가 단저단고).
+    // score ≥2 STRONG = 매수 권고, sigB/sigS 발화 시 옆에 표시.
     const mrLine = (() => {
       if (!mr) return "";
       const grade = mr.grade || "NEUTRAL";
@@ -256,7 +254,7 @@
       else if (mr.sigB) sig = ' <span class="text-emerald-300">🟢 단저</span>';
       else if (mr.sigS) sig = ' <span class="text-rose-300">🔴 단고</span>';
       const reason = mr.reason ? `<span class="text-slate-400 ml-1">— ${escapeHtml(mr.reason)}</span>` : "";
-      return `<div><span class="text-slate-400">🔁 단저단고</span> <span class="${gradeCls} font-semibold">${gradeEmoji}${grade} ${score}</span>${sig}${reason}</div>`;
+      return `<div><span class="${gradeCls} font-semibold">${gradeEmoji}${grade} ${score}</span>${sig}${reason}</div>`;
     })();
 
     el.innerHTML = `
@@ -264,11 +262,9 @@
         <span class="font-bold text-slate-100">${escapeHtml(payload.name)}</span>
         <span class="text-slate-400">${code}</span>
         <span class="text-[10px] text-slate-300">${flagsLabel(payload.flags)}</span>
-        ${gradeSpan}
         <span class="ml-auto">${actions}</span>
       </div>
       <div><span class="text-slate-400">테마</span> <span class="text-slate-200">${escapeHtml(themes)}</span></div>
-      ${reasons ? `<div class="text-slate-300">사유: ${escapeHtml(reasons)}</div>` : ""}
       ${transitionLine}
       <div class="mt-1">
         <span class="text-slate-100 font-bold">${fmtNum(price.current)}원</span>
@@ -311,7 +307,7 @@
       </div>
       ${investorLine}
       ${mrLine}
-      ${triggerBlock}
+      ${historyBlock}
     `;
     return el;
   }

@@ -1,9 +1,9 @@
-"""Telegram 양방향 봇 — 사용자 명령 수신 및 응답 (M6).
+"""Telegram 양방향 봇 — 사용자 명령 수신 및 응답 (M6, 2026-05-29 단저단고).
 
 명령어:
-    /on, /start                  모니터링 ON (멱등). 24h 허용.
-    /off, /pause                 모니터링 OFF (멱등).
-    /list                        현재 모니터링 종목 출력
+    /on, /start                  단저단고 모니터링 ON (멱등). 24h 허용.
+    /off, /pause                 단저단고 모니터링 OFF (멱등).
+    /list                        현재 단저단고 모니터링 종목 출력
     /clear                       수동 추가분만 해제
     NNNNNN                       6자리 숫자 → 감시 모드 토글 추가/해제
     /buy NNNNNN [PRICE] [MIN]    보유 모드 진입 (Exit.Triggers).
@@ -180,7 +180,7 @@ def apply_command(
         if cmd.code is None:
             return ""
         if cmd.code not in session.monitored:
-            return f"⚠ {cmd.code} — 모니터링 중이 아님"
+            return f"⚠ {cmd.code} — 단저단고 모니터링 중이 아님"
         m = session.monitored[cmd.code]
         # 풀 카드 재발송은 worker 가 다음 tick 에 message_id 초기화로 처리
         m.message_id = None

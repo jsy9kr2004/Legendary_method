@@ -136,6 +136,18 @@ def build_monitor_payload(stock: MonitoredStock, ...) -> dict:
             "sigB": True, "sigS": False,
             "reason": "atr_low +1.0 / at_support +0.6 / ...",
         },
+        # 2026-05-29 단저단고 운영 전환 — 옛 청산 시그널(trigger_lines) 자리.
+        "mr_history": [  # 최대 3개, 최신순 (FIFO prepend).
+            {"ts": "2026-05-29T10:21:43+09:00", "kind": "단저", "score": 2.3,
+             "reason": "STOCH=30 Z=-1.08 atr0.4%"},
+            ...
+        ],
+        # 2026-05-29 surface 룰 — 자동 surface 종목이면 1개 섹터명, 수동/보유 +
+        # 주도섹터 안에 들면 그 1개, 안 들면 None (frontend 가 themes list 사용).
+        "surface_sector_name": "AI데이터센터" | None,
+        "sector_role": "leader" | "candidate" | None,
+        # 2026-05-29 카드 표시 폐기 (DEPRECATED). 호환성 위해 키는 유지, 값은 빈 list.
+        "trigger_lines": [],
         "updated_at": "2026-05-14T10:23:45+09:00",
         "stale": False,  # 마지막 tick 으로부터 10s 초과 시 True
     }

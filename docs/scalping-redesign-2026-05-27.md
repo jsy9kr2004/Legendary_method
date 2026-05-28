@@ -6,6 +6,11 @@
 (intraday mean reversion + swing low/high)** 패러다임으로 전면 교체. 검증 후
 M6 카드 완전 교체. 종배는 그대로.
 
+**★ 2026-05-29 운영 전환 완료** — Buy.Score/Exit.Triggers 카드 표시 폐기 (tick_log
+로깅만 유지). surface 룰 = 주도섹터 Top 3 × (주도주 + 후보) + 수동 + 보유. 자세한
+변경 내역은 §11 정정 이력 표 마지막 행 참조. Back-out 절차: `.env` 에
+`LEGACY_RISING_FUNNEL=1` 추가 후 데몬 재시작.
+
 본 문서는 `docs/trading-method-separation-discussion.md` §11 ("화력→리더" 운영
 전환) 의 후속이며, 5/27 매매일지 (`data/journal/2026-05-27.md`) 의 토론 결과로
 시작된 재설계.
@@ -386,6 +391,8 @@ Phase 2 (6/23 이후) : net 양수 검증 시 운영 전환.
 | 2026-05-27 (후속) | bars.py / mean_reversion.py / backtest_mean_reversion.py 신규 + CLI 검증 | 모듈화 완료, baseline 결과 data/backtest/mr_v3_baseline.json 저장. M6 worker 통합은 다음 세션 |
 | 2026-05-28 | universe 게이트 정정 — auto/rising/manual/holding 우회 | 초안에선 universe 미통과 시 모든 종목 막힘 = 사용자가 수동 등록한 종목 (예: SK하이닉스) 도 막힘. 사용자 명시: universe 게이트는 자동 추가 종목 풀 좁힘 용도, 사용자 관심 종목 (auto/rising/manual/holding) 은 항상 분석. worker.py `_in_mr_universe` 로직 수정 |
 | 2026-05-28 | "universe 통과 = N 종목" 의미 명확화 | "6 종목" = 거래대금 30위 ∩ 회전율 30위 교집합 = **주도섹터 후보 종목 풀** (사용자 비전 1 정의). 주도주 1~3 개가 아니라 그 풀 안에서 섹터 카운트 → 1·2·3위 섹터 → 섹터별 주도주 식별 |
+| 2026-05-28 | `intersect_scalping_universe` dead code 발견 | 사용자가 PWA 카드에서 "거래대금 43위" 종목 surface 본 후 조사 — universe.py 함수 정의만 있고 호출처 0건. surface 자체 룰 재설계 필요 인식 |
+| **2026-05-29 ★ 운영 전환** | **단저단고 패러다임 single 머지** — Buy.Score/Exit.Triggers 카드 표시 폐기, surface 룰 = 주도섹터 Top 3 × (거래대금∩회전율 1위) 주도주 + (2위 == 2위) 후보 + 수동 + 보유 | 사용자 결정: Phase 1 holdout 누적 미달이지만 dry-run 1일 결과 (031330 +1.24%, 주도주 한정 시뮬 net +1.38%) + universe 결함 발견으로 즉시 전환. Back-out: `LEGACY_RISING_FUNNEL=1` env 토글. 변경 파일: `src/common/theme.py` (select_leaders_and_candidates 신규), `src/dashboard/worker.py` (surface 파이프라인), `src/dashboard/state.py` (MonitoredStock 에 sector_role/surface_sector_name/mr_history 신규 + push_mr_event 헬퍼), `src/dashboard/render.py` (카드/페이로드 재구성), `src/dashboard/static/{index.html, app.js, manifest.json}` (이름 + 라벨), `src/data/tick_log.py` (sector_role/surface_sector_name/surface_source 신규 컬럼) |
 
 향후 단저단고 시그널 / 임계 / 청산 룰 변경 시 본 표에 행 추가. 5/25 결론
 ([[scalping-method-separation]]) 강화하는 변경은 같은 행에 cross-ref.

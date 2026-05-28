@@ -56,6 +56,10 @@ class TickLogRow:
     is_rising: bool = False
     is_manual: bool = False
     is_holding: bool = False
+    # 단저단고 surface 룰 (2026-05-29)
+    sector_role: str | None = None          # "leader" | "candidate" | None
+    surface_sector_name: str | None = None  # 첫 출현 주도섹터명
+    surface_source: str | None = None       # "leader"/"candidate"/"manual"/"hold" (사후 분석용)
 
     # ── 가격 / 거래 ──────────────────────────────────────────────────────
     price: int | None = None
@@ -331,6 +335,17 @@ def build_tick_log_row(
         except (AttributeError, ValueError):
             lut_str = None
 
+    # 단저단고 surface 룰 (2026-05-29) — surface_source 우선순위: hold > manual > leader > candidate
+    sector_role_val = getattr(monitored, "sector_role", None)
+    if is_holding:
+        surface_source_val = "hold"
+    elif bool(getattr(monitored, "is_manual", False)):
+        surface_source_val = "manual"
+    elif sector_role_val in ("leader", "candidate"):
+        surface_source_val = sector_role_val
+    else:
+        surface_source_val = None
+
     return TickLogRow(
         ts=now.isoformat(),
         code=code,
@@ -339,6 +354,9 @@ def build_tick_log_row(
         is_rising=bool(getattr(monitored, "is_rising", False)),
         is_manual=bool(getattr(monitored, "is_manual", False)),
         is_holding=is_holding,
+        sector_role=sector_role_val,
+        surface_sector_name=getattr(monitored, "surface_sector_name", None),
+        surface_source=surface_source_val,
         # 가격
         price=_int_safe(snap_row.get("price")),
         prev_close=_int_safe(snap_row.get("prev_close")),

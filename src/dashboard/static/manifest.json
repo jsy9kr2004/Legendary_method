@@ -1,7 +1,7 @@
 {
-  "name": "종배 모니터링 대시보드",
-  "short_name": "종배",
-  "description": "M6 카드를 한 화면에 보는 PWA 대시보드",
+  "name": "단저단고 모니터링 대시보드",
+  "short_name": "단저단고",
+  "description": "M6 단저단고 카드를 한 화면에 보는 PWA 대시보드",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",

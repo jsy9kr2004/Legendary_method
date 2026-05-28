@@ -74,6 +74,7 @@ from src.common.theme import (
     identify_early_morning_leaders,
     identify_rising_candidates,
     score_leading_sectors,
+    select_leaders_and_candidates,
 )
 from src.scalping.score.accel import (
     compute_accel_ratio,
@@ -355,6 +356,66 @@ def _delete_monitor_message(
         delete_message(token, chat_id, msg_id)
 
 
+def _maybe_push_mr_strong_alert(
+    monitored: Any,
+    now: datetime,
+    token: str,
+    chat_id: str,
+) -> None:
+    """단저단고 STRONG 푸시 알림 — kind 변경/STRONG 재진입 시 1회 send (2026-05-29).
+
+    조건:
+        - monitored.mr_grade == "STRONG"
+        - mr_sigB OR mr_sigS True
+        - 직전 push 한 kind 와 현재 kind 가 다름 (mr_alert_kind 추적)
+    STRONG 벗어나면 mr_alert_kind 를 None 으로 reset → 다음 STRONG 진입 시 재 push.
+
+    /on /off 와 무관 (paused 일 때도 push). 카드 갱신(edit)과 별개의 send 알림.
+    """
+    if monitored.mr_grade != "STRONG":
+        # STRONG 벗어남 — alert 추적 reset
+        monitored.mr_alert_kind = None
+        return
+
+    if monitored.mr_sigB:
+        new_kind = "단저"
+    elif monitored.mr_sigS:
+        new_kind = "단고"
+    else:
+        # STRONG 영역 이지만 트리거 발화 X — 알림 X (사용자가 명시한 "단저/단고 strong"만)
+        return
+
+    if monitored.mr_alert_kind == new_kind:
+        # 같은 kind 연속 발화 — 중복 push 방지
+        return
+
+    # 새 kind — push + alert_kind 갱신
+    name = monitored.name or monitored.code
+    if monitored.sector_role == "leader":
+        source_label = "⭐ 주도주"
+    elif monitored.sector_role == "candidate":
+        source_label = "🌟 주도주 후보"
+    elif monitored.is_manual:
+        source_label = "🔵 수동"
+    else:
+        source_label = "💎 보유"
+    sector_str = monitored.surface_sector_name or " / ".join(monitored.themes) or "—"
+    kind_emoji = "🟢" if new_kind == "단저" else "🔴"
+    reason = monitored.mr_reason or "—"
+    ts_label = now.strftime("%H:%M:%S")
+    text = (
+        f"🚨 단저단고 STRONG — {source_label}\n"
+        f"{name} ({monitored.code})\n"
+        f"{kind_emoji} {new_kind} score {monitored.mr_score:.1f} — {reason}\n"
+        f"테마: {sector_str} | {ts_label}"
+    )
+    try:
+        send_message_single(token, chat_id, text, parse_mode=None)
+        monitored.mr_alert_kind = new_kind
+    except Exception as e:
+        logger.warning(f"{monitored.code} 단저단고 STRONG push 실패: {e}")
+
+
 def dashboard_tick(
     *,
     session: MonitoringSession,
@@ -409,29 +470,52 @@ def dashboard_tick(
         return
     t_snapshot = perf_counter()
 
-    sectors = score_leading_sectors(snapshot, theme_mapping_df)
-    leaders = identify_early_morning_leaders(
-        snapshot, sectors, top_per_theme=LEADING_STOCK_TOP_PER_SECTOR,
+    # 2026-05-29 단저단고 surface 룰 — universe 풀 → 주도섹터 → 주도주/후보.
+    # Step (1) 거래대금 30위 ∩ 회전율 30위 교집합 = scalping universe 풀.
+    # Step (2) 좁혀진 풀로 z-score 주도섹터 식별 (Top 3).
+    # Step (3) 주도섹터 내 거래대금 1위 ∩ 회전율 1위 = 주도주, 2위 == 2위 = 후보.
+    from src.common.universe import intersect_universe
+    _rank_series = pd.Series(
+        {str(r["code"]): r.get("rank") for _, r in snapshot.iterrows() if pd.notna(r.get("rank"))}
     )
-    # 부상 후보 Stage 0+1 (snapshot 무료 필터 + 회전율 상위 N). leaders 와 중복 제거.
-    rising_stage1 = identify_rising_candidates(
-        snapshot, theme_mapping_df=theme_mapping_df,
+    _turnover_series = pd.Series(
+        {str(r["code"]): r.get("turnover") for _, r in snapshot.iterrows() if pd.notna(r.get("turnover"))}
     )
-    leader_codes_set = {l["code"] for l in leaders}
-    rising_stage1 = [c for c in rising_stage1 if c["code"] not in leader_codes_set]
-    # 진단 — leaders/sectors 가 0건이면 사용자가 "주도주 모니터링 안 나옴" 으로 인지.
-    # 매 tick (2초) 마다 디버그 — DEBUG 레벨이라 운영 운영 시 INFO 만 보면 묻힘.
+    universe_codes: set[str] = intersect_universe(_rank_series, _turnover_series)
+    if universe_codes:
+        universe_snapshot = snapshot[snapshot["code"].astype(str).isin(universe_codes)].copy()
+    else:
+        # 교집합 빈 set (장 초반 데이터 부족 등) → fallback 으로 전체 snapshot 사용.
+        # 카드는 빈 상태가 되겠지만 데몬은 계속 동작.
+        universe_snapshot = snapshot
+
+    sectors = score_leading_sectors(universe_snapshot, theme_mapping_df)
+    leaders, candidates = select_leaders_and_candidates(universe_snapshot, sectors)
+    auto_entries = leaders + candidates
+
+    # LEGACY Buy.Score 부상 후보 funnel — 기본 OFF (단저단고 primary).
+    # LEGACY_RISING_FUNNEL=1 시만 부활 (back-out 용).
+    if os.getenv("LEGACY_RISING_FUNNEL", "0") == "1":
+        rising_stage1 = identify_rising_candidates(
+            snapshot, theme_mapping_df=theme_mapping_df,
+        )
+        auto_codes_set = {e["code"] for e in auto_entries}
+        rising_stage1 = [c for c in rising_stage1 if c["code"] not in auto_codes_set]
+    else:
+        rising_stage1 = []
+
     logger.debug(
         f"[모니터링] snapshot={len(snapshot)}, sectors={len(sectors)}, "
-        f"leaders={len(leaders)}, rising_stage1={len(rising_stage1)}"
+        f"leaders={len(leaders)}, candidates={len(candidates)}, "
+        f"rising_stage1={len(rising_stage1)}"
     )
 
     # round 35: multi-flag 모델. monitored 에서 빠진 종목만 message 삭제.
     # flag 변화만으로는 카드 유지 (manual/hold 가 다른 flag 보충).
     prev_monitored_codes = set(session.monitored.keys())
 
-    # 2) 자동 주도주 — is_auto flag 갱신
-    changes = session.update_auto_leaders(leaders, now)
+    # 2) 자동 주도주/후보 — is_auto flag + sector_role/surface_sector_name 갱신
+    changes = session.update_auto_leaders(auto_entries, now)
     for ch in changes:
         logger.info(f"[모니터링] {ch}")
 
@@ -440,16 +524,10 @@ def dashboard_tick(
     # 시장 폭(breadth) — 국면 게이지 (P2-7). top_n 스냅샷의 상승종목 비율. tick 1회 계산.
     tick_breadth = compute_market_breadth(snap_by_code)
 
-    # 단저단고 universe — 거래대금 30위 ∩ 회전율 30위 (사용자 비전 1, 2026-05-27).
-    # 환경변수 MONITOR_MR_UNIVERSE=1 시 sigB/sigS 게이트로 사용.
-    # 미설정 시 빈 set (게이트 무효 = 모든 종목 분석).
-    if os.getenv("MONITOR_MR_UNIVERSE", "0") == "1":
-        from src.common.universe import intersect_universe
-        _rank_series = pd.Series({c: r.get("rank") for c, r in snap_by_code.items() if r.get("rank")})
-        _turnover_series = pd.Series({c: r.get("turnover") for c, r in snap_by_code.items() if r.get("turnover")})
-        mr_universe: set[str] = intersect_universe(_rank_series, _turnover_series)
-    else:
-        mr_universe = set()
+    # 2026-05-29: 옛 MONITOR_MR_UNIVERSE 단저단고 분석 게이트 폐기.
+    # universe 30 ∩ 30 풀은 이미 위에서 surface 룰의 첫 단계로 적용됨 → monitored 자체가
+    # 좁혀짐. 권외 종목은 사용자가 직접 수동 등록 / 보유로만 진입 (분석 항상 수행).
+    mr_universe: set[str] = set()
 
     # /buy CODE (가격 인자 생략) UX 를 위해 최근 시세를 세션에 노출 (round 20).
     for code, row in snap_by_code.items():
@@ -491,12 +569,17 @@ def dashboard_tick(
         }
     t_fetch = perf_counter()
 
-    # 2b) 부상 후보 Buy.Score 풀스코어 — fetch 결과 tick_cache 만 읽음 (CPU only).
-    rising_scored = _evaluate_rising_funnel(
-        rising_stage1, snap_by_code, tick_cache,
-        daily_ohlcv=daily_ohlcv,
-        limit_up_hit_times=session.limit_up_hit_times,
-    )
+    # 2b) 부상 후보 Buy.Score 풀스코어 — LEGACY_RISING_FUNNEL=1 시만 활성.
+    # 2026-05-29 단저단고 패러다임 전환 후 기본 OFF — rising_scored 항상 빈 list,
+    # update_rising_candidates([]) 호출로 기존 is_rising flag 종목 모두 해제.
+    if os.getenv("LEGACY_RISING_FUNNEL", "0") == "1":
+        rising_scored = _evaluate_rising_funnel(
+            rising_stage1, snap_by_code, tick_cache,
+            daily_ohlcv=daily_ohlcv,
+            limit_up_hit_times=session.limit_up_hit_times,
+        )
+    else:
+        rising_scored = []
     rising_changes = session.update_rising_candidates(rising_scored, now)
     for ch in rising_changes:
         logger.info(f"[부상] {ch}")
@@ -891,6 +974,18 @@ def dashboard_tick(
         monitored.mr_reason = mr_r
         monitored.mr_score = mr_score
         monitored.mr_grade = mr_g
+        # 단저단고 히스토리 (2026-05-29) — sigB/sigS 발화 시 카드 히스토리 섹션용 push.
+        # 연속 동일 kind 는 score/reason 만 갱신 (FIFO 3 max).
+        if mr_b:
+            monitored.push_mr_event(now, "단저", float(mr_score), mr_r)
+        if mr_s:
+            monitored.push_mr_event(now, "단고", float(mr_score), mr_r)
+
+        # 단저단고 STRONG 푸시 알림 (2026-05-29) — /on/off 와 무관, 자동 6종+수동+보유만.
+        # 같은 kind 연속 발화는 1회만 push. STRONG 벗어났다 재진입 시 재 push.
+        # MR_STRONG_ALERT=0 으로 끌 수 있음 (default ON).
+        if os.getenv("MR_STRONG_ALERT", "1") == "1" and token and chat_id:
+            _maybe_push_mr_strong_alert(monitored, now, token, chat_id)
 
         if tick_breadth:
             monitored.market_breadth_up_frac = tick_breadth["breadth_up_frac"]

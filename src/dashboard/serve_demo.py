@@ -25,16 +25,21 @@ from src.dashboard.render import build_trigger_lines
 from src.dashboard.state import MonitoredStock, MonitoringSession
 
 
-# 데모 종목 풀 — 운영의 update_auto_leaders / update_rising_candidates 입력 흉내.
+# 데모 종목 풀 — 운영의 update_auto_leaders 입력 흉내 (2026-05-29 단저단고 surface).
+# leaders + candidates 합쳐서 update_auto_leaders 에 전달.
 DEMO_AUTO_LEADERS = [
-    {"code": "091340", "name": "대한광통신", "themes": ["AI데이터센터", "광케이블"]},
-    {"code": "075180", "name": "제룡전기", "themes": ["전기/전선"]},
+    {"code": "091340", "name": "대한광통신",
+     "themes": ["AI데이터센터"], "sector_role": "leader",
+     "surface_sector_name": "AI데이터센터"},
+    {"code": "075180", "name": "제룡전기",
+     "themes": ["전기/전선"], "sector_role": "leader",
+     "surface_sector_name": "전기/전선"},
+    {"code": "012200", "name": "계양전기",
+     "themes": ["AI"], "sector_role": "candidate",
+     "surface_sector_name": "AI데이터센터"},
 ]
-DEMO_RISING_CANDIDATES = [
-    {"code": "012200", "name": "계양전기", "themes": ["AI"],
-     "buy_score": 3.5, "buy_grade": "WATCH",
-     "buy_reasons": ["+1 거래대금 50위내", "+2 가속 동반 (5m 5.0 / 1m 5.0)"]},
-]
+# LEGACY 부상 후보 풀 — LEGACY_RISING_FUNNEL=1 시 demo 에서도 surface (back-out 검증용).
+DEMO_RISING_CANDIDATES: list[dict] = []
 # 데모 종목별 base_price 사전 — 페이로드 가격 시뮬레이션
 BASE_PRICES = {
     "091340": 91300, "075180": 91300, "012200": 8920,
@@ -117,9 +122,16 @@ def _build_demo_payload(monitored: MonitoredStock, holding: Any = None) -> dict:
     else:
         monitored.mr_grade = "NEUTRAL"
     monitored.mr_score = mr_score
-    monitored.mr_sigB = (mr_score >= 2.0 and random.random() < 0.3)
-    monitored.mr_sigS = (mr_score < 0 and random.random() < 0.2)
+    sig_b = (mr_score >= 2.0 and random.random() < 0.3)
+    sig_s = (mr_score < 0 and random.random() < 0.2)
+    monitored.mr_sigB = sig_b
+    monitored.mr_sigS = sig_s
     monitored.mr_reason = "atr_low +1.0 / at_support +0.6 / touch_high +0.4" if mr_score >= 1.0 else None
+    # 단저단고 히스토리 mock — sigB/sigS 발화 시 push.
+    if sig_b:
+        monitored.push_mr_event(now_kst(), "단저", mr_score, monitored.mr_reason)
+    if sig_s:
+        monitored.push_mr_event(now_kst(), "단고", mr_score, monitored.mr_reason)
 
     return build_monitor_payload(
         monitored=monitored,

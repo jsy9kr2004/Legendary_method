@@ -226,9 +226,9 @@ def render_monitor_message(
         transition_info: 이 종목이 a1 일 때 부상 후보 a2 정보 (state/candidate_code/
             candidate_turnover). 카드 헤더에 통합 표시 (round 19 정책).
     """
-    # 헤더 — multi-flag 라벨 조합 (round 35).
-    # 보유 / 수동 / 자동 / 후보 중 켜진 것 모두 표시. 예: "[💎 보유 / 🔵 수동]"
-    # is_holding 우선. flag 가 하나도 없으면 (보유만) "[💎 보유]" 단독.
+    # 헤더 라벨 — 단저단고 패러다임 (2026-05-29).
+    # 보유 / 수동 / 주도주(leader) / 주도주 후보(candidate) 중 켜진 것 모두 표시.
+    # is_holding 우선. flag 가 하나도 없고 보유도 아니면 "[단저단고]" 단독.
     is_holding = holding is not None
     flag_labels: list[str] = []
     if is_holding:
@@ -236,12 +236,27 @@ def render_monitor_message(
     if monitored.is_manual:
         flag_labels.append("🔵 수동")
     if monitored.is_auto:
-        flag_labels.append("⭐ 자동")
+        _role = getattr(monitored, "sector_role", None)
+        if _role == "leader":
+            flag_labels.append("⭐ 주도주")
+        elif _role == "candidate":
+            flag_labels.append("🌟 주도주 후보")
+        else:
+            # LEGACY_RISING_FUNNEL=1 또는 fallback — 옛 라벨
+            flag_labels.append("⭐ 자동")
+    # is_rising 은 LEGACY_RISING_FUNNEL=1 시만 켜짐. 기본 폐기.
     if monitored.is_rising:
-        flag_labels.append("⚡ 후보")
-    header_kind = " / ".join(flag_labels) if flag_labels else "모니터링"
-    themes_str = " / ".join(monitored.themes) if monitored.themes else "—"
+        flag_labels.append("⚡ 부상(legacy)")
+    header_kind = " / ".join(flag_labels) if flag_labels else "단저단고"
     name = monitored.name or monitored.code
+
+    # 테마 라인 정책 (2026-05-29): 자동 surface 종목은 surface_sector_name 1개만.
+    # 수동/보유 + 주도섹터 안에 속하면 그것 1개. 안 속하면 전체 themes list 표시.
+    _surface_name = getattr(monitored, "surface_sector_name", None)
+    if _surface_name:
+        themes_str = _surface_name
+    else:
+        themes_str = " / ".join(monitored.themes) if monitored.themes else "—"
 
     grace_label = ""
     if grace_remaining_seconds is not None and grace_remaining_seconds > 0:
@@ -249,46 +264,14 @@ def render_monitor_message(
         s = grace_remaining_seconds % 60
         grace_label = f"  [GRACE {m}:{s:02d} 남음]"
 
-    # 매수 점수/등급 (round 21) — RISING 카드는 항상, AUTO/MANUAL 도 있을 때 표시.
-    grade_label = ""
-    if monitored.buy_grade and monitored.buy_score is not None:
-        grade_emoji = {
-            "STRONG": "🟢", "WATCH": "🟡", "NEUTRAL": "⚫", "AVOID": "🔴",
-        }.get(monitored.buy_grade, "")
-        grade_label = f"  {grade_emoji} {monitored.buy_grade} {monitored.buy_score:+.1f}점"
-
     lines = [
-        f"[{header_kind}] {name} ({monitored.code}){grace_label}{grade_label}",
+        f"[{header_kind}] {name} ({monitored.code}){grace_label}",
         f"테마: {themes_str}",
     ]
-    if monitored.buy_reasons:
-        lines.append("사유: " + " / ".join(monitored.buy_reasons[:3]))
 
-    # 매매법 라벨 (P1-4) — opt-in (MONITOR_METHOD_LABEL=1). 미검증 = 렌즈/경고용.
-    # 기본 OFF 라 데몬 기본 표시 무변.
-    # 가설 C (data/journal/2026-05-26.md 토론 #1 사용자 결정, 2026-05-27):
-    #   setup_label='none' + STRONG/WATCH 시점 = 매수 결정 시점인데 매매법 분류 X →
-    #   추격/어중간 의심 라벨 명시. 단순 표시 변경 (Buy.Score 본체 X).
-    if os.getenv("MONITOR_METHOD_LABEL", "0") == "1":
-        _setup = getattr(monitored, "setup_label", None)
-        if getattr(monitored, "setup_chase_warning", False):
-            lines.append("🎯 매매법: ⚠ 추격 구간 — 회피")
-        elif _setup == "breakout":
-            lines.append(f"🎯 매매법: 돌파 ({getattr(monitored, 'setup_score_breakout', 0) or 0:.1f}) — 미검증")
-        elif _setup == "pullback":
-            lines.append(f"🎯 매매법: 눌림 ({getattr(monitored, 'setup_score_pullback', 0) or 0:.1f}) — 미검증")
-        elif _setup == "none" and monitored.buy_grade in ("STRONG", "WATCH"):
-            lines.append("🎯 매매법: 분류 X — 추격/어중간 의심")
-        _bf = getattr(monitored, "market_breadth_up_frac", None)
-        if _bf is not None:
-            _n5 = getattr(monitored, "market_n_up5", None) or 0
-            _regime = "🟢강세" if _bf >= 0.6 else ("🟡중립" if _bf >= 0.4 else "🔴약세")
-            lines.append(f"📊 시장 폭: {_bf * 100:.0f}% 상승 / +5%↑ {_n5}종목 {_regime}")
-
-    # 단저단고 시그널 + v10b score (2026-05-27/28).
-    # default ON — 카드 dry-run 표시. 라이브 매매 영향 X — 사용자가 카드 보고
-    # 직접 매매 결정. score ≥ 2 (STRONG) = 사용자 매수 권고 신호.
-    # 끄려면 .env 에 MONITOR_MEAN_REVERSION=0 명시.
+    # 단저단고 시그널 + v10b score (2026-05-27/28, 라벨 제거 2026-05-29).
+    # 페이지 자체가 단저단고 모니터링이라 "🔁 단저단고" 라벨 중복 제거.
+    # default ON — 끄려면 .env 에 MONITOR_MEAN_REVERSION=0 명시 (back-out 용).
     if os.getenv("MONITOR_MEAN_REVERSION", "1") == "1":
         _mrb = getattr(monitored, "mr_sigB", False)
         _mrs = getattr(monitored, "mr_sigS", False)
@@ -304,7 +287,7 @@ def render_monitor_message(
                 sig_emoji = "🟢 단저"
             elif _mrs:
                 sig_emoji = "🔴 단고"
-            lines.append(f"🔁 단저단고 {grade_emoji}{_grade} {_score:+.1f} {sig_emoji} — {_mrr or '—'}")
+            lines.append(f"{grade_emoji}{_grade} {_score:+.1f} {sig_emoji} — {_mrr or '—'}")
 
     # a1 카드일 때 TRANSITION/GRACE 부상 후보 표시 (round 19 — 카드 통합)
     if transition_info is not None:
@@ -503,20 +486,28 @@ def render_monitor_message(
                 f"/ 프로그램 {_fmt_signed_shares(program_q)}{_paren(dp_q, _fmt_signed_shares)}"
             )
 
-    # 청산 시그널 (Exit.Triggers C 그룹) — build_trigger_lines 헬퍼 (텔레그램 / PWA 공용).
-    lines.extend(build_trigger_lines(
-        trigger_states=trigger_states,
-        is_holding=is_holding,
-        vp_5ma=vp_5ma,
-        vp_1ma=vp_1ma,
-        accel_ratio_1m=accel_ratio_1m,
-        divergence=divergence,
-    ))
+    # 단저단고 히스토리 (2026-05-29) — 옛 Exit.Triggers 청산 시그널 자리.
+    # 시그널 발화 시점 최대 3개 (최신순). 사용자가 잠깐 놓치는 시점 대비.
+    _mr_history = getattr(monitored, "mr_history", None) or []
+    if _mr_history:
+        lines.append("─ 단저단고 히스토리 ─")
+        for entry in _mr_history[:3]:
+            try:
+                ts_label = entry.ts.strftime("%H:%M:%S")
+            except (AttributeError, ValueError):
+                ts_label = "--:--:--"
+            kind_emoji = "🟢" if entry.kind == "단저" else "🔴"
+            reason_short = (entry.reason or "—")
+            if len(reason_short) > 60:
+                reason_short = reason_short[:60] + "…"
+            lines.append(
+                f"{ts_label} {kind_emoji} {entry.kind} "
+                f"score {entry.score:.1f} {reason_short}"
+            )
 
-    # 부상/자동 카드에서 수동 핀 안내 — 자동/후보 풀에서 빠져도 카드 유지하려면
-    # /add 6자리 또는 [→ 수동] 버튼 (round 35).
-    if (monitored.is_rising or monitored.is_auto) and not monitored.is_manual and not is_holding:
-        lines.append(f"자동/후보 풀 이탈 후에도 유지하려면 → /add {monitored.code}")
+    # 자동 풀 surface 종목에서 수동 핀 안내 — 풀 이탈 후 카드 유지하려면 /add.
+    if monitored.is_auto and not monitored.is_manual and not is_holding:
+        lines.append(f"자동 풀 이탈 후에도 유지하려면 → /add {monitored.code}")
 
     return "\n".join(lines)
 
@@ -715,14 +706,9 @@ def build_monitor_payload(
             "candidate_turnover": _clean(transition_info.get("candidate_turnover")),
         }
 
-    trigger_lines = build_trigger_lines(
-        trigger_states=trigger_states,
-        is_holding=is_holding,
-        vp_5ma=vp_5ma,
-        vp_1ma=vp_1ma,
-        accel_ratio_1m=accel_ratio_1m,
-        divergence=divergence,
-    )
+    # Exit.Triggers 청산 시그널 라인 — 2026-05-29 카드 표시 폐기 (로깅만 유지).
+    # trigger_lines / trigger_states 키는 호환성을 위해 빈 list/None 유지.
+    trigger_lines: list[str] = []
 
     # 단저단고 v10b (2026-05-28) — PWA 도 카드와 동일하게 노출. NEUTRAL + 시그널
     # X 면 None 반환해서 프론트에서 라인 자체 생략 가능.
@@ -739,12 +725,31 @@ def build_monitor_payload(
             "reason": getattr(monitored, "mr_reason", None),
         }
 
+    # 단저단고 히스토리 (2026-05-29) — 최대 3개 최신순.
+    mr_history_block: list[dict[str, Any]] = []
+    for entry in (getattr(monitored, "mr_history", None) or [])[:3]:
+        try:
+            ts_iso = entry.ts.isoformat()
+        except AttributeError:
+            ts_iso = None
+        mr_history_block.append({
+            "ts": ts_iso,
+            "kind": entry.kind,
+            "score": _clean(entry.score),
+            "reason": entry.reason,
+        })
+
+    # surface_sector_name — 카드 테마 라인이 단일 섹터로 좁아진 경우 표시.
+    surface_sector_name = getattr(monitored, "surface_sector_name", None)
+
     return {
         "code": monitored.code,
         "name": monitored.name or monitored.code,
         "source": source_val,
         "flags": flags,
         "themes": list(monitored.themes),
+        "surface_sector_name": surface_sector_name,
+        "sector_role": getattr(monitored, "sector_role", None),
         "header": header,
         "price": price_block,
         "volume": volume_block,
@@ -758,6 +763,7 @@ def build_monitor_payload(
         "holding": holding_block,
         "transition": transition_block,
         "mean_reversion": mean_reversion_block,
+        "mr_history": mr_history_block,
         "grace_remaining_sec": grace_remaining_seconds,
         "trigger_states": dict(trigger_states) if trigger_states else None,
         "trigger_lines": trigger_lines,

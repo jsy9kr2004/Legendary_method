@@ -547,3 +547,137 @@ def score_leading_sectors(
         f"{[(t['theme'], round(t['score'], 2)) for t in leading]}"
     )
     return leading
+
+
+# ── 단저단고 surface 룰 (2026-05-29) ───────────────────────────────────────────
+
+
+def select_leaders_and_candidates(
+    snapshot_df: pd.DataFrame,
+    leading_sectors: list[dict[str, Any]],
+    exclude_daily_return_pct: float | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """주도섹터별 주도주 + 후보 식별 (단저단고 패러다임 surface 룰).
+
+    각 섹터에 대해:
+      - 주도주 (leader): 거래대금 1위 ∪ 회전율 1위
+          같은 종목 → leaders 1종목 / 다른 종목 → 공동 주도주 2종목 (후보 평가 X).
+      - 주도주 후보 (candidate): 거래대금 2위 == 회전율 2위 (같을 때만).
+          주도주 공동 케이스에선 평가 X. 다른 종목이면 후보 없음.
+
+    필터 (매수 가능한 종목만):
+      - 일봉 +29% 이상 종목 제외 (상한가 도달 = 매수 불가)
+      - is_limit_up True 제외
+      - 일봉 음봉(daily_return < 0)도 허용 — 단저단고는 모멘텀 반대 진입 가능
+
+    섹터간 종목 중복: 첫 출현 섹터에 귀속. surface_sector_name 에 첫 섹터명 고정.
+
+    Args:
+        snapshot_df: SNAPSHOT_COLUMNS DataFrame.
+        leading_sectors: score_leading_sectors() 결과 (Top sector_count). 각 dict
+                        의 "theme" / "codes" 사용.
+        exclude_daily_return_pct: 상한가 임박 제외 임계 (None=LEADER_EXCLUDE_DAILY_RETURN_PCT).
+
+    Returns:
+        (leaders, candidates). 각 dict 스키마는 `identify_early_morning_leaders`
+        와 호환 + 신규 키:
+            - sector_role: "leader" | "candidate"
+            - surface_sector_name: str (첫 출현 섹터명, 카드 테마 라인용)
+            - themes: [surface_sector_name] (호환성, state.update_auto_leaders 가
+              themes 키를 참조)
+    """
+    if snapshot_df.empty or not leading_sectors:
+        return [], []
+
+    if exclude_daily_return_pct is None:
+        exclude_daily_return_pct = LEADER_EXCLUDE_DAILY_RETURN_PCT
+
+    df = snapshot_df.copy()
+    df["code"] = df["code"].astype(str)
+    if "daily_return" in df.columns:
+        dr = df["daily_return"].fillna(0.0)
+        df = df[dr < exclude_daily_return_pct]
+    if "is_limit_up" in df.columns:
+        df = df[~df["is_limit_up"].fillna(False).astype(bool)]
+    if df.empty:
+        return [], []
+
+    def _row_to_entry(row: pd.Series, sector_name: str, role: str) -> dict[str, Any]:
+        return {
+            "code": str(row["code"]),
+            "name": str(row.get("name", "")),
+            "rank": int(row["rank"]) if pd.notna(row.get("rank")) else 0,
+            "price": int(row.get("price", 0)) if pd.notna(row.get("price")) else 0,
+            "daily_return": float(row.get("daily_return", 0.0))
+                if pd.notna(row.get("daily_return")) else 0.0,
+            "is_limit_up": bool(row.get("is_limit_up", False)),
+            "turnover": float(row.get("turnover", float("nan")))
+                if pd.notna(row.get("turnover")) else float("nan"),
+            "trading_value": int(row.get("trading_value", 0))
+                if pd.notna(row.get("trading_value")) else 0,
+            "market_cap": int(row.get("market_cap", 0))
+                if pd.notna(row.get("market_cap")) else 0,
+            "sector_role": role,
+            "surface_sector_name": sector_name,
+            "themes": [sector_name],
+        }
+
+    leaders: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+
+    for sector in leading_sectors:
+        sector_name = str(sector.get("theme", ""))
+        sector_codes = {str(c) for c in sector.get("codes", [])}
+        if not sector_name or not sector_codes:
+            continue
+
+        in_sector = df[df["code"].isin(sector_codes)]
+        if in_sector.empty:
+            continue
+
+        # 거래대금 rank: 작은 게 1위, NaN 은 큰 값으로 정렬 끝으로
+        rank_series = in_sector["rank"].fillna(99999) if "rank" in in_sector.columns else None
+        by_rank = in_sector.assign(_rk=rank_series).sort_values("_rk", ascending=True)
+        # 회전율: 큰 게 1위, NaN 은 -inf
+        turnover_series = (
+            in_sector["turnover"].fillna(float("-inf"))
+            if "turnover" in in_sector.columns else None
+        )
+        by_turnover = in_sector.assign(_to=turnover_series).sort_values("_to", ascending=False)
+
+        trading_top1 = by_rank.iloc[0]
+        turnover_top1 = by_turnover.iloc[0]
+        trading_top1_code = str(trading_top1["code"])
+        turnover_top1_code = str(turnover_top1["code"])
+
+        if trading_top1_code == turnover_top1_code:
+            # 단일 주도주
+            if trading_top1_code not in seen_codes:
+                leaders.append(_row_to_entry(trading_top1, sector_name, "leader"))
+                seen_codes.add(trading_top1_code)
+
+            # 후보 평가
+            if len(by_rank) >= 2 and len(by_turnover) >= 2:
+                trading_top2 = by_rank.iloc[1]
+                turnover_top2 = by_turnover.iloc[1]
+                if str(trading_top2["code"]) == str(turnover_top2["code"]):
+                    cand_code = str(trading_top2["code"])
+                    if cand_code not in seen_codes:
+                        candidates.append(_row_to_entry(trading_top2, sector_name, "candidate"))
+                        seen_codes.add(cand_code)
+        else:
+            # 공동 주도주 — 후보 평가 X
+            for row, code in [
+                (trading_top1, trading_top1_code),
+                (turnover_top1, turnover_top1_code),
+            ]:
+                if code not in seen_codes:
+                    leaders.append(_row_to_entry(row, sector_name, "leader"))
+                    seen_codes.add(code)
+
+    logger.info(
+        f"단저단고 surface 식별 — leaders={len(leaders)} candidates={len(candidates)} "
+        f"(top sectors={len(leading_sectors)})"
+    )
+    return leaders, candidates

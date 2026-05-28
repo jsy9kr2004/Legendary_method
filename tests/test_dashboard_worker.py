@@ -173,12 +173,13 @@ def test_dashboard_tick_sends_new_monitor_message():
         "code": "075180", "name": "제룡전기", "themes": ["전기/전선"],
         "rank": 1, "price": 91300, "daily_return": 30.0, "is_limit_up": True,
         "turnover": 20.0, "trading_value": 100_000_000_000, "market_cap": 5_000,
+        "sector_role": "leader", "surface_sector_name": "전기/전선",
     }]
 
     fake_resp = {"ok": True, "result": {"message_id": 4242}}
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=sectors), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=leaders), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=(leaders, [])), \
          _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single", return_value=fake_resp) as send, \
          patch("src.dashboard.worker.edit_message") as edit:
@@ -215,7 +216,7 @@ def test_dashboard_tick_edits_existing_message():
 
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single") as send, \
          patch("src.dashboard.worker.edit_message") as edit:
@@ -246,7 +247,7 @@ def test_dashboard_tick_updates_last_prices():
     }])
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single"), \
@@ -362,7 +363,7 @@ def test_dashboard_tick_populates_last_payloads():
 
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single"), \
@@ -414,7 +415,7 @@ def test_dashboard_tick_cleans_stale_payloads():
     }])
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          _patch_bundles(), \
          patch("src.dashboard.worker.send_message_single"), \
@@ -558,7 +559,7 @@ def test_grade_assigned_to_manual_stock_outside_top50():
     msg_ids: dict = {}
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          _patch_bundles(
              bars=strong_bars,
@@ -616,7 +617,7 @@ def test_grade_assigned_to_holding_stock_outside_top50():
     msg_ids: dict = {}
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          _patch_bundles(
              bars=bars,
@@ -704,7 +705,7 @@ def test_manual_name_resolved_from_snapshot():
     bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),
@@ -747,7 +748,7 @@ def test_manual_name_resolved_from_master_df_when_outside_top50():
     bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),
@@ -784,7 +785,7 @@ def test_send_telegram_cards_false_skips_send_and_edit():
     bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          bundles, sm, em, \
          patch("src.dashboard.worker.delete_message") as dm:
@@ -823,7 +824,7 @@ def test_send_telegram_cards_false_still_builds_pwa_payload():
     bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          bundles, sm, em:
         dashboard_tick(
@@ -867,7 +868,7 @@ def test_manual_themes_resolved_from_theme_mapping_df():
     bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),
@@ -908,7 +909,7 @@ def test_manual_price_synthesized_from_bars_when_outside_top50():
     sm_resp = {"ok": True, "result": {"message_id": 999}}
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          _patch_bundles(bars=fake_bars), \
          patch("src.dashboard.worker.send_message_single", return_value=sm_resp) as sm, \
@@ -955,7 +956,7 @@ def test_manual_turnover_computed_from_market_cap():
     sm_resp = {"ok": True, "result": {"message_id": 999}}
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          patch("src.dashboard.worker.identify_rising_candidates", return_value=[]), \
          _patch_bundles(bars=fake_bars), \
          patch("src.dashboard.worker.send_message_single", return_value=sm_resp) as sm, \
@@ -995,7 +996,7 @@ def test_manual_name_keeps_code_when_unknown_everywhere():
     bundles, sm, em = _stub_fetches()
     with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
          patch("src.dashboard.worker.score_leading_sectors", return_value=[]), \
-         patch("src.dashboard.worker.identify_early_morning_leaders", return_value=[]), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=([], [])), \
          bundles, sm, em:
         dashboard_tick(
             session=s, message_ids={}, client=MagicMock(),

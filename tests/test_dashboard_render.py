@@ -3,8 +3,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
+
 from src.dashboard.render import render_monitor_message
 from src.dashboard.state import LeaderState, MonitoredStock, Source
+
+# 2026-05-29 단저단고 패러다임 전환: Buy.Score 등급 헤더, buy_reasons "사유:" 라인,
+# Exit.Triggers C 그룹 청산 시그널 라인, setup_label/method 라인, market_breadth
+# 시장 폭 라인 — 모두 카드에서 폐기 (tick_log 로깅만 유지). 관련 테스트는 skip.
+DEPRECATED_CARD_DISPLAY = pytest.mark.skip(
+    reason="2026-05-29 단저단고 패러다임 — Buy.Score/Exit.Triggers/setup_label/breadth 카드 표시 폐기"
+)
 
 
 def _stock(code: str = "075180", name: str = "제룡전기",
@@ -349,6 +358,7 @@ def test_render_no_delta_line_without_delta_arg():
     assert "Δ" not in msg
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_render_holding_mode_basic():
     """round 22: 보유 모드 카드 — [보유] 헤더 + 합쳐진 시간/가격 라인 + 청산 시그널."""
     from src.scalping.exit.triggers import Holding
@@ -405,6 +415,7 @@ def test_render_holding_mode_basic():
     assert "+29% 매도가" not in msg
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_render_holding_mode_with_fired_triggers():
     """발화된 트리거는 🚧, 미발화는 ▢."""
     from src.scalping.exit.triggers import Holding
@@ -470,6 +481,7 @@ def test_render_strength_line_with_ma_when_ccnl_nan():
     assert "1MA 120" in msg
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_render_watch_mode_c3_label_no_sustain():
     """감시 모드는 C3 instantaneous — '2분 지속' 표기 없음."""
     msg = render_monitor_message(
@@ -491,6 +503,7 @@ def test_render_watch_mode_c3_label_no_sustain():
     assert "2분 지속" not in msg
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_render_buy_grade_label_shows_on_any_source():
     """round 33: buy_grade 가 set 되어 있으면 AUTO/MANUAL/HOLD 모두 라벨 표시."""
     from src.dashboard.state import MonitoredStock
@@ -572,6 +585,7 @@ def test_render_omits_turnover_rank_when_missing():
     assert "회전율: +0.10%" in msg
     assert "(위)" not in msg, f"빈 rank 인데 (위) 출력됨: {msg}"
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_opt_in(monkeypatch):
     """P1-4: MONITOR_METHOD_LABEL=1 일 때만 매매법 라벨 표시 (기본 OFF)."""
     s = _stock()
@@ -586,6 +600,7 @@ def test_method_label_opt_in(monkeypatch):
     assert "눌림" in render_monitor_message(s, snap, **kw)         # ON → 표시
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_chase_warning(monkeypatch):
     s = _stock()
     s.setup_label = "chase"
@@ -602,6 +617,7 @@ def test_method_label_chase_warning(monkeypatch):
 # setup_label='none' 인데 buy_grade STRONG/WATCH = 매수 결정 시점인데 매매법 분류 X.
 # 사용자한테 "추격/어중간 의심" 명시 표시. Buy.Score 본체 변경 X (단순 표시).
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_none_with_strong_shows_warning(monkeypatch):
     """가설 C: setup_label='none' + buy_grade=STRONG → '분류 X — 추격/어중간 의심' 표시."""
     s = _stock()
@@ -618,6 +634,7 @@ def test_method_label_none_with_strong_shows_warning(monkeypatch):
     assert "추격/어중간" in msg
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_none_with_watch_shows_warning(monkeypatch):
     """가설 C: WATCH 도 매수 결정 시점이라 동일 표시."""
     s = _stock()
@@ -633,6 +650,7 @@ def test_method_label_none_with_watch_shows_warning(monkeypatch):
     assert "분류 X" in msg
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_none_with_neutral_no_warning(monkeypatch):
     """가설 C: NEUTRAL/AVOID 는 어차피 진입 시점 아님 → 표시 X (노이즈 회피)."""
     s = _stock()
@@ -648,6 +666,7 @@ def test_method_label_none_with_neutral_no_warning(monkeypatch):
     assert "매매법" not in msg, f"NEUTRAL 인데 매매법 라벨 표시됨: {msg}"
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_pullback_redesign_d2(monkeypatch):
     """가설 D2 (2026-05-27): bid_ask / volratio / vp_5ma_delta 신규 입력 반영.
 
@@ -672,6 +691,7 @@ def test_method_label_pullback_redesign_d2(monkeypatch):
     assert ml.score_pullback >= 6.0
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_pullback_vpdelta_penalty(monkeypatch):
     """가설 D2 페널티: vp_5ma_delta>0 = 정점 진입 음의 시그널 → -1.0."""
     from src.scalping.score.method_label import classify_method
@@ -689,6 +709,7 @@ def test_method_label_pullback_vpdelta_penalty(monkeypatch):
     assert ml_pen.score_pullback == ml_no_pen.score_pullback - 1.0
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_pullback_old_hammer_killed(monkeypatch):
     """가설 D2: hammer 가중치 0 → lower_wick 만으론 cut 미달."""
     from src.scalping.score.method_label import classify_method
@@ -707,6 +728,7 @@ def test_method_label_pullback_old_hammer_killed(monkeypatch):
     assert ml.setup == "none"
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_method_label_chase_takes_priority_over_none(monkeypatch):
     """가설 C 충돌 가드: chase_warning=True 면 기존 '추격 구간 회피' 라인이 우선."""
     s = _stock()
@@ -723,6 +745,7 @@ def test_method_label_chase_takes_priority_over_none(monkeypatch):
     assert "분류 X" not in msg
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_market_breadth_line(monkeypatch):
     """P2-7: 플래그 ON 시 시장 폭 라인 표시 (강세/중립/약세)."""
     s = _stock()

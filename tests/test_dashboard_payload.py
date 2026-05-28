@@ -7,10 +7,17 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+import pytest
+
 from src.dashboard.render import build_monitor_payload
 from src.dashboard.state import LeaderState, MonitoredStock, Source
 from src.scalping.score.divergence import DivergenceState
 from src.scalping.exit.triggers import Holding
+
+# 2026-05-29 단저단고 패러다임 — Exit.Triggers 청산 시그널 카드/페이로드 표시 폐기.
+DEPRECATED_CARD_DISPLAY = pytest.mark.skip(
+    reason="2026-05-29 단저단고 패러다임 — trigger_lines 카드/페이로드 표시 폐기"
+)
 
 
 def _stock(
@@ -261,6 +268,7 @@ def test_payload_trigger_states():
     assert payload["trigger_states"]["A1_stop_price"] is False
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_payload_trigger_lines_for_pwa():
     """PWA 가 trigger_states 보고 자체 렌더하지 않게 — payload.trigger_lines 가
     텔레그램 카드와 동일 텍스트 줄 list 로 제공돼야 함.
@@ -292,6 +300,7 @@ def test_payload_trigger_lines_for_pwa():
     assert "🚧" in lines[3] and "0.3배" in lines[3]
 
 
+@DEPRECATED_CARD_DISPLAY
 def test_payload_trigger_lines_holding_includes_c5():
     """보유 모드는 C5 (VI 발동) 포함, 5줄 + C5 = 6줄."""
     from src.scalping.exit.triggers import Holding

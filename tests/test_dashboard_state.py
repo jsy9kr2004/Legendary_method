@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from src.dashboard.state import (
     LeaderState,
+    MonitoredStock,
     MonitoringSession,
     Source,
     in_monitoring_window,
@@ -490,3 +491,95 @@ def test_investor_delta_independent_per_code():
     r2 = s.update_investor_delta("091340", _investor(foreign_v=500_000_000), t1)
     assert r1["foreign_value"] == 200_000_000
     assert r2 is None  # 091340 은 변화 없음
+
+
+# ── 단저단고 surface 룰 + mr_history (2026-05-29) ────────────────────────────
+
+
+def _make_stock(code: str = "100001") -> MonitoredStock:
+    return MonitoredStock(code=code, name=f"stock_{code}", added_at=datetime(2026, 5, 29, 9, 30))
+
+
+def test_push_mr_event_appends_new_kind():
+    m = _make_stock()
+    t0 = datetime(2026, 5, 29, 9, 30)
+    m.push_mr_event(t0, "단저", 2.3, "STOCH=30")
+    assert len(m.mr_history) == 1
+    assert m.mr_history[0].kind == "단저"
+    assert m.mr_history[0].score == 2.3
+
+
+def test_push_mr_event_same_kind_updates_in_place():
+    """연속 동일 kind 발화는 prepend X, score/reason 갱신만."""
+    m = _make_stock()
+    t0 = datetime(2026, 5, 29, 9, 30, 0)
+    t1 = datetime(2026, 5, 29, 9, 30, 3)
+    m.push_mr_event(t0, "단저", 2.0, "STOCH=30")
+    m.push_mr_event(t1, "단저", 2.5, "STOCH=25")
+    assert len(m.mr_history) == 1
+    assert m.mr_history[0].score == 2.5
+    assert m.mr_history[0].ts == t1
+
+
+def test_push_mr_event_kind_change_prepends():
+    m = _make_stock()
+    t0 = datetime(2026, 5, 29, 9, 30, 0)
+    t1 = datetime(2026, 5, 29, 9, 31, 0)
+    m.push_mr_event(t0, "단저", 2.0, "STOCH=30")
+    m.push_mr_event(t1, "단고", 2.5, "STOCH=72")
+    assert len(m.mr_history) == 2
+    assert m.mr_history[0].kind == "단고"   # 최신
+    assert m.mr_history[1].kind == "단저"
+
+
+def test_push_mr_event_fifo_max_three():
+    m = _make_stock()
+    for i in range(5):
+        kind = "단저" if i % 2 == 0 else "단고"
+        m.push_mr_event(
+            datetime(2026, 5, 29, 9, 30 + i),
+            kind, float(i), f"score{i}",
+        )
+    assert len(m.mr_history) == 3
+    # 가장 최신 (i=4, kind="단저", score=4.0) 이 [0]
+    assert m.mr_history[0].score == 4.0
+    assert m.mr_history[2].score == 2.0
+
+
+def test_update_auto_leaders_sets_sector_role():
+    """leaders + candidates 합쳐서 받으면 sector_role / surface_sector_name 설정."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 29, 9, 30)
+    entries = [
+        {"code": "100001", "name": "leader_stock", "themes": ["섹터A"],
+         "sector_role": "leader", "surface_sector_name": "섹터A"},
+        {"code": "100002", "name": "cand_stock", "themes": ["섹터A"],
+         "sector_role": "candidate", "surface_sector_name": "섹터A"},
+    ]
+    s.update_auto_leaders(entries, t0)
+    assert s.monitored["100001"].is_auto
+    assert s.monitored["100001"].sector_role == "leader"
+    assert s.monitored["100001"].surface_sector_name == "섹터A"
+    assert s.monitored["100002"].sector_role == "candidate"
+
+
+def test_update_auto_leaders_drops_role_when_out_of_pool():
+    """다음 tick 에서 풀 이탈 시 is_auto False + sector_role/surface_sector_name None."""
+    s = MonitoringSession()
+    t0 = datetime(2026, 5, 29, 9, 30)
+    s.update_auto_leaders(
+        [{"code": "100001", "name": "x", "themes": ["섹터A"],
+          "sector_role": "leader", "surface_sector_name": "섹터A"}],
+        t0,
+    )
+    s.update_auto_leaders([], t0 + timedelta(seconds=3))
+    m = s.monitored["100001"]
+    assert not m.is_auto
+    assert m.sector_role is None
+    assert m.surface_sector_name is None
+
+
+def test_mr_alert_kind_default_none():
+    """신규 종목의 mr_alert_kind 는 None (아직 push X)."""
+    m = _make_stock()
+    assert m.mr_alert_kind is None
