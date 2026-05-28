@@ -274,6 +274,13 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 - Per-Stock weight 효과 +0.08~0.50%p (운전수 가설 ✓)
 - 그러나 **절대 net 양수 도달은 어려움** — 분봉 단위 잔파동 매매의 본질 한계
 
+**정량 진단 + 약점 분석 전체**: [`docs/scalping-weakness-analysis-2026-05-29.md`](docs/scalping-weakness-analysis-2026-05-29.md)
+- AUC vs Precision @top 0.5% gap (88→11.5%)
+- 진짜 단저 64건 (+3.6%) vs 가짜 단저 492건 (0%, MAE -2.19%)
+- 봉 close 지연 +0.95% 슬리피지
+- MFE 캐치율 14.6%
+- B/C 옵션 backtest (B 효과 0%p, C 효과 +0.08%p 일관)
+
 운영 정책:
 - **사용자 직관 매매 보조 도구** — 카드 보면서 신호 참고 + 사용자가 종합 판단
 - **자동 매매 영구 X** (CLAUDE.md 자동 매매 금지 정책 유지)
