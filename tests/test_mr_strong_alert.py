@@ -132,3 +132,35 @@ def test_manual_role_label_in_text():
         _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 32, 10), "t", "c")
     text = send.call_args[0][2]
     assert "🔵 수동" in text
+
+
+# ── 단고 score 가드 우회 (임시 정책, v11 ritual 전) ─────────────────────────────
+
+
+def test_sigS_pushes_even_with_watch_grade():
+    """v10b score 가 매수 한정 weight 라 단고 시점 STRONG 도달 사실상 X.
+    임시 — sigS 발화 자체로 push (score 가드 우회). 보유 청산 신호 우선."""
+    m = _make_stock(grade="WATCH", sigS=True)
+    with patch("src.dashboard.worker.send_message_single") as send:
+        send.return_value = {"ok": True}
+        _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 32, 10), "t", "c")
+    assert send.call_count == 1
+    assert "🔴 단고" in send.call_args[0][2]
+    assert m.mr_alert_kind == "단고"
+
+
+def test_sigS_pushes_even_with_neutral_grade():
+    m = _make_stock(grade="NEUTRAL", sigS=True)
+    with patch("src.dashboard.worker.send_message_single") as send:
+        send.return_value = {"ok": True}
+        _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 32, 10), "t", "c")
+    assert send.call_count == 1
+    assert m.mr_alert_kind == "단고"
+
+
+def test_sigB_still_requires_strong():
+    """단저는 v10b score 정합이라 STRONG 가드 유지 — WATCH/NEUTRAL 단저는 push X."""
+    m = _make_stock(grade="WATCH", sigB=True)
+    with patch("src.dashboard.worker.send_message_single") as send:
+        _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 32, 10), "t", "c")
+    assert send.call_count == 0

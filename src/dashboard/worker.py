@@ -362,27 +362,24 @@ def _maybe_push_mr_strong_alert(
     token: str,
     chat_id: str,
 ) -> None:
-    """단저단고 STRONG 푸시 알림 — kind 변경/STRONG 재진입 시 1회 send (2026-05-29).
+    """단저단고 STRONG 푸시 알림 — kind 변경/재진입 시 1회 send (2026-05-29).
 
-    조건:
-        - monitored.mr_grade == "STRONG"
-        - mr_sigB OR mr_sigS True
-        - 직전 push 한 kind 와 현재 kind 가 다름 (mr_alert_kind 추적)
-    STRONG 벗어나면 mr_alert_kind 를 None 으로 reset → 다음 STRONG 진입 시 재 push.
+    임시 정책 (v10b score 가 매수 한정 weight 라 단고 시점 STRONG 도달 사실상 X):
+        - 단저: monitored.mr_grade == "STRONG" AND mr_sigB
+        - 단고: mr_sigS True (score 가드 우회 — 보유 청산 신호는 무조건 push)
+    v11 score_buy / score_sell 분리 ritual 통과 후 STRONG 가드 단고에도 정상 적용.
 
-    /on /off 와 무관 (paused 일 때도 push). 카드 갱신(edit)과 별개의 send 알림.
+    동일 kind 연속은 1회만 (mr_alert_kind 추적). kind 가 바뀌었거나 발화 영역에서
+    벗어났다 재진입 시 재 push. /on /off 무관 (paused 일 때도 push).
     """
-    if monitored.mr_grade != "STRONG":
-        # STRONG 벗어남 — alert 추적 reset
-        monitored.mr_alert_kind = None
-        return
-
-    if monitored.mr_sigB:
-        new_kind = "단저"
-    elif monitored.mr_sigS:
+    if monitored.mr_sigS:
+        # 단고는 score 가드 우회 — 보유 청산 신호 가장 중요
         new_kind = "단고"
+    elif monitored.mr_sigB and monitored.mr_grade == "STRONG":
+        new_kind = "단저"
     else:
-        # STRONG 영역 이지만 트리거 발화 X — 알림 X (사용자가 명시한 "단저/단고 strong"만)
+        # 발화 X 또는 단저 + WATCH/NEUTRAL — alert 추적 reset (재진입 시 push 가능)
+        monitored.mr_alert_kind = None
         return
 
     if monitored.mr_alert_kind == new_kind:
