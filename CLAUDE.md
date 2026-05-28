@@ -227,9 +227,11 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 
 전체 시그널 정의는 [`docs/scalping-redesign-2026-05-27.md`](docs/scalping-redesign-2026-05-27.md). surface 3단계:
 
-**Step (1) — 거래대금 30위 ∩ 회전율 30위 풀 추출** ★ (사용자 비전 1 핵심)
-  `intersect_universe()` (`src/common/universe.py`) — RANK_MAX=30 / TURNOVER_RANK_MAX=30.
-  교집합이 곧 scalping universe (보통 10~20 종목). 권외 종목은 자동 surface X.
+**Step (1) — 거래대금 30위 풀 추출** ★ (2026-05-29 사용자 후속 정정)
+  `intersect_universe()` (`src/common/universe.py`) — RANK_MAX=30, turnover_rank_max=10000
+  (사실상 거래대금 30위 단일 적용). 원래 30위 ∩ 회전율 30위 였으나 대형주
+  (시총 큰 종목) 가 회전율 30위 안에 못 들어 자동 surface 제외되는 문제 발견.
+  운전수 가설 (per-stock weight) 검증 데이터 1개월 누적 후 회전율 조건 재도입 검토.
 
 **Step (2) — 주도섹터 식별 (Top 3)**
   Step (1) 풀로 `score_leading_sectors()` 호출 — 테마별 breadth + 동일가중

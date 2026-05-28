@@ -474,7 +474,10 @@ def dashboard_tick(
     t_snapshot = perf_counter()
 
     # 2026-05-29 단저단고 surface 룰 — universe 풀 → 주도섹터 → 주도주/후보.
-    # Step (1) 거래대금 30위 ∩ 회전율 30위 교집합 = scalping universe 풀.
+    # Step (1) 거래대금 30위 단일 (2026-05-29 후속 사용자 결정: 회전율 30위 보류).
+    #   대형주 (시총 큰 종목) 가 회전율 30위 안에 못 들어 자동 surface 제외되는 문제
+    #   해결. 운전수 가설 (per-stock weight) 검증 데이터 1개월 누적 후 회전율 조건
+    #   재도입 검토.
     # Step (2) 좁혀진 풀로 z-score 주도섹터 식별 (Top 3).
     # Step (3) 주도섹터 내 거래대금 1위 ∩ 회전율 1위 = 주도주, 2위 == 2위 = 후보.
     from src.common.universe import intersect_universe
@@ -484,7 +487,10 @@ def dashboard_tick(
     _turnover_series = pd.Series(
         {str(r["code"]): r.get("turnover") for _, r in snapshot.iterrows() if pd.notna(r.get("turnover"))}
     )
-    universe_codes: set[str] = intersect_universe(_rank_series, _turnover_series)
+    # turnover_rank_max=10000 (사실상 무한) → 회전율 조건 사실상 폐기, 거래대금 30 단일
+    universe_codes: set[str] = intersect_universe(
+        _rank_series, _turnover_series, turnover_rank_max=10000,
+    )
     if universe_codes:
         universe_snapshot = snapshot[snapshot["code"].astype(str).isin(universe_codes)].copy()
     else:
