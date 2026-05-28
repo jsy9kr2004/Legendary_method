@@ -247,20 +247,31 @@
       return `<div class="text-slate-400">수급${headerSuffix}: 외인 ${fmtSignedBillion(fv)}${paren(dfv, fmtSignedBillion)} / 기관 ${fmtSignedBillion(iv)}${paren(div_, fmtSignedBillion)} / 프로그램 ${fmtSignedShares(pq)}${paren(dpq, fmtSignedShares)}</div>`;
     })();
 
-    // 단저단고 시그널 라인 (2026-05-29: "🔁 단저단고" 라벨 제거 — 페이지 자체가 단저단고).
-    // score ≥2 STRONG = 매수 권고, sigB/sigS 발화 시 옆에 표시.
+    // 단저단고 v11 (2026-05-29) — score_buy/sell 분리. 양쪽 모두 표시.
     const mrLine = (() => {
       if (!mr) return "";
-      const grade = mr.grade || "NEUTRAL";
-      const score = (typeof mr.score === "number") ? mr.score.toFixed(1) : "—";
-      const gradeCls = gradeClass(grade);
-      const gradeEmoji = grade === "STRONG" ? "🟢" : grade === "WATCH" ? "🟡" : "⚫";
+      // 단저
+      const gBuy = mr.grade_buy || mr.grade || "NEUTRAL";
+      const scBuy = (typeof mr.score_buy === "number") ? mr.score_buy.toFixed(2)
+                  : ((typeof mr.score === "number") ? mr.score.toFixed(2) : "—");
+      const emBuy = gBuy === "STRONG" ? "🟢" : gBuy === "WATCH" ? "🟡" : "⚫";
+      const clsBuy = gradeClass(gBuy);
+      // 단고
+      const gSell = mr.grade_sell || "NEUTRAL";
+      const scSell = (typeof mr.score_sell === "number") ? mr.score_sell.toFixed(2) : "—";
+      const emSell = gSell === "STRONG" ? "🟢" : gSell === "WATCH" ? "🟡" : "⚫";
+      const clsSell = gradeClass(gSell);
+      // 발화 마크
       let sig = "";
-      if (mr.sigB && mr.sigS) sig = ' <span class="text-emerald-300">🟢단저</span>+<span class="text-rose-300">🔴단고</span>';
-      else if (mr.sigB) sig = ' <span class="text-emerald-300">🟢 단저</span>';
-      else if (mr.sigS) sig = ' <span class="text-rose-300">🔴 단고</span>';
-      const reason = mr.reason ? `<span class="text-slate-400 ml-1">— ${escapeHtml(mr.reason)}</span>` : "";
-      return `<div><span class="${gradeCls} font-semibold">${gradeEmoji}${grade} ${score}</span>${sig}${reason}</div>`;
+      if (mr.sigB) sig += ' <span class="text-emerald-300 font-bold">🟢 단저↑</span>';
+      if (mr.sigS) sig += ' <span class="text-rose-300 font-bold">🔴 단고↑</span>';
+      const reason = mr.reason ? `<div class="text-slate-400 text-[10px]">— ${escapeHtml(mr.reason)}</div>` : "";
+      return `<div>
+        <span class="text-slate-400">단저</span> <span class="${clsBuy} font-semibold">${emBuy}${gBuy} ${scBuy}</span>
+        <span class="text-slate-500 mx-1">/</span>
+        <span class="text-slate-400">단고</span> <span class="${clsSell} font-semibold">${emSell}${gSell} ${scSell}</span>
+        ${sig}
+      </div>${reason}`;
     })();
 
     el.innerHTML = `

@@ -138,14 +138,18 @@ class TickLogRow:
     setup_score_pullback: float | None = None
     setup_chase_warning: bool = False
 
-    # ── 단저단고 시그널 + v10b score (2026-05-27/28) ──
-    # 분봉 swing low/high + 매물대 + 추세선 + 평균회귀 + 변동성 weight 합산.
-    # score AUC 0.628. STRONG (≥2) = precision 95.9%.
+    # ── 단저단고 시그널 v11 (2026-05-29) — score_buy/sell 분리 ──
+    # ZigZag GT (multi=3.0, floor 1.0%) + AUC 가중합. 7일 검증 AUC 단저 0.879 / 단고 0.887.
     mr_sigB: bool = False
     mr_sigS: bool = False
     mr_reason: str | None = None
+    # 호환성 — mr_score / mr_grade = mr_score_buy / mr_grade_buy (v10b 인터페이스)
     mr_score: float = 0.0
-    mr_grade: str | None = None    # STRONG / WATCH / NEUTRAL
+    mr_grade: str | None = None
+    mr_score_buy: float = 0.0      # v11 (0~1, ≥0.745 = STRONG)
+    mr_grade_buy: str | None = None
+    mr_score_sell: float = 0.0     # v11 (≥0.666 = STRONG)
+    mr_grade_sell: str | None = None
 
     # ── Exit.Triggers 청산 트리거 발화 상태 ─────────────────────────────────────────
     # 감시 모드: C1~C4 만 유효 (C5 는 보유 모드만)
@@ -426,12 +430,16 @@ def build_tick_log_row(
         setup_score_breakout=_float_safe(getattr(monitored, "setup_score_breakout", None)),
         setup_score_pullback=_float_safe(getattr(monitored, "setup_score_pullback", None)),
         setup_chase_warning=bool(getattr(monitored, "setup_chase_warning", False)),
-        # 단저단고 시그널 + v10b score (2026-05-27/28)
+        # 단저단고 시그널 v11 (2026-05-29) — score_buy/sell 분리
         mr_sigB=bool(getattr(monitored, "mr_sigB", False)),
         mr_sigS=bool(getattr(monitored, "mr_sigS", False)),
         mr_reason=getattr(monitored, "mr_reason", None),
         mr_score=_float_safe(getattr(monitored, "mr_score", 0.0)) or 0.0,
         mr_grade=getattr(monitored, "mr_grade", None),
+        mr_score_buy=_float_safe(getattr(monitored, "mr_score_buy", 0.0)) or 0.0,
+        mr_grade_buy=getattr(monitored, "mr_grade_buy", None),
+        mr_score_sell=_float_safe(getattr(monitored, "mr_score_sell", 0.0)) or 0.0,
+        mr_grade_sell=getattr(monitored, "mr_grade_sell", None),
         # Exit.Triggers 트리거
         trigger_a1_stop_price=bool(trigger_states.get("A1_stop_price", False)),
         trigger_a2_stop_bar_low=bool(trigger_states.get("A2_stop_bar_low", False)),

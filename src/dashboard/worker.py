@@ -364,21 +364,21 @@ def _maybe_push_mr_strong_alert(
 ) -> None:
     """단저단고 STRONG 푸시 알림 — kind 변경/재진입 시 1회 send (2026-05-29).
 
-    임시 정책 (v10b score 가 매수 한정 weight 라 단고 시점 STRONG 도달 사실상 X):
-        - 단저: monitored.mr_grade == "STRONG" AND mr_sigB
-        - 단고: mr_sigS True (score 가드 우회 — 보유 청산 신호는 무조건 push)
-    v11 score_buy / score_sell 분리 ritual 통과 후 STRONG 가드 단고에도 정상 적용.
+    v11 (2026-05-29) — score_buy/sell 분리 후 정통 가드 적용:
+        - 단저: mr_grade_buy == "STRONG" AND mr_sigB
+        - 단고: mr_grade_sell == "STRONG" AND mr_sigS
 
     동일 kind 연속은 1회만 (mr_alert_kind 추적). kind 가 바뀌었거나 발화 영역에서
     벗어났다 재진입 시 재 push. /on /off 무관 (paused 일 때도 push).
     """
-    if monitored.mr_sigS:
-        # 단고는 score 가드 우회 — 보유 청산 신호 가장 중요
+    g_buy = getattr(monitored, "mr_grade_buy", "NEUTRAL")
+    g_sell = getattr(monitored, "mr_grade_sell", "NEUTRAL")
+    if monitored.mr_sigS and g_sell == "STRONG":
         new_kind = "단고"
-    elif monitored.mr_sigB and monitored.mr_grade == "STRONG":
+    elif monitored.mr_sigB and g_buy == "STRONG":
         new_kind = "단저"
     else:
-        # 발화 X 또는 단저 + WATCH/NEUTRAL — alert 추적 reset (재진입 시 push 가능)
+        # 발화 X 또는 STRONG 미달 — alert 추적 reset (재진입 시 push 가능)
         monitored.mr_alert_kind = None
         return
 
@@ -401,10 +401,15 @@ def _maybe_push_mr_strong_alert(
     kind_emoji = "🟢" if new_kind == "단저" else "🔴"
     reason = monitored.mr_reason or "—"
     ts_label = now.strftime("%H:%M:%S")
+    # v11 — kind 별 score 표시
+    if new_kind == "단저":
+        score_val = getattr(monitored, "mr_score_buy", 0.0)
+    else:
+        score_val = getattr(monitored, "mr_score_sell", 0.0)
     text = (
         f"🚨 단저단고 STRONG — {source_label}\n"
         f"{name} ({monitored.code})\n"
-        f"{kind_emoji} {new_kind} score {monitored.mr_score:.1f} — {reason}\n"
+        f"{kind_emoji} {new_kind} score {score_val:.2f} — {reason}\n"
         f"테마: {sector_str} | {ts_label}"
     )
     try:
@@ -961,17 +966,27 @@ def dashboard_tick(
         _in_mr_universe = (not mr_universe) or (code in mr_universe) or _user_pinned
         try:
             if _in_mr_universe:
-                mr_b, mr_s, mr_r, mr_score, mr_g = analyze_minute_bars(bars)
+                # v11 (2026-05-29) — score_buy/sell 분리
+                mr_b, mr_s, mr_r, sc_buy, g_buy, sc_sell, g_sell = analyze_minute_bars(bars)
             else:
-                mr_b, mr_s, mr_r, mr_score, mr_g = False, False, None, 0.0, "NEUTRAL"
+                mr_b, mr_s, mr_r, sc_buy, g_buy, sc_sell, g_sell = (
+                    False, False, None, 0.0, "NEUTRAL", 0.0, "NEUTRAL"
+                )
         except Exception as e:
             logger.warning(f"{code} mean_reversion 분석 실패: {e}")
-            mr_b, mr_s, mr_r, mr_score, mr_g = False, False, None, 0.0, "NEUTRAL"
+            mr_b, mr_s, mr_r, sc_buy, g_buy, sc_sell, g_sell = (
+                False, False, None, 0.0, "NEUTRAL", 0.0, "NEUTRAL"
+            )
         monitored.mr_sigB = mr_b
         monitored.mr_sigS = mr_s
         monitored.mr_reason = mr_r
-        monitored.mr_score = mr_score
-        monitored.mr_grade = mr_g
+        monitored.mr_score_buy = sc_buy
+        monitored.mr_grade_buy = g_buy
+        monitored.mr_score_sell = sc_sell
+        monitored.mr_grade_sell = g_sell
+        # v10b 호환 (legacy)
+        monitored.mr_score = sc_buy
+        monitored.mr_grade = g_buy
         # 단저단고 히스토리 (2026-05-29) — sigB/sigS 발화 시 카드 히스토리 섹션용 push.
         # 연속 동일 kind 는 score/reason 만 갱신 (FIFO 3 max).
         if mr_b:

@@ -16,7 +16,14 @@ from src.dashboard.state import MonitoredStock
 from src.dashboard.worker import _maybe_push_mr_strong_alert
 
 
-def _make_stock(grade="STRONG", sigB=False, sigS=False, alert_kind=None) -> MonitoredStock:
+def _make_stock(
+    grade_buy="STRONG", grade_sell="NEUTRAL",
+    sigB=False, sigS=False, alert_kind=None,
+) -> MonitoredStock:
+    """v11 — grade_buy / grade_sell 분리 (단저 STRONG 테스트 기본).
+
+    하위 호환: 옛 grade 단일 인자는 grade_buy 로 alias.
+    """
     m = MonitoredStock(
         code="091340", name="대한광통신",
         added_at=datetime(2026, 5, 29, 9, 30),
@@ -24,10 +31,14 @@ def _make_stock(grade="STRONG", sigB=False, sigS=False, alert_kind=None) -> Moni
     )
     m.sector_role = "leader"
     m.surface_sector_name = "AI데이터센터"
-    m.mr_grade = grade
+    m.mr_grade = grade_buy  # v10b alias
+    m.mr_score = 0.85
+    m.mr_grade_buy = grade_buy
+    m.mr_grade_sell = grade_sell
+    m.mr_score_buy = 0.85 if grade_buy == "STRONG" else 0.6
+    m.mr_score_sell = 0.75 if grade_sell == "STRONG" else 0.5
     m.mr_sigB = sigB
     m.mr_sigS = sigS
-    m.mr_score = 2.3
     m.mr_reason = "STOCH=30 Z=-1.08 atr0.4%"
     m.mr_alert_kind = alert_kind
     return m
@@ -59,8 +70,8 @@ def test_no_push_when_same_kind_consecutive():
 
 
 def test_push_on_kind_transition():
-    """단저 → 단고 전환 시 재 push."""
-    m = _make_stock(sigS=True, alert_kind="단저")
+    """단저 → 단고 전환 시 재 push (v11: grade_sell=STRONG 필요)."""
+    m = _make_stock(grade_buy="NEUTRAL", grade_sell="STRONG", sigS=True, alert_kind="단저")
     with patch("src.dashboard.worker.send_message_single") as send:
         send.return_value = {"ok": True}
         _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 35, 0), "t", "c")
@@ -80,28 +91,28 @@ def test_strong_grade_without_trigger_no_push():
 
 
 def test_non_strong_grade_resets_alert_kind():
-    """STRONG 영역 벗어나면 mr_alert_kind 가 None 으로 reset (재진입 시 다시 push 위해)."""
-    m = _make_stock(grade="WATCH", sigB=True, alert_kind="단저")
+    """grade_buy < STRONG → push X + alert_kind reset (재진입 시 다시 push 위해)."""
+    m = _make_stock(grade_buy="WATCH", sigB=True, alert_kind="단저")
     with patch("src.dashboard.worker.send_message_single") as send:
         _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 40, 0), "t", "c")
-    assert send.call_count == 0  # WATCH 면 push X
-    assert m.mr_alert_kind is None  # reset
+    assert send.call_count == 0
+    assert m.mr_alert_kind is None
 
 
 def test_strong_reentry_after_reset_pushes_again():
-    """STRONG → WATCH (reset) → STRONG 재진입 → 다시 push."""
-    m = _make_stock(sigB=True)
+    """STRONG → WATCH (reset) → STRONG 재진입 → 다시 push (v11)."""
+    m = _make_stock(grade_buy="STRONG", sigB=True)
     m.mr_alert_kind = "단저"  # 옛 push 흔적
 
     # WATCH 로 떨어짐
-    m.mr_grade = "WATCH"
+    m.mr_grade_buy = "WATCH"
     with patch("src.dashboard.worker.send_message_single") as send:
         _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 40, 0), "t", "c")
         assert send.call_count == 0
         assert m.mr_alert_kind is None
 
     # STRONG 재진입
-    m.mr_grade = "STRONG"
+    m.mr_grade_buy = "STRONG"
     m.mr_sigB = True
     with patch("src.dashboard.worker.send_message_single") as send:
         send.return_value = {"ok": True}
@@ -134,13 +145,12 @@ def test_manual_role_label_in_text():
     assert "🔵 수동" in text
 
 
-# ── 단고 score 가드 우회 (임시 정책, v11 ritual 전) ─────────────────────────────
+# ── v11 (2026-05-29) — score_buy / score_sell 분리 후 정통 가드 ───────────────
 
 
-def test_sigS_pushes_even_with_watch_grade():
-    """v10b score 가 매수 한정 weight 라 단고 시점 STRONG 도달 사실상 X.
-    임시 — sigS 발화 자체로 push (score 가드 우회). 보유 청산 신호 우선."""
-    m = _make_stock(grade="WATCH", sigS=True)
+def test_sigS_pushes_when_grade_sell_strong():
+    """v11: 단고 STRONG (grade_sell=STRONG) + sigS → push."""
+    m = _make_stock(grade_buy="NEUTRAL", grade_sell="STRONG", sigS=True)
     with patch("src.dashboard.worker.send_message_single") as send:
         send.return_value = {"ok": True}
         _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 32, 10), "t", "c")
@@ -149,18 +159,17 @@ def test_sigS_pushes_even_with_watch_grade():
     assert m.mr_alert_kind == "단고"
 
 
-def test_sigS_pushes_even_with_neutral_grade():
-    m = _make_stock(grade="NEUTRAL", sigS=True)
+def test_sigS_no_push_when_grade_sell_watch():
+    """v11: 단고 시그널 있어도 grade_sell=WATCH 면 push X (정상 가드)."""
+    m = _make_stock(grade_buy="NEUTRAL", grade_sell="WATCH", sigS=True)
     with patch("src.dashboard.worker.send_message_single") as send:
-        send.return_value = {"ok": True}
         _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 32, 10), "t", "c")
-    assert send.call_count == 1
-    assert m.mr_alert_kind == "단고"
+    assert send.call_count == 0
 
 
-def test_sigB_still_requires_strong():
-    """단저는 v10b score 정합이라 STRONG 가드 유지 — WATCH/NEUTRAL 단저는 push X."""
-    m = _make_stock(grade="WATCH", sigB=True)
+def test_sigB_no_push_when_grade_buy_watch():
+    """v11: 단저 시그널 있어도 grade_buy=WATCH 면 push X."""
+    m = _make_stock(grade_buy="WATCH", sigB=True)
     with patch("src.dashboard.worker.send_message_single") as send:
         _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 32, 10), "t", "c")
     assert send.call_count == 0

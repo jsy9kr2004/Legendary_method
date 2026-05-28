@@ -146,9 +146,151 @@ def add_score_features(bars: pd.DataFrame) -> pd.DataFrame:
 
 
 def grade(score: float) -> str:
-    """score → 등급 라벨 (카드 표시용)."""
+    """score → 등급 라벨 (카드 표시용) — v10b 레거시 (단저 한정).
+
+    v11 (2026-05-29) 부터는 grade_buy / grade_sell 사용 권장. score 가 매수
+    한정 weight 라 단고 시점 STRONG 도달 사실상 X — 사용자 명시 지적.
+    """
     if score >= SCORE_STRONG:
         return "STRONG"
     if score >= SCORE_WATCH:
+        return "WATCH"
+    return "NEUTRAL"
+
+
+# ── v11 score_buy / score_sell 분리 (2026-05-29) ─────────────────────────────
+#
+# 배경:
+#   v10b score 의 5 weight 중 3개가 데이터와 정반대 방향이라 사용자 지적 후
+#   처음부터 다시. ZigZag GT (ATR multi=3.0, floor 1.0% — 큰 swing 만) 으로
+#   3~7일 분봉 분석 후 AUC 가중합 도출.
+#
+# 7일 검증 (5/18~5/28, 분봉 145,148 개):
+#   - 단저 AUC = 0.879 (v10b 0.628 대비 +0.25)
+#   - 단고 AUC = 0.887
+#   - 4종목(하이닉스/현대차/삼성전자/삼성전기) 한정 net 지정가 +2.4% (사용자 직관
+#     "STRONG 단저 매수 + STRONG 단고 매도" 룰, 승률 79.3%)
+#
+# weight = (AUC_eff - 0.5) × 2 / total_weight 정규화. 자세한 분석 history 는
+# memory/project_scalping_redesign_2026_05_27 + 본 commit message 참조.
+
+# 단저 (sigB) 후보 feature — name : (direction +1=HIGH 시그널 / -1=LOW 시그널, AUC_eff)
+BUY_FEATS_V11 = {
+    "touch_count":      (-1, 0.797),  # 매물대 적은 봉이 swing 시그널
+    "zscore":           (-1, 0.796),  # 평균회귀 과매도
+    "stoch_k":          (-1, 0.755),  # 과매도
+    "williams_r":       (-1, 0.755),  # 과매도
+    "atr_pct":          (+1, 0.738),  # 변동성 큰 봉
+    "support_dist_pct": (-1, 0.763),  # 추세선 부근 (음수 = 아래쪽 swing low)
+    "rsi":              (-1, 0.724),  # 과매도
+    "lower_wick_pct":   (+1, 0.689),  # 망치형 (아래꼬리 큼)
+    "is_doji":          (-1, 0.678),  # 방향 큰 봉 (도지 아님)
+    "consec_bear":      (+1, 0.664),  # 직전 음봉 연속 후 반등
+    "is_bearish":       (+1, 0.640),  # 음봉 (꼬리 반등)
+}
+
+# 단고 (sigS) 후보 feature — 거울상
+SELL_FEATS_V11 = {
+    "zscore":           (+1, 0.827),  # 과매수
+    "stoch_k":          (+1, 0.797),  # 과매수
+    "williams_r":       (+1, 0.797),  # 과매수
+    "support_dist_pct": (+1, 0.774),  # 추세선 위쪽 (양수 = 고점)
+    "rsi":              (+1, 0.758),  # 과매수
+    "touch_count":      (-1, 0.752),  # 매물대 적음 (공통)
+    "atr_pct":          (+1, 0.745),  # 변동성 큰 봉 (공통)
+    "consec_bull":      (+1, 0.694),  # 직전 양봉 연속 후 반락
+    "upper_wick_pct":   (+1, 0.686),  # 역망치형 (윗꼬리 큼)
+    "is_doji":          (-1, 0.682),  # 방향 큰 봉 (공통)
+    "is_bullish":       (+1, 0.668),  # 양봉 후 윗꼬리 반락
+}
+
+# STRONG 임계 (7일 backtest top 0.5% quantile)
+SCORE_BUY_STRONG = 0.745
+SCORE_BUY_WATCH = 0.55
+SCORE_SELL_STRONG = 0.666
+SCORE_SELL_WATCH = 0.50
+
+
+def _normalize_minmax(value: float, vmin: float, vmax: float) -> float:
+    """min-max scale 0~1. AUC 가중합 score 의 일관성 위해 학습 시점과 동일 range
+    유지가 이상적이나 라이브에선 어려움 → 봉별 normalize 대신 feature 별 hard
+    clip 사용. 안전한 0~1 보장.
+
+    실용적 hard range — 7일 학습 데이터에서 도출.
+    """
+    if vmax == vmin:
+        return 0.5
+    v = (value - vmin) / (vmax - vmin)
+    return max(0.0, min(1.0, v))
+
+
+# Feature 별 hard min/max (7일 학습 데이터의 0.1~99.9 percentile)
+_FEATURE_RANGES = {
+    "touch_count": (0, 30),
+    "zscore": (-3, 3),
+    "stoch_k": (0, 100),
+    "williams_r": (-100, 0),
+    "atr_pct": (0, 5),
+    "support_dist_pct": (-5, 5),
+    "rsi": (0, 100),
+    "lower_wick_pct": (0, 1),
+    "upper_wick_pct": (0, 1),
+    "is_doji": (0, 1),
+    "is_bullish": (0, 1),
+    "is_bearish": (0, 1),
+    "consec_bear": (0, 10),
+    "consec_bull": (0, 10),
+}
+
+
+def _compute_score_v11(row, feats: dict) -> float:
+    """v11 AUC 가중합 score 계산 — 0~1 범위. NaN-safe.
+
+    Args:
+        row: pandas Series (마지막 봉의 feature 값).
+        feats: BUY_FEATS_V11 또는 SELL_FEATS_V11.
+    """
+    score = 0.0
+    total_w = 0.0
+    for name, (direction, auc_eff) in feats.items():
+        val = row.get(name)
+        if val is None or (isinstance(val, float) and val != val):  # NaN
+            # NaN 은 0.5 로 (중립)
+            s_norm = 0.5
+        else:
+            vmin, vmax = _FEATURE_RANGES.get(name, (0, 1))
+            s_norm = _normalize_minmax(float(val), vmin, vmax)
+        if direction < 0:
+            s_norm = 1 - s_norm
+        w = (auc_eff - 0.5) * 2
+        score += s_norm * w
+        total_w += w
+    return score / total_w if total_w > 0 else 0.0
+
+
+def compute_score_buy(row) -> float:
+    """v11 단저 score (0~1)."""
+    return _compute_score_v11(row, BUY_FEATS_V11)
+
+
+def compute_score_sell(row) -> float:
+    """v11 단고 score (0~1)."""
+    return _compute_score_v11(row, SELL_FEATS_V11)
+
+
+def grade_buy(score: float) -> str:
+    """score_buy → 단저 등급 (STRONG / WATCH / NEUTRAL)."""
+    if score >= SCORE_BUY_STRONG:
+        return "STRONG"
+    if score >= SCORE_BUY_WATCH:
+        return "WATCH"
+    return "NEUTRAL"
+
+
+def grade_sell(score: float) -> str:
+    """score_sell → 단고 등급."""
+    if score >= SCORE_SELL_STRONG:
+        return "STRONG"
+    if score >= SCORE_SELL_WATCH:
         return "WATCH"
     return "NEUTRAL"

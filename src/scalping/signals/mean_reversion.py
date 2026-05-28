@@ -41,7 +41,10 @@ import numpy as np
 import pandas as pd
 
 from src.scalping.bars import add_candle_features, add_mean_reversion, add_swing_labels
-from src.scalping.signals.weighted_score import add_score_features, grade as score_grade
+from src.scalping.signals.weighted_score import (
+    add_score_features, grade as score_grade,
+    compute_score_buy, compute_score_sell, grade_buy, grade_sell,
+)
 
 
 # 임계 (튜닝 가능, system tuning ritual 통과 후만 변경)
@@ -111,26 +114,24 @@ def classify(bars: pd.DataFrame) -> pd.DataFrame:
     return bars
 
 
-def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple[bool, bool, str | None, float, str]:
-    """KIS 1분봉 fetch 결과 → 마지막 봉의 (sigB, sigS, reason, score, grade).
+def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple:
+    """KIS 1분봉 fetch 결과 → 마지막 봉의 단저단고 시그널 (v11).
 
-    bars_minute: src/data/intraday_realtime.fetch_minute_bars 결과
-                 (columns: time/open/high/low/close/volume/trading_value).
+    2026-05-29 v11 — score_buy / score_sell 분리.
 
-    1분봉 frame 이지만 평균회귀 지표는 그대로 적용 (ma20 = 20분 평균).
-    표본 ≥ 25 봉 (= 25분) 필요. 미달 시 (False, False, None, 0.0, "NEUTRAL") 반환.
+    Returns:
+        (sigB, sigS, reason, score_buy, grade_buy, score_sell, grade_sell)
+        sigB / sigS: 분봉 swing low+oversold / swing high+overbought+음봉 패턴
+        score_buy / score_sell: v11 AUC 가중합 0~1
+        grade_buy / grade_sell: STRONG / WATCH / NEUTRAL 각각
 
-    score: v10b weighted score (매물대 + 추세선 + 평균회귀 + 변동성 합산).
-    grade: STRONG (≥2) / WATCH (≥1) / NEUTRAL.
-
-    M6 worker dry-run 통합용 — 매 tick KIS 분봉 fetch 후 호출.
+    표본 < 25 봉 시 (False, False, None, 0.0, "NEUTRAL", 0.0, "NEUTRAL").
     """
     if bars_minute is None or len(bars_minute) < 25:
-        return False, False, None, 0.0, "NEUTRAL"
+        return False, False, None, 0.0, "NEUTRAL", 0.0, "NEUTRAL"
     df = bars_minute.copy()
     if "time" in df.columns and not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df["time"], format="%H%M%S", errors="coerce")
-    # bar_tv 컬럼 정합 (build_bars 와 동일 이름)
     if "bar_tv" not in df.columns and "trading_value" in df.columns:
         df["bar_tv"] = df["trading_value"].fillna(0).clip(lower=0)
     add_candle_features(df)
@@ -138,14 +139,25 @@ def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple[bool, bool, str | No
     add_swing_labels(df, lookback=3)
     classify(df)
     add_score_features(df)
+    # v11 추가 feature — touch_count / support_dist_pct 는 add_score_features 가 채움.
+    # 봉 패턴 boolean (compute_score_v11 입력용)
+    df["is_bullish"] = (df["candle"] == "bull").astype(int)
+    df["is_bearish"] = (df["candle"] == "bear").astype(int)
+    df["is_doji"] = (df["candle"] == "doji").astype(int)
     last = df.iloc[-1]
     sigB = bool(last.get("sigB", False))
     sigS = bool(last.get("sigS", False))
-    score = float(last.get("score", 0.0) or 0.0)
-    g = score_grade(score)
-    if not (sigB or sigS or score >= 1.0):
-        return False, False, None, score, g
-    parts: list[str] = [f"score {score:.1f} ({g})"]
+    # v11 score 계산
+    sc_buy = compute_score_buy(last)
+    sc_sell = compute_score_sell(last)
+    g_buy = grade_buy(sc_buy)
+    g_sell = grade_sell(sc_sell)
+    if not (sigB or sigS or g_buy != "NEUTRAL" or g_sell != "NEUTRAL"):
+        return False, False, None, sc_buy, g_buy, sc_sell, g_sell
+    # reason 라인 (v10b 호환 — score 라벨)
+    score_label = sc_sell if sigS else sc_buy
+    grade_label = g_sell if sigS else g_buy
+    parts: list[str] = [f"score {score_label:.2f} ({grade_label})"]
     if sigB:
         parts.append("단저")
         for k, v, fmt, t in [
@@ -166,15 +178,15 @@ def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple[bool, bool, str | No
             val = last.get(k)
             if pd.notna(val) and val >= t:
                 parts.append(f"{v}={fmt.format(val)}")
-    # v10b 가산 항목 (매물대/추세선/변동성)
-    if pd.notna(last.get("atr_pct")) and last["atr_pct"] <= 0.7:
+    # v11 reason 라인 — 핵심 feature 만 (atr_pct / touch_count 표시)
+    if pd.notna(last.get("atr_pct")):
         parts.append(f"atr{last['atr_pct']:.2f}%")
-    if pd.notna(last.get("support_dist_pct")) and abs(last["support_dist_pct"]) <= 0.5:
-        parts.append("추세선")
-    if pd.notna(last.get("touch_count")) and last["touch_count"] >= 5:
+    if pd.notna(last.get("support_dist_pct")):
+        parts.append(f"추세선{last['support_dist_pct']:+.2f}%")
+    if pd.notna(last.get("touch_count")):
         parts.append(f"매물대{int(last['touch_count'])}")
     reason = " ".join(parts) if parts else None
-    return sigB, sigS, reason, score, g
+    return sigB, sigS, reason, sc_buy, g_buy, sc_sell, g_sell
 
 
 def classify_tick_realtime(

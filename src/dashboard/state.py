@@ -106,14 +106,19 @@ class MonitoredStock:
     setup_score_breakout: float | None = None
     setup_score_pullback: float | None = None
     setup_chase_warning: bool = False
-    # 단저단고 시그널 (docs/scalping-redesign-2026-05-27.md, 2026-05-27/28).
-    # 매 tick 봉 단위 분석으로 마지막 봉의 sigB/sigS/score 갱신. 카드 dry-run 표시.
-    # v10b score = 매물대 + 추세선 + 평균회귀 + 변동성 weight 합산 (AUC 0.628).
+    # 단저단고 시그널 v11 (2026-05-29 — score_buy / score_sell 분리).
+    # v10b score (매수 한정 weight) 의 결함 — 단저/단고 별 weight 정통 분리.
+    # 7일 검증 AUC: 단저 0.879 / 단고 0.887.
     mr_sigB: bool = False
     mr_sigS: bool = False
     mr_reason: str | None = None  # 발화 사유 + score breakdown
-    mr_score: float = 0.0          # v10b weighted score
-    mr_grade: str = "NEUTRAL"      # STRONG (≥2) / WATCH (≥1) / NEUTRAL
+    # v11 score (0~1) 별도, v10b mr_score 는 호환성 위해 mr_score_buy 와 동일하게 유지.
+    mr_score: float = 0.0          # = mr_score_buy (v10b 호환)
+    mr_grade: str = "NEUTRAL"      # = mr_grade_buy (v10b 호환)
+    mr_score_buy: float = 0.0      # v11 단저 score (≥0.745 = STRONG)
+    mr_grade_buy: str = "NEUTRAL"
+    mr_score_sell: float = 0.0     # v11 단고 score (≥0.666 = STRONG)
+    mr_grade_sell: str = "NEUTRAL"
     # 단저단고 surface 룰 (2026-05-29). 자동 surface 종목의 역할 + 소속 섹터.
     sector_role: str | None = None          # "leader" | "candidate" | None
     sector_rank: int | None = None          # 1=주도섹터 / 2=2위 / 3=3위 (카드 라벨 분기)
