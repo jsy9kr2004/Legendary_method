@@ -972,8 +972,10 @@ def dashboard_tick(
         _in_mr_universe = (not mr_universe) or (code in mr_universe) or _user_pinned
         try:
             if _in_mr_universe:
-                # v11 (2026-05-29) — score_buy/sell 분리
-                mr_b, mr_s, mr_r, sc_buy, g_buy, sc_sell, g_sell = analyze_minute_bars(bars)
+                # v11 (2026-05-29) — score_buy/sell 분리 + per-stock weight (code 전달)
+                mr_b, mr_s, mr_r, sc_buy, g_buy, sc_sell, g_sell = analyze_minute_bars(
+                    bars, code=code,
+                )
             else:
                 mr_b, mr_s, mr_r, sc_buy, g_buy, sc_sell, g_sell = (
                     False, False, None, 0.0, "NEUTRAL", 0.0, "NEUTRAL"

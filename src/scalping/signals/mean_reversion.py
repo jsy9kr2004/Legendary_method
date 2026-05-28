@@ -114,16 +114,18 @@ def classify(bars: pd.DataFrame) -> pd.DataFrame:
     return bars
 
 
-def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple:
+def analyze_minute_bars(bars_minute: pd.DataFrame, code: str | None = None) -> tuple:
     """KIS 1분봉 fetch 결과 → 마지막 봉의 단저단고 시그널 (v11).
 
     2026-05-29 v11 — score_buy / score_sell 분리.
+    2026-05-29 v11.1 — per-stock weight 적용 (code 주어지면).
+
+    Args:
+        bars_minute: KIS 1분봉 (≥ 25 봉 필요)
+        code: 종목 코드 (per-stock weight 사용 위해, None 이면 global v11).
 
     Returns:
         (sigB, sigS, reason, score_buy, grade_buy, score_sell, grade_sell)
-        sigB / sigS: 분봉 swing low+oversold / swing high+overbought+음봉 패턴
-        score_buy / score_sell: v11 AUC 가중합 0~1
-        grade_buy / grade_sell: STRONG / WATCH / NEUTRAL 각각
 
     표본 < 25 봉 시 (False, False, None, 0.0, "NEUTRAL", 0.0, "NEUTRAL").
     """
@@ -147,9 +149,9 @@ def analyze_minute_bars(bars_minute: pd.DataFrame) -> tuple:
     last = df.iloc[-1]
     sigB = bool(last.get("sigB", False))
     sigS = bool(last.get("sigS", False))
-    # v11 score 계산
-    sc_buy = compute_score_buy(last)
-    sc_sell = compute_score_sell(last)
+    # v11 score 계산 — code 주어지면 per-stock weight 사용 (없으면 global v11)
+    sc_buy = compute_score_buy(last, code=code)
+    sc_sell = compute_score_sell(last, code=code)
     g_buy = grade_buy(sc_buy)
     g_sell = grade_sell(sc_sell)
     if not (sigB or sigS or g_buy != "NEUTRAL" or g_sell != "NEUTRAL"):

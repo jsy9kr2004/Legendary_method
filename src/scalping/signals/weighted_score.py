@@ -268,14 +268,63 @@ def _compute_score_v11(row, feats: dict) -> float:
     return score / total_w if total_w > 0 else 0.0
 
 
-def compute_score_buy(row) -> float:
-    """v11 단저 score (0~1)."""
-    return _compute_score_v11(row, BUY_FEATS_V11)
+def compute_score_buy(row, code: str | None = None) -> float:
+    """v11 단저 score (0~1). code 주면 per-stock weight 사용 (sample 충분 시)."""
+    feats = _get_per_stock_feats(code, "buy") if code else None
+    return _compute_score_v11(row, feats or BUY_FEATS_V11)
 
 
-def compute_score_sell(row) -> float:
-    """v11 단고 score (0~1)."""
-    return _compute_score_v11(row, SELL_FEATS_V11)
+def compute_score_sell(row, code: str | None = None) -> float:
+    """v11 단고 score (0~1). code 주면 per-stock weight 사용."""
+    feats = _get_per_stock_feats(code, "sell") if code else None
+    return _compute_score_v11(row, feats or SELL_FEATS_V11)
+
+
+# ── Per-stock weight load + cache ────────────────────────────────────────────
+
+_PER_STOCK_CACHE: dict[str, dict] | None = None
+_PER_STOCK_PATH = "data/per_stock_weights.json"
+
+
+def _load_per_stock() -> dict[str, dict]:
+    """data/per_stock_weights.json 1회 load + cache. 없으면 빈 dict."""
+    global _PER_STOCK_CACHE
+    if _PER_STOCK_CACHE is not None:
+        return _PER_STOCK_CACHE
+    import json
+    import os
+    from loguru import logger
+    path = os.getenv("PER_STOCK_WEIGHTS_PATH", _PER_STOCK_PATH)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _PER_STOCK_CACHE = data.get("per_stock", {})
+        logger.info(
+            f"per-stock weight load: {len(_PER_STOCK_CACHE)}개 종목 "
+            f"(path={path}, version={data.get('version', '?')})"
+        )
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning(f"per-stock weight load 실패 ({path}): {e}. global fallback")
+        _PER_STOCK_CACHE = {}
+    return _PER_STOCK_CACHE
+
+
+def _get_per_stock_feats(code: str, kind: str) -> dict | None:
+    """code 의 per-stock feats dict. 없으면 None (호출자 global fallback)."""
+    ps = _load_per_stock().get(str(code))
+    if not ps:
+        return None
+    feats_list = ps.get(kind, {})
+    if not feats_list:
+        return None
+    # JSON 의 [direction, auc_eff] list → (direction, auc_eff) tuple 변환
+    return {name: (int(v[0]), float(v[1])) for name, v in feats_list.items()}
+
+
+def reload_per_stock_weights() -> None:
+    """테스트 / 운영 중 재학습 후 cache 무효화."""
+    global _PER_STOCK_CACHE
+    _PER_STOCK_CACHE = None
 
 
 def grade_buy(score: float) -> str:
