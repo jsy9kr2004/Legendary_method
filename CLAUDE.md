@@ -266,6 +266,27 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 
 **Back-out**: `LEGACY_RISING_FUNNEL=1` env 토글로 옛 Buy.Score funnel surface 부활.
 
+### ⚠ 단저단고 시스템 한계 (2026-05-29 정직 명시)
+
+정통 train/val split backtest 결과 **net 음수** (지정가 -0.55%, 시장가 더 나쁨):
+- 분봉 단저단고 swing 평균 폭 (+4~5%) 이 매매 timing miss + 비용 합산 흡수 어려움
+- AUC 0.879 (단저) / 0.887 (단고) = 시그널 정확도 좋음
+- Per-Stock weight 효과 +0.08~0.50%p (운전수 가설 ✓)
+- 그러나 **절대 net 양수 도달은 어려움** — 분봉 단위 잔파동 매매의 본질 한계
+
+운영 정책:
+- **사용자 직관 매매 보조 도구** — 카드 보면서 신호 참고 + 사용자가 종합 판단
+- **자동 매매 영구 X** (CLAUDE.md 자동 매매 금지 정책 유지)
+- 강한 추세 종목 (예: 5/28 삼성전기 +13%) 은 단저단고 보다 buy-and-hold 가 우월 — 종배/스윙 시스템이 답
+- 단저단고는 박스권/잔파동 종목 + 사용자 직관 매매 + Per-Stock stop 조합으로 보조
+
+종목별 sweet spot:
+- 삼성전기 (강한 추세 큰 swing): EOD 보유 시 +5.7% (per-stock stop -2.5%)
+- 삼성전자 (sigS 잘 발화): 100% 승률 +0.95% (stop -4%)
+- 현대차 (잔파동 큼): 모든 룰에서 net 음수 — 단저단고 부적합 종목
+
+매매일지 토론 시점 누적 데이터 (1개월+) 로 weight 재학습 + 한계 검토.
+
 ## 종배 매매 정량 룰 (간략)
 
 전체 정의는 [`docs/scalping-strategy.md`](docs/scalping-strategy.md). 핵심만:

@@ -1,9 +1,9 @@
 {
-  "version": "v11.3",
+  "version": "v11.4",
   "generated_at": "2026-05-29",
-  "method": "ZigZag GT (multi=3.0 floor 1.0%) + AUC 가중합. Universe = 거래대금 30위 단일. 종목별 stop_loss_pct 도출 (Train 7일 net 최대화).",
-  "min_gt_for_per_stock": 30,
-  "default_stop_loss_pct": -4.0,
+  "method": "ZigZag GT (multi=5.0, floor=2.0%) — 큰 swing 만. Universe = 거래대금 30위 단일. Per-stock + stop_loss + global fallback.",
+  "min_gt_for_per_stock": 20,
+  "default_stop_loss_pct": -1.5,
   "feature_ranges": {
     "touch_count": [
       0,
@@ -63,4156 +63,1999 @@
     ]
   },
   "per_stock": {
-    "000660": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.6798
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7539
-        ],
-        "atr_pct": [
-          1,
-          0.8016
-        ],
-        "is_doji": [
-          -1,
-          0.6644
-        ],
-        "rsi": [
-          -1,
-          0.8389
-        ],
-        "stoch_k": [
-          -1,
-          0.8186
-        ],
-        "touch_count": [
-          -1,
-          0.8171
-        ],
-        "williams_r": [
-          -1,
-          0.8186
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6384
-        ],
-        "zscore": [
-          -1,
-          0.8821
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6071
-        ],
-        "is_bearish": [
-          1,
-          0.6422
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7648
-        ],
-        "atr_pct": [
-          1,
-          0.8036
-        ],
-        "is_doji": [
-          -1,
-          0.6445
-        ],
-        "rsi": [
-          1,
-          0.7194
-        ],
-        "stoch_k": [
-          1,
-          0.7939
-        ],
-        "touch_count": [
-          -1,
-          0.7573
-        ],
-        "williams_r": [
-          1,
-          0.7939
-        ],
-        "zscore": [
-          1,
-          0.7605
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7485
-        ],
-        "consec_bull": [
-          1,
-          0.7039
-        ]
-      },
-      "n_gt": 60,
-      "stop_loss_pct": -5.0
-    },
-    "001440": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.6789
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7711
-        ],
-        "atr_pct": [
-          1,
-          0.7196
-        ],
-        "is_doji": [
-          -1,
-          0.6516
-        ],
-        "rsi": [
-          -1,
-          0.8065
-        ],
-        "stoch_k": [
-          -1,
-          0.7868
-        ],
-        "touch_count": [
-          -1,
-          0.8575
-        ],
-        "williams_r": [
-          -1,
-          0.7868
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6315
-        ],
-        "zscore": [
-          -1,
-          0.8544
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6115
-        ],
-        "is_bearish": [
-          1,
-          0.6629
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.8141
-        ],
-        "atr_pct": [
-          1,
-          0.7439
-        ],
-        "is_doji": [
-          -1,
-          0.6853
-        ],
-        "rsi": [
-          1,
-          0.89
-        ],
-        "stoch_k": [
-          1,
-          0.8471
-        ],
-        "touch_count": [
-          -1,
-          0.8108
-        ],
-        "williams_r": [
-          1,
-          0.8471
-        ],
-        "lower_wick_pct": [
-          1,
-          0.5565
-        ],
-        "zscore": [
-          1,
-          0.9285
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7813
-        ],
-        "consec_bull": [
-          1,
-          0.7229
-        ]
-      },
-      "n_gt": 60,
-      "stop_loss_pct": -7.0
-    },
     "001740": {
       "buy": {
         "consec_bear": [
           1,
-          0.6825
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7091
-        ],
-        "atr_pct": [
-          1,
-          0.6927
+          0.6949
         ],
         "is_doji": [
           -1,
-          0.6612
-        ],
-        "rsi": [
-          -1,
-          0.6804
-        ],
-        "stoch_k": [
-          -1,
-          0.7582
-        ],
-        "touch_count": [
-          -1,
-          0.7763
-        ],
-        "williams_r": [
-          -1,
-          0.7582
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6805
-        ],
-        "zscore": [
-          -1,
-          0.7882
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5536
+          0.6631
         ],
         "is_bearish": [
           1,
-          0.6487
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
+          0.6587
+        ],
+        "stoch_k": [
+          -1,
+          0.7901
+        ],
+        "lower_wick_pct": [
           1,
-          0.7849
+          0.7054
+        ],
+        "rsi": [
+          -1,
+          0.778
+        ],
+        "support_dist_pct": [
+          -1,
+          0.6288
+        ],
+        "williams_r": [
+          -1,
+          0.7901
         ],
         "atr_pct": [
           1,
-          0.6851
-        ],
-        "is_doji": [
-          -1,
-          0.6693
-        ],
-        "rsi": [
-          1,
-          0.7913
-        ],
-        "stoch_k": [
-          1,
-          0.8627
+          0.6992
         ],
         "touch_count": [
           -1,
-          0.7252
-        ],
-        "williams_r": [
-          1,
-          0.8627
+          0.7732
         ],
         "zscore": [
+          -1,
+          0.8246
+        ]
+      },
+      "sell": {
+        "consec_bull": [
           1,
-          0.8623
+          0.7144
+        ],
+        "consec_bear": [
+          -1,
+          0.5505
+        ],
+        "is_doji": [
+          -1,
+          0.645
         ],
         "support_dist_pct_abs": [
           1,
-          0.7542
+          0.8056
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.7302
+          0.8835
+        ],
+        "is_bullish": [
+          1,
+          0.6848
+        ],
+        "rsi": [
+          1,
+          0.8973
+        ],
+        "support_dist_pct": [
+          1,
+          0.8342
+        ],
+        "williams_r": [
+          1,
+          0.8835
+        ],
+        "atr_pct": [
+          1,
+          0.6875
+        ],
+        "touch_count": [
+          -1,
+          0.7734
+        ],
+        "zscore": [
+          1,
+          0.9322
         ]
       },
-      "n_gt": 126,
-      "stop_loss_pct": -1.0
+      "n_gt": 56,
+      "stop_loss_pct": -4.0
     },
     "001820": {
       "buy": {
         "consec_bear": [
           1,
-          0.7183
-        ],
-        "support_dist_pct": [
-          -1,
-          0.6982
-        ],
-        "atr_pct": [
-          1,
-          0.6537
+          0.7135
         ],
         "is_doji": [
           -1,
-          0.7001
+          0.6773
         ],
-        "rsi": [
+        "is_bearish": [
+          1,
+          0.6855
+        ],
+        "support_dist_pct_abs": [
           -1,
-          0.7296
+          0.5875
         ],
         "stoch_k": [
           -1,
-          0.8043
-        ],
-        "touch_count": [
-          -1,
-          0.7098
-        ],
-        "williams_r": [
-          -1,
-          0.8043
+          0.8711
         ],
         "lower_wick_pct": [
           1,
-          0.7086
+          0.6752
+        ],
+        "rsi": [
+          -1,
+          0.8648
+        ],
+        "support_dist_pct": [
+          -1,
+          0.7303
+        ],
+        "williams_r": [
+          -1,
+          0.8711
+        ],
+        "atr_pct": [
+          1,
+          0.6524
+        ],
+        "touch_count": [
+          -1,
+          0.8693
         ],
         "zscore": [
           -1,
-          0.8055
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.655
-        ],
-        "is_bearish": [
-          1,
-          0.6834
+          0.9327
         ]
       },
       "sell": {
-        "support_dist_pct": [
-          1,
-          0.7528
-        ],
-        "atr_pct": [
-          1,
-          0.6865
-        ],
-        "is_doji": [
-          -1,
-          0.7131
-        ],
-        "rsi": [
-          1,
-          0.7769
-        ],
-        "stoch_k": [
-          1,
-          0.7909
-        ],
-        "touch_count": [
-          -1,
-          0.7268
-        ],
-        "williams_r": [
-          1,
-          0.7909
-        ],
-        "zscore": [
-          1,
-          0.8683
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.6677
-        ],
         "consec_bull": [
           1,
-          0.7591
-        ]
-      },
-      "n_gt": 72,
-      "stop_loss_pct": -7.0
-    },
-    "005380": {
-      "buy": {
+          0.8548
+        ],
         "consec_bear": [
-          1,
-          0.6875
-        ],
-        "support_dist_pct": [
           -1,
-          0.7334
-        ],
-        "atr_pct": [
-          1,
-          0.7468
+          0.5888
         ],
         "is_doji": [
           -1,
-          0.7009
-        ],
-        "rsi": [
-          -1,
-          0.7917
-        ],
-        "stoch_k": [
-          -1,
-          0.81
-        ],
-        "touch_count": [
-          -1,
-          0.8072
-        ],
-        "williams_r": [
-          -1,
-          0.81
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6479
-        ],
-        "zscore": [
-          -1,
-          0.859
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.552
-        ],
-        "is_bearish": [
-          1,
-          0.6678
-        ]
-      },
-      "sell": {
-        "consec_bear": [
-          -1,
-          0.5654
-        ],
-        "support_dist_pct": [
-          1,
-          0.8106
-        ],
-        "atr_pct": [
-          1,
-          0.7787
-        ],
-        "is_doji": [
-          -1,
-          0.6834
-        ],
-        "rsi": [
-          1,
-          0.8565
-        ],
-        "stoch_k": [
-          1,
-          0.8577
-        ],
-        "touch_count": [
-          -1,
-          0.7774
-        ],
-        "williams_r": [
-          1,
-          0.8577
-        ],
-        "zscore": [
-          1,
-          0.89
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7884
+          0.7108
         ],
         "is_bearish": [
           -1,
-          0.5589
+          0.5785
         ],
-        "consec_bull": [
+        "support_dist_pct_abs": [
           1,
-          0.77
+          0.7181
+        ],
+        "stoch_k": [
+          1,
+          0.8305
+        ],
+        "is_bullish": [
+          1,
+          0.7892
+        ],
+        "rsi": [
+          1,
+          0.823
+        ],
+        "support_dist_pct": [
+          1,
+          0.7837
+        ],
+        "williams_r": [
+          1,
+          0.8305
+        ],
+        "atr_pct": [
+          1,
+          0.7064
+        ],
+        "touch_count": [
+          -1,
+          0.8365
+        ],
+        "zscore": [
+          1,
+          0.8893
         ]
       },
-      "n_gt": 58,
-      "stop_loss_pct": -5.0
+      "n_gt": 29,
+      "stop_loss_pct": -1.5
     },
     "005930": {
       "buy": {
-        "consec_bear": [
-          1,
-          0.7054
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7802
-        ],
-        "atr_pct": [
-          1,
-          0.759
-        ],
-        "is_doji": [
-          -1,
-          0.6684
-        ],
-        "rsi": [
-          -1,
-          0.7916
-        ],
-        "stoch_k": [
-          -1,
-          0.794
-        ],
-        "touch_count": [
-          -1,
-          0.8077
-        ],
-        "williams_r": [
-          -1,
-          0.794
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6152
-        ],
-        "zscore": [
-          -1,
-          0.8501
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6366
-        ],
-        "is_bearish": [
-          1,
-          0.6621
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7445
-        ],
-        "atr_pct": [
-          1,
-          0.7132
-        ],
-        "is_doji": [
-          -1,
-          0.6833
-        ],
-        "rsi": [
-          1,
-          0.8436
-        ],
-        "stoch_k": [
-          1,
-          0.8566
-        ],
-        "touch_count": [
-          -1,
-          0.79
-        ],
-        "williams_r": [
-          1,
-          0.8566
-        ],
-        "zscore": [
-          1,
-          0.8872
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7162
-        ],
         "consec_bull": [
-          1,
-          0.715
-        ]
-      },
-      "n_gt": 68,
-      "stop_loss_pct": -7.0
-    },
-    "006400": {
-      "buy": {
-        "consec_bear": [
           1,
           0.5808
         ],
-        "support_dist_pct": [
-          -1,
-          0.7775
-        ],
-        "atr_pct": [
+        "consec_bear": [
           1,
-          0.7918
+          0.5773
         ],
         "is_doji": [
           -1,
-          0.6267
+          0.6499
         ],
-        "rsi": [
+        "support_dist_pct_abs": [
           -1,
-          0.7121
+          0.6518
         ],
         "stoch_k": [
           -1,
-          0.7379
-        ],
-        "touch_count": [
-          -1,
-          0.7942
-        ],
-        "williams_r": [
-          -1,
-          0.7379
+          0.7461
         ],
         "lower_wick_pct": [
           1,
-          0.6521
+          0.7048
         ],
-        "zscore": [
-          -1,
-          0.7535
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5679
-        ],
-        "is_bearish": [
+        "is_bullish": [
           1,
-          0.5614
+          0.6015
         ],
-        "consec_bull": [
-          1,
-          0.5506
-        ]
-      },
-      "sell": {
+        "rsi": [
+          -1,
+          0.8293
+        ],
         "support_dist_pct": [
-          1,
-          0.8249
+          -1,
+          0.6447
+        ],
+        "williams_r": [
+          -1,
+          0.7461
         ],
         "atr_pct": [
           1,
-          0.7578
-        ],
-        "is_doji": [
-          -1,
-          0.6201
-        ],
-        "rsi": [
-          1,
-          0.8898
-        ],
-        "stoch_k": [
-          1,
-          0.8318
+          0.8434
         ],
         "touch_count": [
           -1,
-          0.8225
-        ],
-        "williams_r": [
-          1,
-          0.8318
+          0.8771
         ],
         "zscore": [
+          -1,
+          0.831
+        ]
+      },
+      "sell": {
+        "consec_bull": [
           1,
-          0.9101
+          0.7276
+        ],
+        "consec_bear": [
+          -1,
+          0.584
+        ],
+        "is_doji": [
+          -1,
+          0.6296
+        ],
+        "is_bearish": [
+          -1,
+          0.5782
         ],
         "support_dist_pct_abs": [
           1,
-          0.7995
+          0.6859
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.6329
+          0.8667
+        ],
+        "is_bullish": [
+          1,
+          0.7078
+        ],
+        "rsi": [
+          1,
+          0.9083
+        ],
+        "support_dist_pct": [
+          1,
+          0.7187
+        ],
+        "williams_r": [
+          1,
+          0.8667
+        ],
+        "atr_pct": [
+          1,
+          0.7301
+        ],
+        "touch_count": [
+          -1,
+          0.8636
+        ],
+        "zscore": [
+          1,
+          0.894
         ]
       },
-      "n_gt": 43,
-      "stop_loss_pct": -2.0
+      "n_gt": 20
     },
     "009150": {
       "buy": {
+        "consec_bull": [
+          1,
+          0.5743
+        ],
         "consec_bear": [
           1,
-          0.6568
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8087
-        ],
-        "atr_pct": [
-          1,
-          0.7086
+          0.5832
         ],
         "is_doji": [
           -1,
-          0.6292
-        ],
-        "rsi": [
-          -1,
-          0.8124
-        ],
-        "stoch_k": [
-          -1,
-          0.8415
-        ],
-        "touch_count": [
-          -1,
-          0.7794
-        ],
-        "williams_r": [
-          -1,
-          0.8415
-        ],
-        "lower_wick_pct": [
-          1,
-          0.7331
-        ],
-        "zscore": [
-          -1,
-          0.8853
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.675
+          0.6604
         ],
         "is_bearish": [
           1,
-          0.6202
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7233
-        ],
-        "atr_pct": [
-          1,
-          0.744
-        ],
-        "is_doji": [
-          -1,
-          0.65
-        ],
-        "rsi": [
-          1,
-          0.7252
-        ],
-        "stoch_k": [
-          1,
-          0.7191
-        ],
-        "touch_count": [
-          -1,
-          0.771
-        ],
-        "williams_r": [
-          1,
-          0.7191
-        ],
-        "zscore": [
-          1,
-          0.7311
+          0.5715
         ],
         "support_dist_pct_abs": [
-          1,
-          0.6813
-        ],
-        "consec_bull": [
-          1,
-          0.6358
-        ]
-      },
-      "n_gt": 86,
-      "stop_loss_pct": -4.0
-    },
-    "010120": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.6908
-        ],
-        "support_dist_pct": [
           -1,
-          0.8468
-        ],
-        "atr_pct": [
-          1,
-          0.7077
-        ],
-        "is_doji": [
-          -1,
-          0.6394
-        ],
-        "rsi": [
-          -1,
-          0.781
+          0.7825
         ],
         "stoch_k": [
           -1,
-          0.7909
-        ],
-        "touch_count": [
-          -1,
-          0.7993
-        ],
-        "williams_r": [
-          -1,
-          0.7909
+          0.8383
         ],
         "lower_wick_pct": [
           1,
-          0.6103
+          0.7014
         ],
-        "zscore": [
+        "is_bullish": [
+          1,
+          0.5889
+        ],
+        "rsi": [
           -1,
-          0.818
+          0.9007
         ],
-        "is_bearish": [
-          1,
-          0.674
-        ]
-      },
-      "sell": {
         "support_dist_pct": [
-          1,
-          0.7903
+          -1,
+          0.7002
+        ],
+        "williams_r": [
+          -1,
+          0.8383
         ],
         "atr_pct": [
           1,
-          0.7283
-        ],
-        "is_doji": [
-          -1,
-          0.6353
-        ],
-        "rsi": [
-          1,
-          0.7858
-        ],
-        "stoch_k": [
-          1,
-          0.7616
+          0.8323
         ],
         "touch_count": [
           -1,
-          0.7788
-        ],
-        "williams_r": [
-          1,
-          0.7616
+          0.8416
         ],
         "zscore": [
+          -1,
+          0.898
+        ]
+      },
+      "sell": {
+        "consec_bull": [
           1,
-          0.8393
+          0.6582
+        ],
+        "is_doji": [
+          -1,
+          0.6604
         ],
         "support_dist_pct_abs": [
           1,
-          0.7521
+          0.7363
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.5935
+          0.8218
+        ],
+        "is_bullish": [
+          1,
+          0.6248
+        ],
+        "rsi": [
+          1,
+          0.9192
+        ],
+        "support_dist_pct": [
+          1,
+          0.7695
+        ],
+        "williams_r": [
+          1,
+          0.8218
+        ],
+        "atr_pct": [
+          1,
+          0.7773
+        ],
+        "touch_count": [
+          -1,
+          0.8548
+        ],
+        "zscore": [
+          1,
+          0.8395
         ]
       },
-      "n_gt": 59,
-      "stop_loss_pct": -1.5
+      "n_gt": 28
     },
     "010170": {
       "buy": {
         "consec_bear": [
           1,
-          0.645
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7787
-        ],
-        "atr_pct": [
-          1,
-          0.7427
+          0.6961
         ],
         "is_doji": [
           -1,
-          0.6767
-        ],
-        "rsi": [
-          -1,
-          0.6903
-        ],
-        "stoch_k": [
-          -1,
-          0.7295
-        ],
-        "touch_count": [
-          -1,
-          0.8089
-        ],
-        "williams_r": [
-          -1,
-          0.7295
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6313
-        ],
-        "zscore": [
-          -1,
-          0.7445
+          0.6967
         ],
         "is_bearish": [
           1,
-          0.6215
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
+          0.6648
+        ],
+        "stoch_k": [
+          -1,
+          0.7853
+        ],
+        "lower_wick_pct": [
           1,
-          0.8398
+          0.6371
+        ],
+        "rsi": [
+          -1,
+          0.8202
+        ],
+        "support_dist_pct": [
+          -1,
+          0.7603
+        ],
+        "williams_r": [
+          -1,
+          0.7853
         ],
         "atr_pct": [
           1,
-          0.7368
-        ],
-        "is_doji": [
-          -1,
-          0.6767
-        ],
-        "rsi": [
-          1,
-          0.7461
-        ],
-        "stoch_k": [
-          1,
-          0.7884
+          0.7433
         ],
         "touch_count": [
           -1,
-          0.807
-        ],
-        "williams_r": [
-          1,
-          0.7884
+          0.8169
         ],
         "zscore": [
+          -1,
+          0.8288
+        ]
+      },
+      "sell": {
+        "consec_bull": [
           1,
-          0.8378
+          0.636
+        ],
+        "consec_bear": [
+          1,
+          0.5988
+        ],
+        "is_doji": [
+          -1,
+          0.7143
+        ],
+        "is_bearish": [
+          1,
+          0.6199
         ],
         "support_dist_pct_abs": [
           1,
-          0.8195
+          0.8782
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.6652
+          0.7998
+        ],
+        "is_bullish": [
+          1,
+          0.5944
+        ],
+        "rsi": [
+          1,
+          0.8748
+        ],
+        "support_dist_pct": [
+          1,
+          0.8824
+        ],
+        "williams_r": [
+          1,
+          0.7998
+        ],
+        "atr_pct": [
+          1,
+          0.7721
+        ],
+        "touch_count": [
+          -1,
+          0.8889
+        ],
+        "zscore": [
+          1,
+          0.9084
         ]
       },
-      "n_gt": 126,
+      "n_gt": 44,
       "stop_loss_pct": -1.0
     },
     "011000": {
       "buy": {
         "consec_bear": [
           1,
-          0.7754
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7848
-        ],
-        "atr_pct": [
-          1,
-          0.6949
+          0.7313
         ],
         "is_doji": [
           -1,
-          0.706
-        ],
-        "rsi": [
-          -1,
-          0.7061
-        ],
-        "stoch_k": [
-          -1,
-          0.7599
-        ],
-        "touch_count": [
-          -1,
-          0.7963
-        ],
-        "williams_r": [
-          -1,
-          0.7599
-        ],
-        "lower_wick_pct": [
-          1,
-          0.7375
-        ],
-        "zscore": [
-          -1,
-          0.766
+          0.657
         ],
         "is_bearish": [
           1,
-          0.7535
+          0.6906
         ],
-        "consec_bull": [
+        "support_dist_pct_abs": [
           -1,
-          0.5556
+          0.597
+        ],
+        "stoch_k": [
+          -1,
+          0.8116
+        ],
+        "lower_wick_pct": [
+          1,
+          0.7293
+        ],
+        "rsi": [
+          -1,
+          0.7658
+        ],
+        "support_dist_pct": [
+          -1,
+          0.8502
+        ],
+        "williams_r": [
+          -1,
+          0.8116
+        ],
+        "atr_pct": [
+          1,
+          0.737
+        ],
+        "touch_count": [
+          -1,
+          0.9044
+        ],
+        "zscore": [
+          -1,
+          0.825
         ]
       },
       "sell": {
         "consec_bear": [
           1,
-          0.5526
-        ],
-        "support_dist_pct": [
-          1,
-          0.6321
-        ],
-        "atr_pct": [
-          1,
-          0.6858
+          0.6263
         ],
         "is_doji": [
           -1,
-          0.7042
-        ],
-        "rsi": [
-          1,
-          0.7334
-        ],
-        "stoch_k": [
-          1,
-          0.7322
-        ],
-        "touch_count": [
-          -1,
-          0.7492
-        ],
-        "williams_r": [
-          1,
-          0.7322
-        ],
-        "zscore": [
-          1,
-          0.7803
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.6267
+          0.703
         ],
         "is_bearish": [
           1,
-          0.5659
+          0.6446
         ],
-        "consec_bull": [
+        "support_dist_pct_abs": [
           1,
-          0.6384
+          0.6815
+        ],
+        "stoch_k": [
+          1,
+          0.8007
+        ],
+        "is_bullish": [
+          1,
+          0.5584
+        ],
+        "rsi": [
+          1,
+          0.8833
+        ],
+        "support_dist_pct": [
+          1,
+          0.6947
+        ],
+        "williams_r": [
+          1,
+          0.8007
+        ],
+        "atr_pct": [
+          1,
+          0.7085
+        ],
+        "touch_count": [
+          -1,
+          0.7463
+        ],
+        "zscore": [
+          1,
+          0.8727
         ]
       },
-      "n_gt": 63,
-      "stop_loss_pct": -2.0
+      "n_gt": 22
     },
     "011070": {
       "buy": {
         "consec_bear": [
           1,
-          0.7587
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8124
-        ],
-        "atr_pct": [
-          1,
-          0.7323
+          0.7157
         ],
         "is_doji": [
           -1,
-          0.6713
-        ],
-        "rsi": [
-          -1,
-          0.7645
-        ],
-        "stoch_k": [
-          -1,
-          0.8376
-        ],
-        "touch_count": [
-          -1,
-          0.7822
-        ],
-        "williams_r": [
-          -1,
-          0.8376
-        ],
-        "lower_wick_pct": [
-          1,
-          0.7313
-        ],
-        "zscore": [
-          -1,
-          0.8553
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6068
+          0.7226
         ],
         "is_bearish": [
           1,
-          0.7178
+          0.6936
         ],
-        "consec_bull": [
+        "support_dist_pct_abs": [
           -1,
-          0.5567
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
+          0.6157
+        ],
+        "stoch_k": [
+          -1,
+          0.8016
+        ],
+        "lower_wick_pct": [
           1,
-          0.7693
+          0.8188
+        ],
+        "rsi": [
+          -1,
+          0.839
+        ],
+        "support_dist_pct": [
+          -1,
+          0.7745
+        ],
+        "williams_r": [
+          -1,
+          0.8016
         ],
         "atr_pct": [
           1,
-          0.7402
-        ],
-        "is_doji": [
-          -1,
-          0.6597
-        ],
-        "rsi": [
-          1,
-          0.7601
-        ],
-        "stoch_k": [
-          1,
-          0.7849
+          0.8144
         ],
         "touch_count": [
           -1,
-          0.7864
+          0.7858
+        ],
+        "zscore": [
+          -1,
+          0.8489
+        ]
+      },
+      "sell": {
+        "consec_bull": [
+          1,
+          0.7019
+        ],
+        "is_doji": [
+          -1,
+          0.6866
+        ],
+        "support_dist_pct_abs": [
+          1,
+          0.8
+        ],
+        "stoch_k": [
+          1,
+          0.8487
+        ],
+        "is_bullish": [
+          1,
+          0.6488
+        ],
+        "rsi": [
+          1,
+          0.8622
+        ],
+        "support_dist_pct": [
+          1,
+          0.8266
         ],
         "williams_r": [
           1,
-          0.7849
+          0.8487
         ],
-        "zscore": [
+        "atr_pct": [
           1,
           0.8273
         ],
-        "support_dist_pct_abs": [
-          1,
-          0.7343
+        "touch_count": [
+          -1,
+          0.8728
         ],
-        "consec_bull": [
+        "zscore": [
           1,
-          0.6895
+          0.9229
         ]
       },
-      "n_gt": 77,
-      "stop_loss_pct": -7.0
+      "n_gt": 29
     },
     "012330": {
       "buy": {
-        "consec_bear": [
+        "consec_bull": [
           1,
-          0.6772
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7646
-        ],
-        "atr_pct": [
-          1,
-          0.7173
+          0.57
         ],
         "is_doji": [
           -1,
-          0.6302
+          0.6262
         ],
-        "rsi": [
+        "support_dist_pct_abs": [
           -1,
-          0.7489
+          0.7659
         ],
         "stoch_k": [
           -1,
-          0.7844
-        ],
-        "touch_count": [
-          -1,
-          0.7931
-        ],
-        "williams_r": [
-          -1,
-          0.7844
+          0.786
         ],
         "lower_wick_pct": [
           1,
-          0.6763
+          0.7192
         ],
-        "zscore": [
-          -1,
-          0.8186
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6349
-        ],
-        "is_bearish": [
+        "is_bullish": [
           1,
-          0.6573
-        ]
-      },
-      "sell": {
-        "consec_bear": [
+          0.5834
+        ],
+        "rsi": [
           -1,
-          0.5533
+          0.8918
         ],
         "support_dist_pct": [
-          1,
-          0.7805
+          -1,
+          0.6592
+        ],
+        "williams_r": [
+          -1,
+          0.786
         ],
         "atr_pct": [
           1,
-          0.7424
-        ],
-        "is_doji": [
-          -1,
-          0.6656
-        ],
-        "rsi": [
-          1,
-          0.8081
-        ],
-        "stoch_k": [
-          1,
-          0.8421
+          0.7812
         ],
         "touch_count": [
           -1,
-          0.7407
-        ],
-        "williams_r": [
-          1,
-          0.8421
+          0.8672
         ],
         "zscore": [
+          -1,
+          0.8253
+        ]
+      },
+      "sell": {
+        "consec_bull": [
           1,
-          0.8864
+          0.7446
+        ],
+        "is_doji": [
+          -1,
+          0.7005
         ],
         "support_dist_pct_abs": [
           1,
-          0.7595
+          0.7913
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.7502
+          0.8354
+        ],
+        "is_bullish": [
+          1,
+          0.7031
+        ],
+        "rsi": [
+          1,
+          0.8174
+        ],
+        "support_dist_pct": [
+          1,
+          0.7908
+        ],
+        "williams_r": [
+          1,
+          0.8354
+        ],
+        "atr_pct": [
+          1,
+          0.8004
+        ],
+        "touch_count": [
+          -1,
+          0.8628
+        ],
+        "zscore": [
+          1,
+          0.9263
         ]
       },
-      "n_gt": 86,
-      "stop_loss_pct": -2.0
+      "n_gt": 29
     },
     "017900": {
       "buy": {
         "consec_bear": [
           1,
-          0.7374
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8762
-        ],
-        "atr_pct": [
-          1,
-          0.7552
+          0.7476
         ],
         "is_doji": [
           -1,
-          0.7376
+          0.7328
         ],
-        "rsi": [
+        "is_bearish": [
+          1,
+          0.6985
+        ],
+        "support_dist_pct_abs": [
           -1,
-          0.6807
+          0.6612
         ],
         "stoch_k": [
           -1,
-          0.7707
-        ],
-        "touch_count": [
-          -1,
-          0.7905
-        ],
-        "williams_r": [
-          -1,
-          0.7707
+          0.8128
         ],
         "lower_wick_pct": [
           1,
-          0.6602
+          0.7524
+        ],
+        "rsi": [
+          -1,
+          0.7789
+        ],
+        "support_dist_pct": [
+          -1,
+          0.8537
+        ],
+        "williams_r": [
+          -1,
+          0.8128
+        ],
+        "atr_pct": [
+          1,
+          0.8147
+        ],
+        "touch_count": [
+          -1,
+          0.8691
         ],
         "zscore": [
           -1,
-          0.7786
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6658
-        ],
-        "is_bearish": [
-          1,
-          0.692
+          0.8323
         ]
       },
       "sell": {
-        "support_dist_pct": [
+        "consec_bull": [
           1,
-          0.7826
-        ],
-        "atr_pct": [
-          1,
-          0.7692
+          0.7414
         ],
         "is_doji": [
           -1,
-          0.7376
-        ],
-        "rsi": [
-          1,
-          0.7006
-        ],
-        "stoch_k": [
-          1,
-          0.79
-        ],
-        "touch_count": [
-          -1,
-          0.7678
-        ],
-        "williams_r": [
-          1,
-          0.79
-        ],
-        "zscore": [
-          1,
-          0.7959
+          0.7328
         ],
         "support_dist_pct_abs": [
           1,
-          0.7869
-        ],
-        "consec_bull": [
-          1,
-          0.7191
-        ]
-      },
-      "n_gt": 68,
-      "stop_loss_pct": -1.0
-    },
-    "018260": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.5568
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8416
-        ],
-        "atr_pct": [
-          1,
-          0.6773
-        ],
-        "rsi": [
-          -1,
-          0.8349
+          0.8072
         ],
         "stoch_k": [
-          -1,
-          0.8772
-        ],
-        "touch_count": [
-          -1,
-          0.7877
-        ],
-        "williams_r": [
-          -1,
-          0.8772
+          1,
+          0.886
         ],
         "lower_wick_pct": [
           1,
-          0.7158
+          0.5865
         ],
-        "zscore": [
-          -1,
-          0.914
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6793
-        ],
-        "is_bearish": [
+        "is_bullish": [
           1,
-          0.5518
-        ]
-      },
-      "sell": {
-        "consec_bear": [
-          -1,
-          0.5883
-        ],
-        "support_dist_pct": [
-          1,
-          0.6459
-        ],
-        "atr_pct": [
-          1,
-          0.6463
-        ],
-        "is_doji": [
-          -1,
-          0.6748
+          0.7173
         ],
         "rsi": [
           1,
-          0.7761
+          0.8626
         ],
-        "stoch_k": [
+        "support_dist_pct": [
           1,
-          0.824
-        ],
-        "touch_count": [
-          -1,
-          0.6653
+          0.7252
         ],
         "williams_r": [
           1,
-          0.824
+          0.886
+        ],
+        "atr_pct": [
+          1,
+          0.8336
+        ],
+        "touch_count": [
+          -1,
+          0.8664
         ],
         "zscore": [
           1,
-          0.825
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.5768
-        ],
-        "is_bearish": [
-          -1,
-          0.5859
-        ],
-        "consec_bull": [
-          1,
-          0.7886
+          0.9243
         ]
       },
-      "n_gt": 34,
-      "stop_loss_pct": -4.0
+      "n_gt": 22
     },
     "018880": {
       "buy": {
+        "consec_bull": [
+          -1,
+          0.5541
+        ],
         "consec_bear": [
           1,
-          0.7279
-        ],
-        "support_dist_pct": [
-          -1,
-          0.711
-        ],
-        "atr_pct": [
-          1,
-          0.7025
+          0.7359
         ],
         "is_doji": [
           -1,
-          0.7032
-        ],
-        "rsi": [
-          -1,
-          0.797
-        ],
-        "stoch_k": [
-          -1,
-          0.786
-        ],
-        "touch_count": [
-          -1,
-          0.8479
-        ],
-        "williams_r": [
-          -1,
-          0.786
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6575
-        ],
-        "zscore": [
-          -1,
-          0.8356
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6664
+          0.6861
         ],
         "is_bearish": [
           1,
-          0.7173
+          0.7306
+        ],
+        "support_dist_pct_abs": [
+          -1,
+          0.6688
+        ],
+        "stoch_k": [
+          -1,
+          0.8759
+        ],
+        "lower_wick_pct": [
+          1,
+          0.5939
+        ],
+        "rsi": [
+          -1,
+          0.9002
+        ],
+        "support_dist_pct": [
+          -1,
+          0.6267
+        ],
+        "williams_r": [
+          -1,
+          0.8759
+        ],
+        "atr_pct": [
+          1,
+          0.7898
+        ],
+        "touch_count": [
+          -1,
+          0.853
+        ],
+        "zscore": [
+          -1,
+          0.9436
         ]
       },
       "sell": {
-        "support_dist_pct": [
+        "consec_bull": [
           1,
-          0.7922
-        ],
-        "atr_pct": [
-          1,
-          0.7368
+          0.7296
         ],
         "is_doji": [
           -1,
-          0.6724
-        ],
-        "rsi": [
-          1,
-          0.8061
-        ],
-        "stoch_k": [
-          1,
-          0.8024
-        ],
-        "touch_count": [
-          -1,
-          0.7453
-        ],
-        "williams_r": [
-          1,
-          0.8024
-        ],
-        "zscore": [
-          1,
-          0.8245
+          0.6758
         ],
         "support_dist_pct_abs": [
           1,
-          0.7496
-        ],
-        "consec_bull": [
-          1,
-          0.6467
-        ]
-      },
-      "n_gt": 66,
-      "stop_loss_pct": -2.5
-    },
-    "021880": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.7696
-        ],
-        "support_dist_pct": [
-          -1,
-          0.9326
-        ],
-        "atr_pct": [
-          1,
-          0.8163
-        ],
-        "is_doji": [
-          -1,
-          0.8424
-        ],
-        "rsi": [
-          -1,
-          0.6933
+          0.8553
         ],
         "stoch_k": [
-          -1,
-          0.7335
-        ],
-        "touch_count": [
-          -1,
-          0.8559
-        ],
-        "williams_r": [
-          -1,
-          0.7335
+          1,
+          0.8624
         ],
         "lower_wick_pct": [
           1,
-          0.6606
+          0.6325
         ],
-        "zscore": [
-          -1,
-          0.7465
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.8869
-        ],
-        "is_bearish": [
+        "is_bullish": [
           1,
-          0.766
-        ],
-        "consec_bull": [
-          1,
-          0.5721
-        ]
-      },
-      "sell": {
-        "consec_bear": [
-          1,
-          0.5793
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8149
-        ],
-        "atr_pct": [
-          1,
-          0.8136
-        ],
-        "is_doji": [
-          -1,
-          0.7362
+          0.6989
         ],
         "rsi": [
           1,
-          0.6108
+          0.8844
         ],
-        "stoch_k": [
+        "support_dist_pct": [
           1,
-          0.7381
-        ],
-        "touch_count": [
-          -1,
-          0.8397
+          0.8714
         ],
         "williams_r": [
           1,
-          0.7381
+          0.8624
         ],
-        "lower_wick_pct": [
+        "atr_pct": [
           1,
-          0.6338
+          0.8326
+        ],
+        "touch_count": [
+          -1,
+          0.8576
         ],
         "zscore": [
           1,
-          0.8054
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.8284
-        ],
-        "is_bearish": [
-          1,
-          0.5837
-        ],
-        "consec_bull": [
-          1,
-          0.6515
+          0.8741
         ]
       },
-      "n_gt": 31,
-      "stop_loss_pct": -2.0
+      "n_gt": 20,
+      "stop_loss_pct": -1.0
     },
     "027360": {
       "buy": {
-        "consec_bear": [
+        "consec_bull": [
           1,
-          0.6286
-        ],
-        "support_dist_pct": [
-          -1,
-          0.779
-        ],
-        "atr_pct": [
-          1,
-          0.6611
+          0.6245
         ],
         "is_doji": [
           -1,
-          0.654
+          0.6725
         ],
-        "rsi": [
+        "support_dist_pct_abs": [
           -1,
-          0.7636
+          0.6521
         ],
         "stoch_k": [
           -1,
-          0.7576
-        ],
-        "touch_count": [
-          -1,
-          0.711
-        ],
-        "williams_r": [
-          -1,
-          0.7576
+          0.7329
         ],
         "lower_wick_pct": [
           1,
-          0.6719
+          0.6734
+        ],
+        "is_bullish": [
+          1,
+          0.6402
+        ],
+        "rsi": [
+          -1,
+          0.7778
+        ],
+        "support_dist_pct": [
+          -1,
+          0.712
+        ],
+        "williams_r": [
+          -1,
+          0.7329
+        ],
+        "atr_pct": [
+          1,
+          0.7734
+        ],
+        "touch_count": [
+          -1,
+          0.7975
         ],
         "zscore": [
           -1,
-          0.7783
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.7015
-        ],
-        "is_bearish": [
-          1,
-          0.6139
+          0.7975
         ]
       },
       "sell": {
-        "consec_bear": [
-          -1,
-          0.5651
-        ],
-        "support_dist_pct": [
+        "consec_bull": [
           1,
-          0.7177
-        ],
-        "atr_pct": [
-          1,
-          0.6635
+          0.6665
         ],
         "is_doji": [
           -1,
-          0.6132
-        ],
-        "rsi": [
-          1,
-          0.8236
-        ],
-        "stoch_k": [
-          1,
-          0.8803
-        ],
-        "touch_count": [
-          -1,
-          0.6951
-        ],
-        "williams_r": [
-          1,
-          0.8803
-        ],
-        "zscore": [
-          1,
-          0.8867
+          0.6007
         ],
         "support_dist_pct_abs": [
           1,
-          0.7006
-        ],
-        "consec_bull": [
-          1,
-          0.6918
-        ]
-      },
-      "n_gt": 96,
-      "stop_loss_pct": -4.0
-    },
-    "034020": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.619
-        ],
-        "support_dist_pct": [
-          -1,
-          0.6542
-        ],
-        "atr_pct": [
-          1,
-          0.7625
-        ],
-        "is_doji": [
-          -1,
-          0.7307
-        ],
-        "rsi": [
-          -1,
-          0.7288
-        ],
-        "stoch_k": [
-          -1,
-          0.7036
-        ],
-        "touch_count": [
-          -1,
-          0.8183
-        ],
-        "williams_r": [
-          -1,
-          0.7036
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6248
-        ],
-        "zscore": [
-          -1,
-          0.7522
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6165
-        ],
-        "is_bearish": [
-          1,
-          0.6251
-        ],
-        "consec_bull": [
-          1,
-          0.5939
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.8876
-        ],
-        "atr_pct": [
-          1,
-          0.7657
-        ],
-        "is_doji": [
-          -1,
-          0.6993
-        ],
-        "rsi": [
-          1,
-          0.8371
+          0.7663
         ],
         "stoch_k": [
           1,
-          0.8343
+          0.8849
         ],
-        "touch_count": [
-          -1,
-          0.8832
-        ],
-        "williams_r": [
+        "is_bullish": [
           1,
-          0.8343
-        ],
-        "zscore": [
-          1,
-          0.8729
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.8614
-        ],
-        "consec_bull": [
-          1,
-          0.7018
-        ]
-      },
-      "n_gt": 32,
-      "stop_loss_pct": -2.0
-    },
-    "034220": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.7237
-        ],
-        "support_dist_pct": [
-          -1,
-          0.789
-        ],
-        "atr_pct": [
-          1,
-          0.6906
-        ],
-        "is_doji": [
-          -1,
-          0.6135
-        ],
-        "rsi": [
-          -1,
-          0.7505
-        ],
-        "stoch_k": [
-          -1,
-          0.8014
-        ],
-        "touch_count": [
-          -1,
-          0.7887
-        ],
-        "williams_r": [
-          -1,
-          0.8014
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6954
-        ],
-        "zscore": [
-          -1,
-          0.8007
-        ],
-        "is_bearish": [
-          1,
-          0.6935
-        ],
-        "consec_bull": [
-          -1,
-          0.5912
-        ]
-      },
-      "sell": {
-        "consec_bear": [
-          1,
-          0.5554
-        ],
-        "support_dist_pct": [
-          1,
-          0.6963
-        ],
-        "atr_pct": [
-          1,
-          0.7588
-        ],
-        "is_doji": [
-          -1,
-          0.6433
+          0.6344
         ],
         "rsi": [
           1,
-          0.7545
+          0.8932
         ],
-        "stoch_k": [
+        "support_dist_pct": [
           1,
-          0.7541
-        ],
-        "touch_count": [
-          -1,
-          0.7809
+          0.7932
         ],
         "williams_r": [
           1,
-          0.7541
+          0.8849
+        ],
+        "atr_pct": [
+          1,
+          0.7178
+        ],
+        "touch_count": [
+          -1,
+          0.8067
         ],
         "zscore": [
           1,
-          0.7653
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7575
-        ],
-        "is_bearish": [
-          1,
-          0.5943
-        ],
-        "consec_bull": [
-          1,
-          0.5757
+          0.9325
         ]
       },
-      "n_gt": 37,
-      "stop_loss_pct": -1.0
+      "n_gt": 26
     },
     "036930": {
       "buy": {
         "consec_bear": [
           1,
-          0.6823
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7977
-        ],
-        "atr_pct": [
-          1,
-          0.6874
+          0.6676
         ],
         "is_doji": [
           -1,
-          0.6296
-        ],
-        "rsi": [
-          -1,
-          0.7671
-        ],
-        "stoch_k": [
-          -1,
-          0.8042
-        ],
-        "touch_count": [
-          -1,
-          0.765
-        ],
-        "williams_r": [
-          -1,
-          0.8042
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6955
-        ],
-        "zscore": [
-          -1,
-          0.8194
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6361
+          0.6233
         ],
         "is_bearish": [
           1,
-          0.6362
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7728
-        ],
-        "atr_pct": [
-          1,
-          0.6761
-        ],
-        "is_doji": [
-          -1,
-          0.6423
-        ],
-        "rsi": [
-          1,
-          0.8189
-        ],
-        "stoch_k": [
-          1,
-          0.837
-        ],
-        "touch_count": [
-          -1,
-          0.722
-        ],
-        "williams_r": [
-          1,
-          0.837
-        ],
-        "zscore": [
-          1,
-          0.8983
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7233
-        ],
-        "consec_bull": [
-          1,
-          0.7171
-        ]
-      },
-      "n_gt": 104,
-      "stop_loss_pct": -1.5
-    },
-    "042700": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.7236
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7679
-        ],
-        "atr_pct": [
-          1,
-          0.739
-        ],
-        "is_doji": [
-          -1,
-          0.6788
-        ],
-        "rsi": [
-          -1,
-          0.801
-        ],
-        "stoch_k": [
-          -1,
-          0.7809
-        ],
-        "touch_count": [
-          -1,
-          0.8373
-        ],
-        "williams_r": [
-          -1,
-          0.7809
-        ],
-        "lower_wick_pct": [
-          1,
-          0.739
-        ],
-        "zscore": [
-          -1,
-          0.8311
+          0.6212
         ],
         "support_dist_pct_abs": [
           -1,
-          0.6282
-        ],
-        "is_bearish": [
-          1,
-          0.6908
-        ]
-      },
-      "sell": {
-        "consec_bear": [
-          1,
-          0.5769
-        ],
-        "support_dist_pct": [
-          1,
-          0.8338
-        ],
-        "atr_pct": [
-          1,
-          0.8011
-        ],
-        "is_doji": [
-          -1,
-          0.7172
-        ],
-        "rsi": [
-          1,
-          0.761
+          0.65
         ],
         "stoch_k": [
-          1,
-          0.7512
-        ],
-        "touch_count": [
           -1,
-          0.7934
-        ],
-        "williams_r": [
-          1,
-          0.7512
-        ],
-        "lower_wick_pct": [
-          -1,
-          0.5539
-        ],
-        "zscore": [
-          1,
           0.7931
         ],
-        "support_dist_pct_abs": [
+        "lower_wick_pct": [
           1,
-          0.8051
-        ],
-        "is_bearish": [
-          1,
-          0.5972
-        ],
-        "consec_bull": [
-          1,
-          0.6437
-        ]
-      },
-      "n_gt": 64,
-      "stop_loss_pct": -2.0
-    },
-    "046970": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.7346
-        ],
-        "support_dist_pct": [
-          -1,
-          0.6799
-        ],
-        "atr_pct": [
-          1,
-          0.6528
-        ],
-        "is_doji": [
-          -1,
-          0.7161
+          0.7703
         ],
         "rsi": [
           -1,
-          0.7595
+          0.8435
         ],
-        "stoch_k": [
+        "support_dist_pct": [
           -1,
-          0.7082
-        ],
-        "touch_count": [
-          -1,
-          0.8449
+          0.7668
         ],
         "williams_r": [
           -1,
-          0.7082
+          0.7931
         ],
-        "lower_wick_pct": [
+        "atr_pct": [
           1,
-          0.7331
+          0.7055
+        ],
+        "touch_count": [
+          -1,
+          0.8219
         ],
         "zscore": [
           -1,
-          0.7255
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.7317
-        ],
-        "is_bearish": [
-          1,
-          0.694
+          0.8564
         ]
       },
       "sell": {
-        "consec_bear": [
-          -1,
-          0.5682
-        ],
-        "support_dist_pct": [
+        "consec_bull": [
           1,
-          0.7704
-        ],
-        "atr_pct": [
-          1,
-          0.6741
+          0.7643
         ],
         "is_doji": [
           -1,
-          0.6252
-        ],
-        "rsi": [
-          1,
-          0.7338
-        ],
-        "stoch_k": [
-          1,
-          0.8489
-        ],
-        "touch_count": [
-          -1,
-          0.7929
-        ],
-        "williams_r": [
-          1,
-          0.8489
-        ],
-        "zscore": [
-          1,
-          0.8469
+          0.6671
         ],
         "support_dist_pct_abs": [
           1,
-          0.6969
-        ],
-        "consec_bull": [
-          1,
-          0.7016
-        ]
-      },
-      "n_gt": 34,
-      "stop_loss_pct": -2.0
-    },
-    "047040": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.6397
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7762
-        ],
-        "atr_pct": [
-          1,
-          0.7516
-        ],
-        "is_doji": [
-          -1,
-          0.6548
-        ],
-        "rsi": [
-          -1,
-          0.7342
+          0.7238
         ],
         "stoch_k": [
-          -1,
-          0.7331
-        ],
-        "touch_count": [
-          -1,
-          0.8054
-        ],
-        "williams_r": [
-          -1,
-          0.7331
+          1,
+          0.8156
         ],
         "lower_wick_pct": [
-          1,
-          0.7332
-        ],
-        "zscore": [
           -1,
-          0.7855
+          0.5723
         ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5627
-        ],
-        "is_bearish": [
+        "is_bullish": [
           1,
-          0.6355
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.8276
-        ],
-        "atr_pct": [
-          1,
-          0.74
-        ],
-        "is_doji": [
-          -1,
-          0.6989
+          0.6982
         ],
         "rsi": [
           1,
-          0.838
+          0.8562
         ],
-        "stoch_k": [
+        "support_dist_pct": [
           1,
-          0.8283
-        ],
-        "touch_count": [
-          -1,
-          0.7554
+          0.7795
         ],
         "williams_r": [
           1,
-          0.8283
-        ],
-        "zscore": [
-          1,
-          0.8927
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.801
-        ],
-        "consec_bull": [
-          1,
-          0.7529
-        ]
-      },
-      "n_gt": 65,
-      "stop_loss_pct": -2.0
-    },
-    "064400": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.7041
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8676
+          0.8156
         ],
         "atr_pct": [
           1,
-          0.7018
-        ],
-        "is_doji": [
-          -1,
-          0.6786
-        ],
-        "rsi": [
-          -1,
-          0.7439
-        ],
-        "stoch_k": [
-          -1,
-          0.8036
+          0.6994
         ],
         "touch_count": [
           -1,
-          0.754
-        ],
-        "williams_r": [
-          -1,
-          0.8036
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6683
-        ],
-        "zscore": [
-          -1,
-          0.8266
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6271
-        ],
-        "is_bearish": [
-          1,
-          0.6713
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.6553
-        ],
-        "atr_pct": [
-          1,
-          0.7311
-        ],
-        "is_doji": [
-          -1,
-          0.7212
-        ],
-        "rsi": [
-          1,
-          0.7803
-        ],
-        "stoch_k": [
-          1,
-          0.82
-        ],
-        "touch_count": [
-          -1,
-          0.7035
-        ],
-        "williams_r": [
-          1,
-          0.82
+          0.81
         ],
         "zscore": [
           1,
-          0.8611
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.6485
-        ],
-        "consec_bull": [
-          1,
-          0.7494
+          0.9357
         ]
       },
-      "n_gt": 72,
-      "stop_loss_pct": -4.0
+      "n_gt": 49,
+      "stop_loss_pct": -1.5
     },
     "066430": {
       "buy": {
+        "consec_bull": [
+          -1,
+          0.5671
+        ],
         "consec_bear": [
           1,
-          0.6965
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7811
-        ],
-        "atr_pct": [
-          1,
-          0.6015
+          0.7421
         ],
         "is_doji": [
           -1,
-          0.626
-        ],
-        "rsi": [
-          -1,
-          0.7134
-        ],
-        "stoch_k": [
-          -1,
-          0.7717
-        ],
-        "touch_count": [
-          -1,
-          0.773
-        ],
-        "williams_r": [
-          -1,
-          0.7717
-        ],
-        "lower_wick_pct": [
-          1,
-          0.67
-        ],
-        "zscore": [
-          -1,
-          0.8154
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.647
+          0.6335
         ],
         "is_bearish": [
           1,
-          0.6408
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.6933
-        ],
-        "atr_pct": [
-          1,
-          0.5902
-        ],
-        "is_doji": [
-          -1,
-          0.6368
-        ],
-        "rsi": [
-          1,
-          0.714
-        ],
-        "stoch_k": [
-          1,
-          0.7932
-        ],
-        "touch_count": [
-          -1,
-          0.6486
-        ],
-        "williams_r": [
-          1,
-          0.7932
-        ],
-        "zscore": [
-          1,
-          0.798
+          0.6857
         ],
         "support_dist_pct_abs": [
-          1,
-          0.6466
-        ],
-        "consec_bull": [
-          1,
-          0.6581
-        ]
-      },
-      "n_gt": 96,
-      "stop_loss_pct": -1.5
-    },
-    "066570": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.7171
-        ],
-        "support_dist_pct": [
           -1,
-          0.7448
-        ],
-        "atr_pct": [
-          1,
-          0.7111
-        ],
-        "is_doji": [
-          -1,
-          0.7184
-        ],
-        "rsi": [
-          -1,
-          0.7874
+          0.6433
         ],
         "stoch_k": [
           -1,
-          0.8117
-        ],
-        "touch_count": [
-          -1,
-          0.7985
-        ],
-        "williams_r": [
-          -1,
-          0.8117
+          0.8615
         ],
         "lower_wick_pct": [
           1,
-          0.6397
+          0.5592
         ],
-        "zscore": [
+        "is_bullish": [
           -1,
-          0.857
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6191
-        ],
-        "is_bearish": [
-          1,
-          0.6946
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7786
-        ],
-        "atr_pct": [
-          1,
-          0.7407
-        ],
-        "is_doji": [
-          -1,
-          0.6873
-        ],
-        "rsi": [
-          1,
-          0.7965
-        ],
-        "stoch_k": [
-          1,
-          0.7981
-        ],
-        "touch_count": [
-          -1,
-          0.818
-        ],
-        "williams_r": [
-          1,
-          0.7981
-        ],
-        "zscore": [
-          1,
-          0.8934
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7447
-        ],
-        "consec_bull": [
-          1,
-          0.6888
-        ]
-      },
-      "n_gt": 69,
-      "stop_loss_pct": -1.5
-    },
-    "067310": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.7428
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8324
-        ],
-        "atr_pct": [
-          1,
-          0.6686
-        ],
-        "is_doji": [
-          -1,
-          0.7239
+          0.5522
         ],
         "rsi": [
           -1,
-          0.8288
+          0.7904
         ],
-        "stoch_k": [
+        "support_dist_pct": [
           -1,
-          0.882
-        ],
-        "touch_count": [
-          -1,
-          0.7783
+          0.8233
         ],
         "williams_r": [
           -1,
-          0.882
-        ],
-        "lower_wick_pct": [
-          1,
-          0.5706
-        ],
-        "zscore": [
-          -1,
-          0.9045
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5641
-        ],
-        "is_bearish": [
-          1,
-          0.7105
-        ]
-      },
-      "sell": {
-        "consec_bear": [
-          -1,
-          0.5652
-        ],
-        "support_dist_pct": [
-          1,
-          0.8262
+          0.8615
         ],
         "atr_pct": [
           1,
-          0.6663
-        ],
-        "is_doji": [
-          -1,
-          0.6105
-        ],
-        "rsi": [
-          1,
-          0.7806
-        ],
-        "stoch_k": [
-          1,
-          0.8485
-        ],
-        "touch_count": [
-          -1,
-          0.7663
-        ],
-        "williams_r": [
-          1,
-          0.8485
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6268
-        ],
-        "zscore": [
-          1,
-          0.8275
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.8123
-        ],
-        "is_bearish": [
-          -1,
-          0.5563
-        ],
-        "consec_bull": [
-          1,
-          0.6711
-        ]
-      },
-      "n_gt": 34,
-      "stop_loss_pct": -1.5
-    },
-    "069540": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.6781
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7302
-        ],
-        "atr_pct": [
-          1,
-          0.7689
-        ],
-        "is_doji": [
-          -1,
-          0.7501
-        ],
-        "rsi": [
-          -1,
-          0.7586
-        ],
-        "stoch_k": [
-          -1,
-          0.784
-        ],
-        "touch_count": [
-          -1,
-          0.8386
-        ],
-        "williams_r": [
-          -1,
-          0.784
-        ],
-        "lower_wick_pct": [
-          1,
-          0.7479
-        ],
-        "zscore": [
-          -1,
-          0.8083
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5945
-        ],
-        "is_bearish": [
-          1,
-          0.6679
-        ],
-        "consec_bull": [
-          1,
-          0.5696
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7447
-        ],
-        "atr_pct": [
-          1,
-          0.7935
-        ],
-        "is_doji": [
-          -1,
-          0.7501
-        ],
-        "rsi": [
-          1,
-          0.7073
-        ],
-        "stoch_k": [
-          1,
-          0.7821
-        ],
-        "touch_count": [
-          -1,
-          0.8082
-        ],
-        "williams_r": [
-          1,
-          0.7821
-        ],
-        "lower_wick_pct": [
-          1,
-          0.5507
-        ],
-        "zscore": [
-          1,
-          0.8154
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.5825
-        ],
-        "consec_bull": [
-          1,
-          0.7536
-        ]
-      },
-      "n_gt": 52,
-      "stop_loss_pct": -2.0
-    },
-    "080220": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.6625
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7673
-        ],
-        "atr_pct": [
-          1,
-          0.6929
-        ],
-        "is_doji": [
-          -1,
-          0.664
-        ],
-        "rsi": [
-          -1,
-          0.6769
-        ],
-        "stoch_k": [
-          -1,
-          0.7591
-        ],
-        "touch_count": [
-          -1,
-          0.7599
-        ],
-        "williams_r": [
-          -1,
-          0.7591
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6761
-        ],
-        "zscore": [
-          -1,
-          0.7617
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6045
-        ],
-        "is_bearish": [
-          1,
-          0.6175
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.713
-        ],
-        "atr_pct": [
-          1,
-          0.6964
-        ],
-        "is_doji": [
-          -1,
-          0.6701
-        ],
-        "rsi": [
-          1,
-          0.7028
-        ],
-        "stoch_k": [
-          1,
-          0.7623
-        ],
-        "touch_count": [
-          -1,
-          0.7168
-        ],
-        "williams_r": [
-          1,
-          0.7623
-        ],
-        "zscore": [
-          1,
-          0.7753
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.6905
-        ],
-        "consec_bull": [
-          1,
-          0.7071
-        ]
-      },
-      "n_gt": 159,
-      "stop_loss_pct": -1.0
-    },
-    "100790": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.6512
-        ],
-        "support_dist_pct": [
-          -1,
-          0.6865
-        ],
-        "atr_pct": [
-          1,
-          0.6839
-        ],
-        "is_doji": [
-          -1,
-          0.6632
-        ],
-        "rsi": [
-          -1,
-          0.656
-        ],
-        "stoch_k": [
-          -1,
-          0.7687
-        ],
-        "touch_count": [
-          -1,
-          0.6739
-        ],
-        "williams_r": [
-          -1,
-          0.7687
-        ],
-        "lower_wick_pct": [
-          1,
-          0.5989
-        ],
-        "zscore": [
-          -1,
-          0.7376
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6535
-        ],
-        "is_bearish": [
-          1,
-          0.643
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7587
-        ],
-        "atr_pct": [
-          1,
-          0.6474
-        ],
-        "is_doji": [
-          -1,
-          0.6889
-        ],
-        "rsi": [
-          1,
-          0.7263
-        ],
-        "stoch_k": [
-          1,
-          0.797
-        ],
-        "touch_count": [
-          -1,
-          0.6959
-        ],
-        "williams_r": [
-          1,
-          0.797
-        ],
-        "zscore": [
-          1,
-          0.8024
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7176
-        ],
-        "consec_bull": [
-          1,
-          0.7424
-        ]
-      },
-      "n_gt": 40,
-      "stop_loss_pct": -7.0
-    },
-    "142280": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.7655
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8559
-        ],
-        "atr_pct": [
-          1,
-          0.7344
-        ],
-        "is_doji": [
-          -1,
-          0.7756
-        ],
-        "rsi": [
-          -1,
-          0.723
-        ],
-        "stoch_k": [
-          -1,
-          0.8019
+          0.6021
         ],
         "touch_count": [
           -1,
           0.8105
         ],
-        "williams_r": [
-          -1,
-          0.8019
-        ],
-        "lower_wick_pct": [
-          1,
-          0.7816
-        ],
         "zscore": [
           -1,
-          0.8273
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.806
-        ],
-        "is_bearish": [
-          1,
-          0.7535
+          0.8796
         ]
       },
       "sell": {
-        "atr_pct": [
+        "consec_bull": [
           1,
-          0.7691
+          0.613
         ],
         "is_doji": [
           -1,
-          0.7985
+          0.6345
         ],
-        "rsi": [
+        "support_dist_pct_abs": [
           1,
-          0.757
+          0.6617
         ],
         "stoch_k": [
           1,
-          0.7845
+          0.8754
         ],
-        "touch_count": [
-          -1,
-          0.8409
+        "is_bullish": [
+          1,
+          0.5915
+        ],
+        "rsi": [
+          1,
+          0.8516
+        ],
+        "support_dist_pct": [
+          1,
+          0.7176
         ],
         "williams_r": [
           1,
-          0.7845
+          0.8754
+        ],
+        "atr_pct": [
+          1,
+          0.6197
+        ],
+        "touch_count": [
+          -1,
+          0.7132
         ],
         "zscore": [
           1,
-          0.8266
+          0.9029
+        ]
+      },
+      "n_gt": 47,
+      "stop_loss_pct": -1.0
+    },
+    "080220": {
+      "buy": {
+        "consec_bear": [
+          1,
+          0.6447
+        ],
+        "is_doji": [
+          -1,
+          0.6735
         ],
         "is_bearish": [
           1,
-          0.553
+          0.5992
         ],
-        "consec_bull": [
+        "support_dist_pct_abs": [
+          -1,
+          0.6043
+        ],
+        "stoch_k": [
+          -1,
+          0.8132
+        ],
+        "lower_wick_pct": [
           1,
-          0.7662
+          0.7467
+        ],
+        "is_bullish": [
+          1,
+          0.5743
+        ],
+        "rsi": [
+          -1,
+          0.8097
+        ],
+        "support_dist_pct": [
+          -1,
+          0.826
+        ],
+        "williams_r": [
+          -1,
+          0.8132
+        ],
+        "atr_pct": [
+          1,
+          0.7391
+        ],
+        "touch_count": [
+          -1,
+          0.8431
+        ],
+        "zscore": [
+          -1,
+          0.8822
         ]
       },
-      "n_gt": 43,
-      "stop_loss_pct": -2.0
+      "sell": {
+        "consec_bull": [
+          1,
+          0.6962
+        ],
+        "is_doji": [
+          -1,
+          0.675
+        ],
+        "support_dist_pct_abs": [
+          1,
+          0.7505
+        ],
+        "stoch_k": [
+          1,
+          0.8324
+        ],
+        "is_bullish": [
+          1,
+          0.6635
+        ],
+        "rsi": [
+          1,
+          0.8128
+        ],
+        "support_dist_pct": [
+          1,
+          0.749
+        ],
+        "williams_r": [
+          1,
+          0.8324
+        ],
+        "atr_pct": [
+          1,
+          0.7359
+        ],
+        "touch_count": [
+          -1,
+          0.7848
+        ],
+        "zscore": [
+          1,
+          0.8608
+        ]
+      },
+      "n_gt": 56
     },
     "178320": {
       "buy": {
         "consec_bear": [
           1,
-          0.6732
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8098
-        ],
-        "atr_pct": [
-          1,
-          0.7047
+          0.6244
         ],
         "is_doji": [
           -1,
-          0.5861
-        ],
-        "rsi": [
-          -1,
-          0.7653
-        ],
-        "stoch_k": [
-          -1,
-          0.8078
-        ],
-        "touch_count": [
-          -1,
-          0.7557
-        ],
-        "williams_r": [
-          -1,
-          0.8078
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6934
-        ],
-        "zscore": [
-          -1,
-          0.8323
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5966
+          0.5512
         ],
         "is_bearish": [
           1,
-          0.6178
+          0.5635
+        ],
+        "support_dist_pct_abs": [
+          -1,
+          0.7102
+        ],
+        "stoch_k": [
+          -1,
+          0.8452
+        ],
+        "lower_wick_pct": [
+          1,
+          0.6918
+        ],
+        "rsi": [
+          -1,
+          0.8982
+        ],
+        "support_dist_pct": [
+          -1,
+          0.7564
+        ],
+        "williams_r": [
+          -1,
+          0.8452
+        ],
+        "atr_pct": [
+          1,
+          0.6719
+        ],
+        "touch_count": [
+          -1,
+          0.8302
+        ],
+        "zscore": [
+          -1,
+          0.8944
         ]
       },
       "sell": {
-        "support_dist_pct": [
+        "consec_bull": [
           1,
-          0.701
-        ],
-        "atr_pct": [
-          1,
-          0.6628
+          0.6771
         ],
         "is_doji": [
           -1,
-          0.6184
-        ],
-        "rsi": [
-          1,
-          0.7114
-        ],
-        "stoch_k": [
-          1,
-          0.7806
-        ],
-        "touch_count": [
-          -1,
-          0.7012
-        ],
-        "williams_r": [
-          1,
-          0.7806
-        ],
-        "zscore": [
-          1,
-          0.7962
+          0.6427
         ],
         "support_dist_pct_abs": [
           1,
-          0.677
+          0.6712
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.6127
-        ]
-      },
-      "n_gt": 69,
-      "stop_loss_pct": -2.0
-    },
-    "203650": {
-      "buy": {
-        "consec_bear": [
+          0.8705
+        ],
+        "lower_wick_pct": [
+          -1,
+          0.5707
+        ],
+        "is_bullish": [
           1,
-          0.7453
+          0.6708
+        ],
+        "rsi": [
+          1,
+          0.8282
         ],
         "support_dist_pct": [
-          -1,
-          0.8561
+          1,
+          0.707
+        ],
+        "williams_r": [
+          1,
+          0.8705
         ],
         "atr_pct": [
           1,
-          0.6084
-        ],
-        "rsi": [
-          -1,
-          0.7321
-        ],
-        "stoch_k": [
-          -1,
-          0.8319
+          0.7774
         ],
         "touch_count": [
           -1,
-          0.6203
-        ],
-        "williams_r": [
-          -1,
-          0.8319
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6849
-        ],
-        "zscore": [
-          -1,
-          0.8195
-        ],
-        "is_bearish": [
-          1,
-          0.6786
-        ],
-        "consec_bull": [
-          -1,
-          0.6563
-        ]
-      },
-      "sell": {
-        "consec_bear": [
-          -1,
-          0.5757
-        ],
-        "support_dist_pct": [
-          1,
-          0.7201
-        ],
-        "is_doji": [
-          -1,
-          0.5574
-        ],
-        "rsi": [
-          1,
-          0.7581
-        ],
-        "stoch_k": [
-          1,
-          0.8292
-        ],
-        "touch_count": [
-          -1,
-          0.6478
-        ],
-        "williams_r": [
-          1,
-          0.8292
-        ],
-        "lower_wick_pct": [
-          -1,
-          0.5634
+          0.7991
         ],
         "zscore": [
           1,
-          0.8603
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.6973
-        ],
-        "is_bearish": [
-          -1,
-          0.5562
-        ],
-        "consec_bull": [
-          1,
-          0.6654
+          0.8533
         ]
       },
-      "n_gt": 51,
-      "stop_loss_pct": -4.0
+      "n_gt": 22,
+      "stop_loss_pct": -1.5
     },
     "290690": {
       "buy": {
         "consec_bear": [
           1,
-          0.6522
-        ],
-        "support_dist_pct": [
-          -1,
-          0.814
-        ],
-        "atr_pct": [
-          1,
-          0.6079
+          0.6644
         ],
         "is_doji": [
           -1,
-          0.6257
-        ],
-        "rsi": [
-          -1,
-          0.6621
-        ],
-        "stoch_k": [
-          -1,
-          0.7145
-        ],
-        "touch_count": [
-          -1,
-          0.7056
-        ],
-        "williams_r": [
-          -1,
-          0.7145
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6353
-        ],
-        "zscore": [
-          -1,
-          0.7712
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5663
+          0.6143
         ],
         "is_bearish": [
           1,
-          0.61
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
+          0.6283
+        ],
+        "support_dist_pct_abs": [
+          -1,
+          0.556
+        ],
+        "stoch_k": [
+          -1,
+          0.8209
+        ],
+        "lower_wick_pct": [
           1,
-          0.7374
+          0.5857
+        ],
+        "rsi": [
+          -1,
+          0.8255
+        ],
+        "support_dist_pct": [
+          -1,
+          0.8636
+        ],
+        "williams_r": [
+          -1,
+          0.8209
         ],
         "atr_pct": [
           1,
-          0.601
-        ],
-        "is_doji": [
-          -1,
-          0.6402
-        ],
-        "rsi": [
-          1,
-          0.7278
-        ],
-        "stoch_k": [
-          1,
-          0.7987
+          0.6181
         ],
         "touch_count": [
           -1,
-          0.7537
-        ],
-        "williams_r": [
-          1,
-          0.7987
+          0.7933
         ],
         "zscore": [
+          -1,
+          0.9085
+        ]
+      },
+      "sell": {
+        "consec_bull": [
           1,
-          0.8209
+          0.7295
+        ],
+        "consec_bear": [
+          -1,
+          0.5948
+        ],
+        "is_doji": [
+          -1,
+          0.6476
+        ],
+        "is_bearish": [
+          -1,
+          0.5834
         ],
         "support_dist_pct_abs": [
           1,
-          0.67
+          0.6829
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.6633
+          0.879
+        ],
+        "is_bullish": [
+          1,
+          0.731
+        ],
+        "rsi": [
+          1,
+          0.8881
+        ],
+        "support_dist_pct": [
+          1,
+          0.7443
+        ],
+        "williams_r": [
+          1,
+          0.879
+        ],
+        "atr_pct": [
+          1,
+          0.6552
+        ],
+        "touch_count": [
+          -1,
+          0.7666
+        ],
+        "zscore": [
+          1,
+          0.9484
         ]
       },
-      "n_gt": 63,
-      "stop_loss_pct": null
+      "n_gt": 27,
+      "stop_loss_pct": -1.0
     },
     "321370": {
       "buy": {
+        "consec_bull": [
+          -1,
+          0.5958
+        ],
         "consec_bear": [
           1,
-          0.6766
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7632
-        ],
-        "atr_pct": [
-          1,
-          0.7052
+          0.7355
         ],
         "is_doji": [
           -1,
-          0.6478
-        ],
-        "rsi": [
-          -1,
-          0.7086
-        ],
-        "stoch_k": [
-          -1,
-          0.8026
-        ],
-        "touch_count": [
-          -1,
-          0.7473
-        ],
-        "williams_r": [
-          -1,
-          0.8026
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6384
-        ],
-        "zscore": [
-          -1,
-          0.818
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5784
+          0.6244
         ],
         "is_bearish": [
           1,
-          0.6397
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7704
-        ],
-        "atr_pct": [
-          1,
-          0.7171
-        ],
-        "is_doji": [
-          -1,
-          0.6775
-        ],
-        "rsi": [
-          1,
-          0.7253
-        ],
-        "stoch_k": [
-          1,
-          0.8003
-        ],
-        "touch_count": [
-          -1,
-          0.7364
-        ],
-        "williams_r": [
-          1,
-          0.8003
-        ],
-        "zscore": [
-          1,
-          0.817
+          0.715
         ],
         "support_dist_pct_abs": [
-          1,
-          0.733
-        ],
-        "consec_bull": [
-          1,
-          0.658
-        ]
-      },
-      "n_gt": 70,
-      "stop_loss_pct": -3.0
-    },
-    "329180": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.6985
-        ],
-        "support_dist_pct": [
           -1,
-          0.7244
-        ],
-        "atr_pct": [
-          1,
-          0.7058
-        ],
-        "is_doji": [
-          -1,
-          0.7719
-        ],
-        "rsi": [
-          -1,
-          0.7997
+          0.6582
         ],
         "stoch_k": [
           -1,
-          0.8035
-        ],
-        "touch_count": [
-          -1,
-          0.7597
-        ],
-        "williams_r": [
-          -1,
-          0.8035
+          0.9199
         ],
         "lower_wick_pct": [
           1,
-          0.6371
+          0.5757
         ],
-        "zscore": [
+        "is_bullish": [
           -1,
-          0.8484
+          0.5906
         ],
-        "support_dist_pct_abs": [
+        "rsi": [
           -1,
-          0.6242
+          0.8895
         ],
-        "is_bearish": [
-          1,
-          0.7005
-        ],
-        "consec_bull": [
-          1,
-          0.5622
-        ]
-      },
-      "sell": {
         "support_dist_pct": [
-          1,
-          0.7962
+          -1,
+          0.8133
+        ],
+        "williams_r": [
+          -1,
+          0.9199
         ],
         "atr_pct": [
           1,
-          0.7043
-        ],
-        "is_doji": [
-          -1,
-          0.688
-        ],
-        "rsi": [
-          1,
-          0.8243
-        ],
-        "stoch_k": [
-          1,
-          0.8058
+          0.7075
         ],
         "touch_count": [
           -1,
-          0.7573
-        ],
-        "williams_r": [
-          1,
-          0.8058
+          0.8479
         ],
         "zscore": [
+          -1,
+          0.946
+        ]
+      },
+      "sell": {
+        "consec_bull": [
           1,
-          0.8655
+          0.6033
+        ],
+        "is_doji": [
+          -1,
+          0.6244
         ],
         "support_dist_pct_abs": [
           1,
-          0.7713
+          0.6575
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.6842
+          0.886
+        ],
+        "lower_wick_pct": [
+          1,
+          0.6132
+        ],
+        "is_bullish": [
+          1,
+          0.5933
+        ],
+        "rsi": [
+          1,
+          0.8805
+        ],
+        "support_dist_pct": [
+          1,
+          0.6779
+        ],
+        "williams_r": [
+          1,
+          0.886
+        ],
+        "atr_pct": [
+          1,
+          0.6808
+        ],
+        "touch_count": [
+          -1,
+          0.7513
+        ],
+        "zscore": [
+          1,
+          0.904
         ]
       },
-      "n_gt": 46,
+      "n_gt": 22,
       "stop_loss_pct": -4.0
-    },
-    "347850": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.63
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8304
-        ],
-        "atr_pct": [
-          1,
-          0.7937
-        ],
-        "is_doji": [
-          -1,
-          0.7924
-        ],
-        "rsi": [
-          -1,
-          0.6704
-        ],
-        "stoch_k": [
-          -1,
-          0.7183
-        ],
-        "touch_count": [
-          -1,
-          0.8057
-        ],
-        "williams_r": [
-          -1,
-          0.7183
-        ],
-        "lower_wick_pct": [
-          1,
-          0.772
-        ],
-        "zscore": [
-          -1,
-          0.7174
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6076
-        ],
-        "is_bearish": [
-          1,
-          0.6196
-        ],
-        "consec_bull": [
-          1,
-          0.6593
-        ]
-      },
-      "sell": {
-        "consec_bear": [
-          1,
-          0.6294
-        ],
-        "support_dist_pct": [
-          1,
-          0.8022
-        ],
-        "atr_pct": [
-          1,
-          0.7627
-        ],
-        "is_doji": [
-          -1,
-          0.8192
-        ],
-        "rsi": [
-          1,
-          0.7147
-        ],
-        "stoch_k": [
-          1,
-          0.685
-        ],
-        "touch_count": [
-          -1,
-          0.8082
-        ],
-        "williams_r": [
-          1,
-          0.685
-        ],
-        "zscore": [
-          1,
-          0.7447
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.7906
-        ],
-        "is_bearish": [
-          1,
-          0.6465
-        ],
-        "consec_bull": [
-          1,
-          0.686
-        ]
-      },
-      "n_gt": 38,
-      "stop_loss_pct": -2.0
-    },
-    "356680": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.5818
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7689
-        ],
-        "atr_pct": [
-          1,
-          0.5589
-        ],
-        "is_doji": [
-          -1,
-          0.5743
-        ],
-        "rsi": [
-          -1,
-          0.6877
-        ],
-        "stoch_k": [
-          -1,
-          0.7474
-        ],
-        "touch_count": [
-          -1,
-          0.6785
-        ],
-        "williams_r": [
-          -1,
-          0.7474
-        ],
-        "lower_wick_pct": [
-          1,
-          0.7728
-        ],
-        "zscore": [
-          -1,
-          0.794
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6927
-        ],
-        "is_bearish": [
-          1,
-          0.5814
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.6891
-        ],
-        "rsi": [
-          1,
-          0.826
-        ],
-        "stoch_k": [
-          1,
-          0.8176
-        ],
-        "touch_count": [
-          -1,
-          0.5771
-        ],
-        "williams_r": [
-          1,
-          0.8176
-        ],
-        "zscore": [
-          1,
-          0.8235
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.6613
-        ]
-      },
-      "n_gt": 30,
-      "stop_loss_pct": -2.0
-    },
-    "402340": {
-      "buy": {
-        "consec_bear": [
-          1,
-          0.5998
-        ],
-        "support_dist_pct": [
-          -1,
-          0.7288
-        ],
-        "atr_pct": [
-          1,
-          0.7792
-        ],
-        "is_doji": [
-          -1,
-          0.6692
-        ],
-        "rsi": [
-          -1,
-          0.789
-        ],
-        "stoch_k": [
-          -1,
-          0.795
-        ],
-        "touch_count": [
-          -1,
-          0.7906
-        ],
-        "williams_r": [
-          -1,
-          0.795
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6601
-        ],
-        "zscore": [
-          -1,
-          0.8414
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6605
-        ],
-        "is_bearish": [
-          1,
-          0.574
-        ],
-        "consec_bull": [
-          1,
-          0.5728
-        ]
-      },
-      "sell": {
-        "support_dist_pct": [
-          1,
-          0.7533
-        ],
-        "atr_pct": [
-          1,
-          0.7353
-        ],
-        "is_doji": [
-          -1,
-          0.6366
-        ],
-        "rsi": [
-          1,
-          0.786
-        ],
-        "stoch_k": [
-          1,
-          0.7977
-        ],
-        "touch_count": [
-          -1,
-          0.7686
-        ],
-        "williams_r": [
-          1,
-          0.7977
-        ],
-        "zscore": [
-          1,
-          0.852
-        ],
-        "support_dist_pct_abs": [
-          1,
-          0.6984
-        ],
-        "consec_bull": [
-          1,
-          0.6455
-        ]
-      },
-      "n_gt": 62,
-      "stop_loss_pct": -2.0
     },
     "440110": {
       "buy": {
+        "consec_bull": [
+          -1,
+          0.5625
+        ],
         "consec_bear": [
           1,
-          0.5977
+          0.6687
         ],
-        "support_dist_pct": [
+        "is_doji": [
           -1,
-          0.8201
-        ],
-        "atr_pct": [
-          1,
-          0.5903
-        ],
-        "rsi": [
-          -1,
-          0.7847
-        ],
-        "stoch_k": [
-          -1,
-          0.8494
-        ],
-        "touch_count": [
-          -1,
-          0.6825
-        ],
-        "williams_r": [
-          -1,
-          0.8494
-        ],
-        "lower_wick_pct": [
-          1,
-          0.5866
-        ],
-        "zscore": [
-          -1,
-          0.8839
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.5918
+          0.5894
         ],
         "is_bearish": [
           1,
-          0.5698
+          0.6186
         ],
-        "consec_bull": [
+        "stoch_k": [
           -1,
-          0.5629
-        ]
-      },
-      "sell": {
-        "consec_bear": [
+          0.8466
+        ],
+        "lower_wick_pct": [
+          1,
+          0.5955
+        ],
+        "rsi": [
           -1,
-          0.5626
+          0.8664
         ],
         "support_dist_pct": [
-          1,
-          0.7572
+          -1,
+          0.8219
+        ],
+        "williams_r": [
+          -1,
+          0.8466
         ],
         "atr_pct": [
           1,
-          0.5702
-        ],
-        "rsi": [
-          1,
-          0.6874
-        ],
-        "stoch_k": [
-          1,
-          0.7772
+          0.6672
         ],
         "touch_count": [
           -1,
-          0.6492
-        ],
-        "williams_r": [
-          1,
-          0.7772
-        ],
-        "lower_wick_pct": [
-          -1,
-          0.5628
+          0.8297
         ],
         "zscore": [
+          -1,
+          0.8872
+        ]
+      },
+      "sell": {
+        "consec_bull": [
+          -1,
+          0.6061
+        ],
+        "consec_bear": [
           1,
-          0.7834
+          0.6192
+        ],
+        "is_bearish": [
+          1,
+          0.6644
         ],
         "support_dist_pct_abs": [
           1,
-          0.7192
+          0.8382
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.6176
+          0.7924
+        ],
+        "is_bullish": [
+          -1,
+          0.6208
+        ],
+        "rsi": [
+          1,
+          0.8325
+        ],
+        "support_dist_pct": [
+          1,
+          0.8522
+        ],
+        "williams_r": [
+          1,
+          0.7924
+        ],
+        "atr_pct": [
+          1,
+          0.6237
+        ],
+        "touch_count": [
+          -1,
+          0.7707
+        ],
+        "zscore": [
+          1,
+          0.8463
         ]
       },
-      "n_gt": 84,
-      "stop_loss_pct": -7.0
+      "n_gt": 22,
+      "stop_loss_pct": -1.0
     },
     "456010": {
       "buy": {
         "consec_bear": [
           1,
-          0.6616
-        ],
-        "support_dist_pct": [
-          -1,
-          0.8251
-        ],
-        "atr_pct": [
-          1,
-          0.6343
+          0.676
         ],
         "is_doji": [
           -1,
-          0.6958
-        ],
-        "rsi": [
-          -1,
-          0.6988
-        ],
-        "stoch_k": [
-          -1,
-          0.7829
-        ],
-        "touch_count": [
-          -1,
-          0.7461
-        ],
-        "williams_r": [
-          -1,
-          0.7829
-        ],
-        "lower_wick_pct": [
-          1,
-          0.6568
-        ],
-        "zscore": [
-          -1,
-          0.8232
-        ],
-        "support_dist_pct_abs": [
-          -1,
-          0.6564
+          0.6933
         ],
         "is_bearish": [
           1,
-          0.6421
-        ]
-      },
-      "sell": {
-        "consec_bear": [
+          0.6662
+        ],
+        "stoch_k": [
           -1,
-          0.5579
+          0.819
+        ],
+        "lower_wick_pct": [
+          1,
+          0.6188
+        ],
+        "rsi": [
+          -1,
+          0.7847
         ],
         "support_dist_pct": [
-          1,
-          0.739
+          -1,
+          0.8093
+        ],
+        "williams_r": [
+          -1,
+          0.819
         ],
         "atr_pct": [
           1,
-          0.6101
-        ],
-        "is_doji": [
-          -1,
-          0.6201
-        ],
-        "rsi": [
-          1,
-          0.7498
-        ],
-        "stoch_k": [
-          1,
-          0.8484
+          0.6247
         ],
         "touch_count": [
           -1,
-          0.7332
-        ],
-        "williams_r": [
-          1,
-          0.8484
+          0.8199
         ],
         "zscore": [
+          -1,
+          0.9003
+        ]
+      },
+      "sell": {
+        "consec_bull": [
           1,
-          0.8292
+          0.685
+        ],
+        "consec_bear": [
+          -1,
+          0.5612
+        ],
+        "is_doji": [
+          -1,
+          0.609
         ],
         "support_dist_pct_abs": [
           1,
-          0.741
+          0.7178
         ],
-        "consec_bull": [
+        "stoch_k": [
           1,
-          0.6818
+          0.9428
+        ],
+        "lower_wick_pct": [
+          1,
+          0.5564
+        ],
+        "is_bullish": [
+          1,
+          0.6535
+        ],
+        "rsi": [
+          1,
+          0.9139
+        ],
+        "support_dist_pct": [
+          1,
+          0.6687
+        ],
+        "williams_r": [
+          1,
+          0.9428
+        ],
+        "atr_pct": [
+          1,
+          0.5579
+        ],
+        "touch_count": [
+          -1,
+          0.8385
+        ],
+        "zscore": [
+          1,
+          0.9651
         ]
       },
-      "n_gt": 53,
-      "stop_loss_pct": -1.5
+      "n_gt": 24,
+      "stop_loss_pct": -3.0
     }
   },
   "stats": {
-    "n_eligible_codes": 42,
-    "n_codes_with_stop": 32,
+    "n_eligible_codes": 19,
     "total_bars": 111154,
-    "total_sigB_gt": 1845,
-    "total_sigS_gt": 1845
+    "total_sigB_gt": 611,
+    "total_sigS_gt": 612
   }
 }

@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-DEFAULT_ATR_MULTIPLIER = 1.0
-MIN_THRESHOLD_PCT = 0.3  # ATR 매우 작은 종목 floor (0.3% reversal 미만은 noise)
+DEFAULT_ATR_MULTIPLIER = 5.0  # 2026-05-29 정정 — 작은 swing 잡지 X
+MIN_THRESHOLD_PCT = 2.0       # 사용자 의도 "큰 swing" 정합 (1% → 2% 상향)
 
 
 def mark_zigzag_gt(
