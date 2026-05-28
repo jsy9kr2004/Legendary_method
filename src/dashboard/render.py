@@ -286,9 +286,10 @@ def render_monitor_message(
             lines.append(f"📊 시장 폭: {_bf * 100:.0f}% 상승 / +5%↑ {_n5}종목 {_regime}")
 
     # 단저단고 시그널 + v10b score (2026-05-27/28).
-    # 환경변수 MONITOR_MEAN_REVERSION=1 시 dry-run 표시. 라이브 매매 영향 X — 사용자
-    # 가 카드 보고 직접 매매 결정. score ≥ 2 (STRONG) = 사용자 매수 권고 신호.
-    if os.getenv("MONITOR_MEAN_REVERSION", "0") == "1":
+    # default ON — 카드 dry-run 표시. 라이브 매매 영향 X — 사용자가 카드 보고
+    # 직접 매매 결정. score ≥ 2 (STRONG) = 사용자 매수 권고 신호.
+    # 끄려면 .env 에 MONITOR_MEAN_REVERSION=0 명시.
+    if os.getenv("MONITOR_MEAN_REVERSION", "1") == "1":
         _mrb = getattr(monitored, "mr_sigB", False)
         _mrs = getattr(monitored, "mr_sigS", False)
         _mrr = getattr(monitored, "mr_reason", None)
