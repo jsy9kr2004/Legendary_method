@@ -85,12 +85,26 @@ def test_per_stock_sell_only_uses_zscore(per_stock_json):
     assert sc_high > sc_low  # zscore 높을수록 단고 score 높음 (direction=+1)
 
 
-def test_unknown_code_falls_back_to_global(per_stock_json):
-    """등록 안 된 종목은 global v11 fallback."""
+def test_unknown_code_falls_back_to_ps_mean(per_stock_json):
+    """등록 안 된 종목 (cold-start) 은 PS mean 사용 — code 없을 때와 동일."""
     row = _make_row(zscore=-2.5)
     sc_unknown = compute_score_buy(row, code="999999")
-    sc_global = compute_score_buy(row)
-    assert sc_unknown == sc_global
+    sc_no_code = compute_score_buy(row)
+    # 둘 다 PS mean fallback 이라 동일
+    assert sc_unknown == sc_no_code
+
+
+def test_ps_mean_used_for_cold_start(per_stock_json):
+    """PS mean 사용 검증 — fixture 는 TEST_HIGH_BUY (zscore -1 / 0.95) 만 buy 등록.
+    PS mean buy = {zscore: (-1, 0.95)} 가 됨. 신규 종목에 zscore 강한 신호 들어가면
+    score 높음."""
+    row_low_z = _make_row(zscore=-2.5)
+    row_high_z = _make_row(zscore=+2.5)
+    # cold-start (unknown code) 두 case 비교
+    sc_low = compute_score_buy(row_low_z, code="cold_start_code")
+    sc_high = compute_score_buy(row_high_z, code="cold_start_code")
+    assert sc_low > sc_high  # PS mean buy 의 zscore direction=-1
+    assert sc_low > 0.8  # 강한 신호 → 거의 1
 
 
 def test_empty_feats_falls_back_to_global(per_stock_json):

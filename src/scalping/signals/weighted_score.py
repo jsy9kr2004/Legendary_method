@@ -269,20 +269,36 @@ def _compute_score_v11(row, feats: dict) -> float:
 
 
 def compute_score_buy(row, code: str | None = None) -> float:
-    """v11 단저 score (0~1). code 주면 per-stock weight 사용 (sample 충분 시)."""
-    feats = _get_per_stock_feats(code, "buy") if code else None
-    return _compute_score_v11(row, feats or BUY_FEATS_V11)
+    """v11 단저 score (0~1).
+
+    Fallback 우선순위:
+        1. code per-stock weight (sample ≥ 30 GT 도달)
+        2. PS mean (운영 중 per-stock 종목들의 평균) — cold-start 종목 default
+           사용자 검증 (2026-05-29): PS mean = Global v11 AUC 차이 ≤ 0.005
+        3. Global BUY_FEATS_V11 (per-stock JSON 자체 없을 때만)
+    """
+    if code:
+        feats = _get_per_stock_feats(code, "buy")
+        if feats:
+            return _compute_score_v11(row, feats)
+    mean_feats = _get_ps_mean_feats("buy")
+    return _compute_score_v11(row, mean_feats or BUY_FEATS_V11)
 
 
 def compute_score_sell(row, code: str | None = None) -> float:
-    """v11 단고 score (0~1). code 주면 per-stock weight 사용."""
-    feats = _get_per_stock_feats(code, "sell") if code else None
-    return _compute_score_v11(row, feats or SELL_FEATS_V11)
+    """v11 단고 score (0~1). compute_score_buy 와 동일 fallback 우선순위."""
+    if code:
+        feats = _get_per_stock_feats(code, "sell")
+        if feats:
+            return _compute_score_v11(row, feats)
+    mean_feats = _get_ps_mean_feats("sell")
+    return _compute_score_v11(row, mean_feats or SELL_FEATS_V11)
 
 
 # ── Per-stock weight load + cache ────────────────────────────────────────────
 
 _PER_STOCK_CACHE: dict[str, dict] | None = None
+_PS_MEAN_CACHE: dict[str, dict] | None = None  # {"buy": {feat: (dir, auc)}, "sell": ...}
 _PER_STOCK_PATH = "data/per_stock_weights.json"
 
 
@@ -321,10 +337,40 @@ def _get_per_stock_feats(code: str, kind: str) -> dict | None:
     return {name: (int(v[0]), float(v[1])) for name, v in feats_list.items()}
 
 
+def _get_ps_mean_feats(kind: str) -> dict | None:
+    """운영 중 per-stock 종목들의 weight 평균 (cold-start 종목 default).
+
+    2026-05-29 사용자 검증: PS mean fallback 채택 — Global v11 과 AUC 차이 ≤ 0.005.
+    1회 계산 후 cache. reload_per_stock_weights 가 동시 무효화.
+    """
+    global _PS_MEAN_CACHE
+    if _PS_MEAN_CACHE is not None:
+        return _PS_MEAN_CACHE.get(kind)
+    ps_dict = _load_per_stock()
+    if not ps_dict:
+        _PS_MEAN_CACHE = {"buy": {}, "sell": {}}
+        return None
+    # feature 별로 (direction, auc_eff) 평균 계산. direction 은 다수결.
+    cache: dict[str, dict] = {"buy": {}, "sell": {}}
+    for k in ("buy", "sell"):
+        feat_acc: dict[str, list] = {}
+        for ps in ps_dict.values():
+            for fname, (d, a) in ps.get(k, {}).items():
+                feat_acc.setdefault(fname, []).append((int(d), float(a)))
+        for fname, vals in feat_acc.items():
+            dirs = [v[0] for v in vals]
+            d_avg = 1 if sum(dirs) > 0 else (-1 if sum(dirs) < 0 else 1)
+            auc_avg = sum(v[1] for v in vals) / len(vals)
+            cache[k][fname] = (d_avg, auc_avg)
+    _PS_MEAN_CACHE = cache
+    return cache.get(kind)
+
+
 def reload_per_stock_weights() -> None:
-    """테스트 / 운영 중 재학습 후 cache 무효화."""
-    global _PER_STOCK_CACHE
+    """테스트 / 운영 중 재학습 후 cache 무효화 (per_stock + PS mean 둘 다)."""
+    global _PER_STOCK_CACHE, _PS_MEAN_CACHE
     _PER_STOCK_CACHE = None
+    _PS_MEAN_CACHE = None
 
 
 def grade_buy(score: float) -> str:
