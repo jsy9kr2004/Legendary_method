@@ -995,6 +995,9 @@ def dashboard_tick(
         # v10b 호환 (legacy)
         monitored.mr_score = sc_buy
         monitored.mr_grade = g_buy
+        # v11.3 (2026-05-29) — 종목별 손절 임계 (카드/PWA 표시 + 매매 참고)
+        from src.scalping.signals.weighted_score import get_stop_loss_pct
+        monitored.stop_loss_pct = get_stop_loss_pct(code)
         # 단저단고 히스토리 (2026-05-29) — sigB/sigS 발화 시 카드 히스토리 섹션용 push.
         # 연속 동일 kind 는 score/reason 만 갱신 (FIFO 3 max).
         if mr_b:

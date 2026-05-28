@@ -119,6 +119,9 @@ class MonitoredStock:
     mr_grade_buy: str = "NEUTRAL"
     mr_score_sell: float = 0.0     # v11 단고 score (≥0.666 = STRONG)
     mr_grade_sell: str = "NEUTRAL"
+    # 종목별 손절 임계 (v11.3, 2026-05-29) — per-stock 학습 시 다양함 (-1% ~ -7%).
+    # cold-start = JSON default (~-4%). 카드/PWA 에 표시 + 사용자 매매 참고.
+    stop_loss_pct: float = -2.0    # 기본 -2% (Buy.Score 호환). _load 시 갱신
     # 단저단고 surface 룰 (2026-05-29). 자동 surface 종목의 역할 + 소속 섹터.
     sector_role: str | None = None          # "leader" | "candidate" | None
     sector_rank: int | None = None          # 1=주도섹터 / 2=2위 / 3=3위 (카드 라벨 분기)

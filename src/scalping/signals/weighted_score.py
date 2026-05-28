@@ -368,9 +368,47 @@ def _get_ps_mean_feats(kind: str) -> dict | None:
 
 def reload_per_stock_weights() -> None:
     """테스트 / 운영 중 재학습 후 cache 무효화 (per_stock + PS mean 둘 다)."""
-    global _PER_STOCK_CACHE, _PS_MEAN_CACHE
+    global _PER_STOCK_CACHE, _PS_MEAN_CACHE, _DEFAULT_STOP_CACHE
     _PER_STOCK_CACHE = None
     _PS_MEAN_CACHE = None
+    _DEFAULT_STOP_CACHE = None
+
+
+# ── 종목별 stop_loss (v11.3, 2026-05-29) ──────────────────────────────────────
+
+_DEFAULT_STOP_CACHE: float | None = None
+
+
+def get_stop_loss_pct(code: str | None = None) -> float:
+    """v11.3 종목별 손절 임계 (%).
+
+    Fallback:
+        1. per_stock_weights.json 의 그 종목 stop_loss_pct (학습 충족 종목)
+        2. JSON 의 default_stop_loss_pct (cold-start = 7일 데이터 중간값, ~-4%)
+        3. 하드코딩 -2% (JSON 자체 없을 때)
+
+    반환값: 음수 % (예: -2.5 = 매수가 대비 -2.5% 도달 시 손절).
+    None 값 (무손절) 인 종목도 있으나 일관성 위해 default 로 변환.
+    """
+    global _DEFAULT_STOP_CACHE
+    if code:
+        ps = _load_per_stock().get(str(code))
+        if ps and "stop_loss_pct" in ps:
+            v = ps["stop_loss_pct"]
+            if v is not None:
+                return float(v)
+    # fallback default
+    if _DEFAULT_STOP_CACHE is None:
+        import json
+        import os
+        path = os.getenv("PER_STOCK_WEIGHTS_PATH", _PER_STOCK_PATH)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            _DEFAULT_STOP_CACHE = float(data.get("default_stop_loss_pct", -2.0))
+        except (FileNotFoundError, json.JSONDecodeError):
+            _DEFAULT_STOP_CACHE = -2.0
+    return _DEFAULT_STOP_CACHE
 
 
 def grade_buy(score: float) -> str:

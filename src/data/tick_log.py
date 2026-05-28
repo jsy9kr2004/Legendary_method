@@ -150,6 +150,7 @@ class TickLogRow:
     mr_grade_buy: str | None = None
     mr_score_sell: float = 0.0     # v11 (≥0.666 = STRONG)
     mr_grade_sell: str | None = None
+    stop_loss_pct: float | None = None  # v11.3 종목별 손절 임계 (사후 분석용)
 
     # ── Exit.Triggers 청산 트리거 발화 상태 ─────────────────────────────────────────
     # 감시 모드: C1~C4 만 유효 (C5 는 보유 모드만)
@@ -440,6 +441,7 @@ def build_tick_log_row(
         mr_grade_buy=getattr(monitored, "mr_grade_buy", None),
         mr_score_sell=_float_safe(getattr(monitored, "mr_score_sell", 0.0)) or 0.0,
         mr_grade_sell=getattr(monitored, "mr_grade_sell", None),
+        stop_loss_pct=_float_safe(getattr(monitored, "stop_loss_pct", None)),
         # Exit.Triggers 트리거
         trigger_a1_stop_price=bool(trigger_states.get("A1_stop_price", False)),
         trigger_a2_stop_bar_low=bool(trigger_states.get("A2_stop_bar_low", False)),

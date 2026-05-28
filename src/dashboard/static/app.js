@@ -169,6 +169,18 @@
 
     const actions = buildActionButtons(payload);
 
+    // v11.3 종목별 손절가 표시 (2026-05-29) — 보유 모드는 실제 손절가, 감시 모드는 진입 시 예상 손절.
+    let stopLossLine = "";
+    const stopPct = payload.stop_loss_pct;
+    if (typeof stopPct === "number") {
+      if (holding && typeof holding.entry_price === "number") {
+        const stopPrice = Math.floor(holding.entry_price * (1 + stopPct / 100));
+        stopLossLine = `<div class="text-rose-300">💥 손절가: <span class="font-semibold">${fmtNum(stopPrice)}</span>원 (${stopPct.toFixed(1)}%, 매수가 대비)</div>`;
+      } else {
+        stopLossLine = `<div class="text-slate-400">💥 진입 시 손절: <span class="text-rose-300 font-semibold">${stopPct.toFixed(1)}%</span> <span class="text-[10px]">(종목별 v11.3)</span></div>`;
+      }
+    }
+
     // 단저단고 히스토리 (옛 Exit.Triggers 자리) — 최대 3개 최신순.
     let historyBlock = "";
     if (mrHistory.length) {
@@ -324,6 +336,7 @@
       </div>
       ${investorLine}
       ${mrLine}
+      ${stopLossLine}
       ${historyBlock}
     `;
     return el;

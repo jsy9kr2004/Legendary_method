@@ -493,6 +493,17 @@ def render_monitor_message(
                 f"/ 프로그램 {_fmt_signed_shares(program_q)}{_paren(dp_q, _fmt_signed_shares)}"
             )
 
+    # v11.3 종목별 손절가 (2026-05-29) — 보유 모드 = 실제 손절가 / 감시 모드 = 예상.
+    _stop_pct = getattr(monitored, "stop_loss_pct", None)
+    if _stop_pct is not None:
+        if is_holding and holding is not None:
+            entry_p = getattr(holding, "entry_price", None) or 0
+            stop_p = int(entry_p * (1 + _stop_pct / 100))
+            lines.append(f"💥 손절가: {stop_p:,}원 ({_stop_pct:+.1f}%, 매수가 대비)")
+        else:
+            # 감시 모드 — 진입 시 예상 손절 임계만
+            lines.append(f"💥 진입 시 손절: {_stop_pct:+.1f}% (종목별 v11.3)")
+
     # 단저단고 히스토리 (2026-05-29) — 옛 Exit.Triggers 청산 시그널 자리.
     # 시그널 발화 시점 최대 3개 (최신순). 사용자가 잠깐 놓치는 시점 대비.
     _mr_history = getattr(monitored, "mr_history", None) or []
@@ -778,6 +789,7 @@ def build_monitor_payload(
         "transition": transition_block,
         "mean_reversion": mean_reversion_block,
         "mr_history": mr_history_block,
+        "stop_loss_pct": _clean(getattr(monitored, "stop_loss_pct", None)),
         "grace_remaining_sec": grace_remaining_seconds,
         "trigger_states": dict(trigger_states) if trigger_states else None,
         "trigger_lines": trigger_lines,
