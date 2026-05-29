@@ -98,6 +98,26 @@ _dashboard_theme_df = None
 _dashboard_daily_df = None
 _dashboard_command_thread: Any = None
 _dashboard_command_stop: Any = None
+# 텔레그램 카드 송출 전용 쓰레드 (2026-05-29) — tick 블로킹 제거. 첫 tick 에서 lazy 생성.
+_dashboard_card_sender: Any = None
+
+
+def _get_card_sender(settings: Settings) -> Any:
+    """카드 송출 쓰레드 lazy 싱글톤. 텔레그램 카드 비활성이면 None."""
+    global _dashboard_card_sender
+    if not settings.monitoring_telegram_cards_enabled:
+        return None
+    if not (settings.telegram_bot_token and settings.telegram_chat_id):
+        return None
+    if _dashboard_card_sender is None:
+        from src.dashboard.telegram_sender import TelegramCardSender
+        _dashboard_card_sender = TelegramCardSender(
+            token=settings.telegram_bot_token,
+            chat_id=settings.telegram_chat_id,
+            message_ids=_dashboard_message_ids,
+        )
+        logger.info("[M6] 텔레그램 카드 송출 쓰레드 시작 — tick 블로킹 분리")
+    return _dashboard_card_sender
 
 
 def _reset_state() -> None:
@@ -1078,6 +1098,7 @@ def _dashboard_tick_job(client: KISClient, settings: Settings) -> None:
                     chat_id=settings.telegram_chat_id,
                     session=_dashboard_session,
                     message_ids=_dashboard_message_ids,
+                    card_sender=_get_card_sender(settings),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"[M6] /off 카드 정리 실패: {e}")
@@ -1107,6 +1128,7 @@ def _dashboard_tick_job(client: KISClient, settings: Settings) -> None:
         chat_id=settings.telegram_chat_id,
         now=now_kst(),
         send_telegram_cards=settings.monitoring_telegram_cards_enabled,
+        card_sender=_get_card_sender(settings),
     )
 
 
@@ -1361,9 +1383,12 @@ def run() -> None:
                     chat_id=settings.telegram_chat_id,
                     session=_dashboard_session,
                     message_ids=_dashboard_message_ids,
+                    card_sender=_dashboard_card_sender,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"[M6] 종료 시 카드 정리 실패: {e}")
+        if _dashboard_card_sender is not None:
+            _dashboard_card_sender.stop()
         client.close()
         sys.exit(0)
 

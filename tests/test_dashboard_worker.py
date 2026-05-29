@@ -232,6 +232,115 @@ def test_dashboard_tick_edits_existing_message():
     assert not send.called
 
 
+def test_dashboard_tick_mr_signal_does_not_raise_nameerror():
+    """회귀 (2026-05-29): mr_sigB/mr_sigS 발화 시 push_mr_event 가 정의되지 않은
+    로컬 `mr_score` 를 참조해 NameError 로 tick 이 죽던 버그.
+
+    v11 리팩터링 때 score → sc_buy/sc_sell 분리하며 push_mr_event 인자가
+    `float(mr_score)` 로 남아 발화 순간(=STRONG 푸시가 떠야 할 시점) 루프가
+    중단됐다. 그 아래 _maybe_push_mr_strong_alert 가 영영 호출되지 않아 STRONG
+    푸시가 한 번도 안 오던 근본 원인. fix 후엔 sc_buy/sc_sell 사용.
+
+    검증: 단저(sigB) 발화하는 leader 1종목으로 tick 을 돌려 (1) 예외 없이 완료,
+    (2) mr_history 에 이벤트 기록됨 (= push_mr_event 가 정상 실행).
+    """
+    s = MonitoringSession()
+    msg_ids: dict = {}
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "075180", "name": "제룡전기",
+        "price": 91300, "prev_close": 70200, "daily_return": 30.0,
+        "intraday_high": 91500, "intraday_low": 70200,
+        "volume": 1_000_000, "trading_value": 100_000_000_000,
+        "is_limit_up": True, "market_cap": 5_000, "turnover": 20.0,
+    }])
+    sectors = [{
+        "theme": "전기/전선", "score": 3.0, "breadth": 1, "avg_return": 30.0,
+        "turnover_sum": 20.0, "member_count": 1, "codes": ["075180"], "count": 1,
+    }]
+    leaders = [{
+        "code": "075180", "name": "제룡전기", "themes": ["전기/전선"],
+        "rank": 1, "price": 91300, "daily_return": 30.0, "is_limit_up": True,
+        "turnover": 20.0, "trading_value": 100_000_000_000, "market_cap": 5_000,
+        "sector_role": "leader", "surface_sector_name": "전기/전선",
+    }]
+
+    # analyze_minute_bars → 단저 STRONG 발화: (sigB, sigS, reason, sc_buy, g_buy, sc_sell, g_sell)
+    mr_return = (True, False, "STOCH=28 Z=-1.2", 2.3, "STRONG", 0.4, "NEUTRAL")
+    fake_resp = {"ok": True, "result": {"message_id": 4242}}
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=sectors), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=(leaders, [])), \
+         patch("src.dashboard.worker.analyze_minute_bars", return_value=mr_return), \
+         _patch_bundles(), \
+         patch("src.dashboard.worker.send_message_single", return_value=fake_resp), \
+         patch("src.dashboard.worker.edit_message"):
+        # 버그가 있으면 이 호출이 NameError 를 raise.
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=datetime(2026, 5, 29, 9, 32),
+        )
+
+    assert "075180" in s.monitored
+    m = s.monitored["075180"]
+    # push_mr_event 가 sc_buy(2.3) 로 정상 실행 — mr_history 에 단저 이벤트 기록.
+    # (prepend 구조라 최신이 [0], score 는 sc_buy 값)
+    assert len(m.mr_history) >= 1
+    assert m.mr_history[0].kind == "단저"
+    assert m.mr_history[0].score == 2.3
+
+
+def test_dashboard_tick_routes_cards_through_card_sender():
+    """card_sender 주어지면 동기 send/edit 대신 sender.update_card 로 enqueue."""
+    s = MonitoringSession()
+    msg_ids: dict = {}
+    card_sender = MagicMock()
+
+    snap = pd.DataFrame([{
+        "rank": 1, "code": "075180", "name": "제룡전기",
+        "price": 91300, "prev_close": 70200, "daily_return": 30.0,
+        "intraday_high": 91500, "intraday_low": 70200,
+        "volume": 1_000_000, "trading_value": 100_000_000_000,
+        "is_limit_up": True, "market_cap": 5_000, "turnover": 20.0,
+    }])
+    sectors = [{
+        "theme": "전기/전선", "score": 3.0, "breadth": 1, "avg_return": 30.0,
+        "turnover_sum": 20.0, "member_count": 1, "codes": ["075180"], "count": 1,
+    }]
+    leaders = [{
+        "code": "075180", "name": "제룡전기", "themes": ["전기/전선"],
+        "rank": 1, "price": 91300, "daily_return": 30.0, "is_limit_up": True,
+        "turnover": 20.0, "trading_value": 100_000_000_000, "market_cap": 5_000,
+        "sector_role": "leader", "surface_sector_name": "전기/전선",
+    }]
+
+    with patch("src.dashboard.worker.fetch_volume_rank", return_value=snap), \
+         patch("src.dashboard.worker.score_leading_sectors", return_value=sectors), \
+         patch("src.dashboard.worker.select_leaders_and_candidates", return_value=(leaders, [])), \
+         _patch_bundles(), \
+         patch("src.dashboard.worker.send_message_single") as send, \
+         patch("src.dashboard.worker.edit_message") as edit:
+        dashboard_tick(
+            session=s, message_ids=msg_ids,
+            client=MagicMock(), master_df=pd.DataFrame(),
+            theme_mapping_df=pd.DataFrame(),
+            daily_ohlcv=None,
+            token="t", chat_id="c",
+            now=datetime(2026, 5, 29, 9, 32),
+            card_sender=card_sender,
+        )
+
+    # 동기 텔레그램 호출 X — 전부 sender 로 위임
+    assert not send.called
+    assert not edit.called
+    assert card_sender.update_card.call_count >= 1
+    assert card_sender.update_card.call_args[0][0] == "075180"
+
+
 def test_dashboard_tick_updates_last_prices():
     """round 20: 매 tick 마다 session.last_prices 에 snapshot 현재가 채워짐.
     `/buy CODE` (가격 생략) UX 를 위한 inter-thread 시세 공유.

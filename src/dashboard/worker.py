@@ -361,6 +361,7 @@ def _maybe_push_mr_strong_alert(
     now: datetime,
     token: str,
     chat_id: str,
+    card_sender: Any = None,
 ) -> None:
     """단저단고 STRONG 푸시 알림 — kind 변경/재진입 시 1회 send (2026-05-29).
 
@@ -413,7 +414,11 @@ def _maybe_push_mr_strong_alert(
         f"테마: {sector_str} | {ts_label}"
     )
     try:
-        send_message_single(token, chat_id, text, parse_mode=None)
+        if card_sender is not None:
+            # 전용 송출 쓰레드로 위임 — tick 블로킹 X (2026-05-29).
+            card_sender.push_oneshot(text)
+        else:
+            send_message_single(token, chat_id, text, parse_mode=None)
         monitored.mr_alert_kind = new_kind
     except Exception as e:
         logger.warning(f"{monitored.code} 단저단고 STRONG push 실패: {e}")
@@ -431,6 +436,7 @@ def dashboard_tick(
     chat_id: str,
     now: datetime,
     send_telegram_cards: bool = True,
+    card_sender: Any = None,
 ) -> None:
     """한 사이클의 모니터링 처리.
 
@@ -449,6 +455,10 @@ def dashboard_tick(
             payload / KIS fetch / tick_log / 명령 응답은 그대로. 사용자가 PWA
             만 보면서 tick 시간 단축이 목적인 경우. settings.monitoring_
             telegram_cards_enabled (env MONITORING_TELEGRAM_CARDS_ENABLED) 와 매핑.
+        card_sender: TelegramCardSender (전용 송출 쓰레드). 주어지면 카드
+            edit/send/delete + STRONG 푸시를 동기 호출 대신 sender 에 enqueue
+            하여 tick 을 블로킹하지 않는다 (2026-05-29). None 이면 기존 동기 경로
+            (하위 호환 / 테스트용).
         now: 현재 시각 (KST).
     """
     if session.paused:
@@ -667,7 +677,10 @@ def dashboard_tick(
     new_monitored_codes = set(session.monitored.keys())
     if send_telegram_cards:
         for dropped in prev_monitored_codes - new_monitored_codes:
-            _delete_monitor_message(token, chat_id, dropped, message_ids)
+            if card_sender is not None:
+                card_sender.remove_card(dropped)
+            else:
+                _delete_monitor_message(token, chat_id, dropped, message_ids)
 
     # 카드 헤더에 TRANSITION 부상 후보 정보를 통합 표시하기 위해 a1 → a2 매핑 구성.
     # step_tracker 가 갱신한 후 카드를 렌더해야 정확한 상태를 표시할 수 있으므로
@@ -1001,15 +1014,17 @@ def dashboard_tick(
         # 단저단고 히스토리 (2026-05-29) — sigB/sigS 발화 시 카드 히스토리 섹션용 push.
         # 연속 동일 kind 는 score/reason 만 갱신 (FIFO 3 max).
         if mr_b:
-            monitored.push_mr_event(now, "단저", float(mr_score), mr_r)
+            monitored.push_mr_event(now, "단저", float(sc_buy), mr_r)
         if mr_s:
-            monitored.push_mr_event(now, "단고", float(mr_score), mr_r)
+            monitored.push_mr_event(now, "단고", float(sc_sell), mr_r)
 
         # 단저단고 STRONG 푸시 알림 (2026-05-29) — /on/off 와 무관, 자동 6종+수동+보유만.
         # 같은 kind 연속 발화는 1회만 push. STRONG 벗어났다 재진입 시 재 push.
         # MR_STRONG_ALERT=0 으로 끌 수 있음 (default ON).
         if os.getenv("MR_STRONG_ALERT", "1") == "1" and token and chat_id:
-            _maybe_push_mr_strong_alert(monitored, now, token, chat_id)
+            _maybe_push_mr_strong_alert(
+                monitored, now, token, chat_id, card_sender=card_sender,
+            )
 
         if tick_breadth:
             monitored.market_breadth_up_frac = tick_breadth["breadth_up_frac"]
@@ -1041,7 +1056,10 @@ def dashboard_tick(
             investor_delta=investor_delta,
         )
         if send_telegram_cards:
-            _send_or_edit_monitor(token, chat_id, code, text, message_ids)
+            if card_sender is not None:
+                card_sender.update_card(code, text)
+            else:
+                _send_or_edit_monitor(token, chat_id, code, text, message_ids)
 
         # M7 PWA 페이로드 — 텔레그램 텍스트와 동일 데이터 소스. WebSocket broadcast 용.
         session.last_payloads[code] = build_monitor_payload(
@@ -1207,13 +1225,18 @@ def cleanup_messages(
     chat_id: str,
     session: MonitoringSession,
     message_ids: dict[str, int],
+    card_sender: Any = None,
 ) -> None:
     """모니터링 종료 시 메시지들 정리.
 
     10:30 종료 잡에서 호출. 수동 종목도 자동 종목도 모두 삭제.
+    card_sender 가 주어지면 삭제도 송출 쓰레드에 위임 (message_ids 단독 소유 유지).
     """
-    for code in list(message_ids.keys()):
-        _delete_monitor_message(token, chat_id, code, message_ids)
+    if card_sender is not None:
+        card_sender.clear_all()
+    else:
+        for code in list(message_ids.keys()):
+            _delete_monitor_message(token, chat_id, code, message_ids)
     session.monitored.clear()
     session.trackers.clear()
     session.last_payloads.clear()

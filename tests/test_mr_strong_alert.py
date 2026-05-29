@@ -173,3 +173,25 @@ def test_sigB_no_push_when_grade_buy_watch():
     with patch("src.dashboard.worker.send_message_single") as send:
         _maybe_push_mr_strong_alert(m, datetime(2026, 5, 29, 9, 32, 10), "t", "c")
     assert send.call_count == 0
+
+
+# ── card_sender 라우팅 (2026-05-29) — tick 블로킹 분리 ──────────────────────────
+
+
+def test_push_routes_through_card_sender_when_provided():
+    """card_sender 주어지면 send_message_single 동기 호출 X, push_oneshot 으로 위임."""
+    from unittest.mock import MagicMock
+    m = _make_stock(sigB=True)
+    sender = MagicMock()
+    with patch("src.dashboard.worker.send_message_single") as send:
+        _maybe_push_mr_strong_alert(
+            m, datetime(2026, 5, 29, 9, 32, 10), "t", "c", card_sender=sender,
+        )
+    # 동기 send 는 호출 안 됨 — sender 로 위임
+    assert send.call_count == 0
+    assert sender.push_oneshot.call_count == 1
+    text = sender.push_oneshot.call_args[0][0]
+    assert "🚨 단저단고 STRONG" in text
+    assert "🟢 단저" in text
+    # 위임 성공 시에도 alert_kind 갱신 (중복 push 방지 유지)
+    assert m.mr_alert_kind == "단저"
