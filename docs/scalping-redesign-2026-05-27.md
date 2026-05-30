@@ -11,6 +11,47 @@ M6 카드 완전 교체. 종배는 그대로.
 변경 내역은 §11 정정 이력 표 마지막 행 참조. Back-out 절차: `.env` 에
 `LEGACY_RISING_FUNNEL=1` 추가 후 데몬 재시작.
 
+### ★★ 2026-05-30 v4 — 강망치 단저 전환 (oversold/단고 폐기)
+
+5/29 매매일지 토론(image/3.PNG)에서 시그널 패러다임을 다시 한 번 교체. **§2 의
+oversold 기반 sigB/sigS (v3) 는 폐기**, 아래로 대체. 근거: [`data/journal/2026-05-29.md`](../data/journal/2026-05-29.md).
+
+- **진입 (단저)** = ZigZag **swing 저점**(floor 0.5%) ∩ **강망치**(아래꼬리 ≥ 0.6).
+  oversold(STOCH/RSI/Z) 게이트 **제거** — 강세 추세에선 과매도 도달 X 라 옛 STRONG
+  단저가 사실상 미발화(OOS 53종목일에 1건)였음. 강망치(긴 아래꼬리=저가 거부)가 OOS
+  검증된 유일한 진입 시그널.
+- **청산** = **trailing −1.0%**(고점 대비). 고정 익절(target)은 OOS 과적합으로 배제.
+  - **−2% 손절 검증 (2026-05-30 추가)**: 사용자 룰의 −2% 손절을 명시 반영해 재계산.
+    단순 −2% 손절은 무의미(trailing −1% 이 더 타이트해 미발동). 사용자 룰 정확히 구현한
+    **armed**(수익 구간 trailing / 손실 구간 −2%까지 버팀)은 **OOS 오히려 음수**
+    (armed trail1.0 −0.194%, trail1.5 −0.014%) — 강망치 진입 실패 시 −2%까지 버티면
+    손실만 키움. **trail1.0(손실 구간도 −1% 즉시 컷)이 OOS +0.131% 로 최고.** armed 는
+    승률은 ↑(42→50%) 이나 net ↓. → 강망치엔 **빨리 자르는 −1% 즉시 trailing 이 우월**.
+    단 표본 41건 + 사용자 실매매 심리(−2% 편안) 미반영 → dry-run 비교로 확정.
+- **단고(매도) STRONG 폐기** — 과매수 기반이라 강세장 영구 발화 + 매도 alpha 미입증.
+  **청산으로 쓰면 진입 alpha 를 죽임 (OOS −0.972%, 단고 매도 후 68% 재폭등).** sigS 항상 False.
+- **per-stock weight 제거** → 글로벌 룰 (강망치 발화가 종목당 드물어 학습 표본 X).
+- **통설 검증 통과/배제** (ritual a+b): 망치형·trailing·과매도(보조) 통과 / 고정익절·
+  피보·거래량확인(단저)·정교한 단고는 배제. 매수≠매도 비대칭 확인 (매수=저거래량·과매도,
+  매도=거래량분출·과매수아님, 정반대).
+
+**검증 (train 5/18~22 / OOS 5/27~29, surface universe, 지정가 0.2%):**
+
+| 전략 | TRAIN 왕복 net | OOS 왕복 net | OOS 건수 |
+|---|---|---|---|
+| 기존 oversold STRONG→overbought STRONG | −3.601% | **−1.390%** | 1건 (미작동) |
+| **신규 강망치 swing저점 → trailing 1.0%** | +0.335% | **+0.131%** | 41건 (종목일당 0.77) |
+
+OOS 종목일당 기대수익: 기존 −0.026% vs 신규 +0.101%. 절대 net 작아 **빈도 누적 구조**.
+한계: OOS 41건·3일 표본, 시장가면 악화, trailing 폭은 dry-run 으로 좁힘.
+
+**코드**: `classify_zigzag()` / `_analyze_zigzag()` (`src/scalping/signals/mean_reversion.py`).
+`analyze_minute_bars` 가 **무조건 강망치** 사용 — 데몬 **재시작 즉시 적용** (토글 X).
+oversold sigB/sigS·단고 STRONG·per-stock weight 완전 폐기 (롤백은 git revert). 상수
+`HAMMER_LOWER_WICK=0.6`, `MR_TRAIL_PCT=1.0`, floor 만 `MR_ZIGZAG_FLOOR` env 조정.
+검증 도구 `src/research/backtest_zigzag.py` / `backtest_zigzag_compare.py`. 아래 §2 (v3)
+및 oversold `classify()` 는 **역사적 기록 / 백테스트 호환**으로만 보존, 라이브는 본 v4.
+
 본 문서는 `docs/trading-method-separation-discussion.md` §11 ("화력→리더" 운영
 전환) 의 후속이며, 5/27 매매일지 (`data/journal/2026-05-27.md`) 의 토론 결과로
 시작된 재설계.

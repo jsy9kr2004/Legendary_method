@@ -248,51 +248,54 @@ Refs: docs/scalping-strategy.md Buy.Score (단타) 또는 docs/eod-strategy.md E
 **Step (4) — surface universe**
   자동 = leaders ∪ candidates (최대 6종) ∪ 사용자 수동 ∪ 보유.
 
-**시그널** — `mean_reversion.py`:
-  - mr_sigB = 매수 트리거 (swing low + oversold; STOCH ≤ 30 OR Z ≤ -1.0)
-  - mr_sigS = 매도 트리거 (swing high + overbought + 음봉 패턴)
-  - mr_grade STRONG (score ≥ 2.0) / WATCH (≥ 1.0) / NEUTRAL — v10b weighted score
+**시그널 — 강망치 단저 재설계 (2026-05-30) ★** — `mean_reversion.py` (강망치 기본, oversold/단고 완전 폐기):
+  - **진입 (mr_sigB)** = ZigZag **swing 저점**(floor 0.5%) ∩ **강망치**(아래꼬리 ≥ 0.6,
+    = 봉 range 의 60%↑ 저가 거부). `classify_zigzag()`. 절대 과매도(oversold) 게이트 X.
+  - **청산** = **trailing** (고점 대비 −1.0%, `MR_TRAIL_PCT`). 고정 익절(target)은
+    OOS 과적합이라 배제. **단고(매도) STRONG 으로 청산하면 진입 alpha 를 죽임 → 청산서 제외.**
+  - **단고(mr_sigS) 폐기** — 항상 False. 과매수 기반이라 강세장 영구 발화 + 매도 alpha
+    미입증 + 청산용으로 해로움(OOS −0.972%). 카드 참고용 외 역할 없음.
+  - **per-stock weight 제거** — 강망치 발화가 종목당 드물어 학습 표본 X → **글로벌 룰**.
+  - mr_grade: 강망치 sigB 발화 = **STRONG 단저**.
 
-**카드 표시**: 헤더 4종 (⭐주도주 / 🌟주도주 후보 / 🔵수동 / 💎보유) + 테마 1개
-  (surface 된 주도섹터) + 단저단고 라인 + 보조 (가격/가속/체결강도/호가/수급) +
-  단저단고 히스토리 (최대 3).
+**검증** (train 5/18~22 / OOS 5/27~29, surface universe, 지정가 0.2%):
+  - 신규(강망치→trailing) OOS 왕복 **+0.131%** (41건, 종목일당 0.77) vs
+    기존(oversold STRONG→overbought STRONG) OOS **−1.390%** (1건 = 사실상 미작동).
+  - 절대 net/건 작음 → **빈도 누적 구조**(OOS 종목일당 기대수익 +0.101%). 표본 3일·41건.
+  - 전체 근거: [`docs/scalping-redesign-2026-05-27.md`](docs/scalping-redesign-2026-05-27.md) §v4
+    + [`data/journal/2026-05-29.md`](data/journal/2026-05-29.md).
 
-**STRONG 푸시 알림 (2026-05-29 신규)**: `MR_STRONG_ALERT=1` (default) 인 경우, 자동
-  surface 6종 + 수동 + 보유 종목의 mr_grade==STRONG + (sigB OR sigS) 시 별도
-  텔레그램 메시지 send. `/on`/`/off` 와 무관 (paused 일 때도 push). 종목별로 같은
-  kind 연속 발화는 1회만 push (kind 전환 또는 STRONG 영역 벗어났다 재진입 시만 재 push).
+**카드 표시**: 헤더 4종 (⭐주도주 / 🌟주도주 후보 / 🔵수동 / 💎보유) + 테마 1개 +
+  강망치 단저 라인 (STRONG 매수 신호) + 보조 (가격/가속/체결강도/호가/수급) + 히스토리.
 
-**자동 청산 X**: 사용자가 카드 보고 직접 매매. CLAUDE.md 자동 매매 금지 정책 유지.
+**STRONG 푸시 알림**: `MR_STRONG_ALERT=1` (default) 시 자동 surface 6종 + 수동 + 보유의
+  강망치 sigB 발화 시 텔레그램 send. `/on`/`/off` 무관. 종목별 연속 발화 1회만 push.
 
-**Back-out**: `LEGACY_RISING_FUNNEL=1` env 토글로 옛 Buy.Score funnel surface 부활.
+**자동 청산 X**: 카드는 STRONG 단저(매수) 신호 표시, 사용자가 직접 매수 + trailing 직접
+  청산 (또는 카드에 trailing 손절가 가이드). 자동 매매 금지 정책 유지.
 
-### ⚠ 단저단고 시스템 한계 (2026-05-29 정직 명시)
+**적용/롤백**: 강망치가 **기본 동작 — 데몬 재시작 즉시 적용** (`analyze_minute_bars` 가
+  무조건 `_analyze_zigzag`). oversold sigB/sigS·단고 STRONG·per-stock weight 완전 폐기.
+  롤백은 git revert. floor 만 `MR_ZIGZAG_FLOOR` env 로 조정 가능. `LEGACY_RISING_FUNNEL=1`
+  = 옛 Buy.Score funnel surface (별개 축).
 
-정통 train/val split backtest 결과 **net 음수** (지정가 -0.55%, 시장가 더 나쁨):
-- 분봉 단저단고 swing 평균 폭 (+4~5%) 이 매매 timing miss + 비용 합산 흡수 어려움
-- AUC 0.879 (단저) / 0.887 (단고) = 시그널 정확도 좋음
-- Per-Stock weight 효과 +0.08~0.50%p (운전수 가설 ✓)
-- 그러나 **절대 net 양수 도달은 어려움** — 분봉 단위 잔파동 매매의 본질 한계
+### ⚠ 강망치 단저 한계 (2026-05-30 정직 명시)
 
-**정량 진단 + 약점 분석 전체**: [`docs/scalping-weakness-analysis-2026-05-29.md`](docs/scalping-weakness-analysis-2026-05-29.md)
-- AUC vs Precision @top 0.5% gap (88→11.5%)
-- 진짜 단저 64건 (+3.6%) vs 가짜 단저 492건 (0%, MAE -2.19%)
-- 봉 close 지연 +0.95% 슬리피지
-- MFE 캐치율 14.6%
-- B/C 옵션 backtest (B 효과 0%p, C 효과 +0.08%p 일관)
+- **OOS 41건·3일 표본** — robust 하지만 작음. dry-run 누적 후 trailing 폭(현재 1.0%) 확정.
+- **−2% 손절 검증**: 사용자 룰의 −2% 손절을 명시 반영해도 trailing −1% 이 더 타이트해
+  무의미. 손실 구간 −2%까지 버티는 armed 방식은 OOS 오히려 음수(−0.194%) — 강망치 진입
+  실패는 **빨리 자르는 −1% 즉시 trailing 이 우월**. trail1.0 유지. 사용자 실매매 심리는 dry-run 비교.
+- **절대 수익 작음** — 왕복 net/건 +0.131% (지정가). 시장가면 악화. 빈도로 누적되는 구조.
+- **빗나감(lag)이 구조적 비용** — swing 저점은 +floor% 반등해야 확정 → 저점보다 비싸게
+  매수. 진폭 2%+ swing 만 net 양수 (작은 swing 은 빗나감에 죽음). 강망치 진입이 이 빗나감을
+  이기는 유일하게 검증된 진입 시그널.
+- **검증 배제된 것**: 고정 익절(target, 과적합) / 정교한 단고 매도 / per-stock weight /
+  VWAP·MA·피보·거래량 보조 (단저에선 도움 X). 통설이라도 데이터로 배제.
+- **자동 매매 영구 X** — 사용자 직관 매매 보조 도구. 강한 추세 종목은 buy-and-hold(종배/
+  스윙)가 우월. 강망치 단저는 surface universe 잔파동 보조.
 
-운영 정책:
-- **사용자 직관 매매 보조 도구** — 카드 보면서 신호 참고 + 사용자가 종합 판단
-- **자동 매매 영구 X** (CLAUDE.md 자동 매매 금지 정책 유지)
-- 강한 추세 종목 (예: 5/28 삼성전기 +13%) 은 단저단고 보다 buy-and-hold 가 우월 — 종배/스윙 시스템이 답
-- 단저단고는 박스권/잔파동 종목 + 사용자 직관 매매 + Per-Stock stop 조합으로 보조
-
-종목별 sweet spot:
-- 삼성전기 (강한 추세 큰 swing): EOD 보유 시 +5.7% (per-stock stop -2.5%)
-- 삼성전자 (sigS 잘 발화): 100% 승률 +0.95% (stop -4%)
-- 현대차 (잔파동 큼): 모든 룰에서 net 음수 — 단저단고 부적합 종목
-
-매매일지 토론 시점 누적 데이터 (1개월+) 로 weight 재학습 + 한계 검토.
+옛 약점 분석(oversold 패러다임): [`docs/scalping-weakness-analysis-2026-05-29.md`](docs/scalping-weakness-analysis-2026-05-29.md).
+매매일지 누적 데이터(1개월+)로 trailing 폭 + 보조 가점(과매도/저거래량) + 운전수 재검토.
 
 ## 종배 매매 정량 룰 (간략)
 
