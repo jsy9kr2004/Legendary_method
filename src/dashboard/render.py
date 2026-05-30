@@ -271,30 +271,23 @@ def render_monitor_message(
         f"테마: {themes_str}",
     ]
 
-    # 단저단고 시그널 v11 (2026-05-29) — score_buy/sell 분리.
-    # 카드는 단저/단고 각각의 score/grade 표시.
+    # 강망치 단저 + 청산 시그널 (v4, 2026-05-30). 단고 폐기.
+    # 발화 시에만 라인 표시 (평상시 NEUTRAL 은 숨김 — 카드 간결).
     # default ON — 끄려면 .env 에 MONITOR_MEAN_REVERSION=0 명시.
     if os.getenv("MONITOR_MEAN_REVERSION", "1") == "1":
         _mrb = getattr(monitored, "mr_sigB", False)
-        _mrs = getattr(monitored, "mr_sigS", False)
         _mrr = getattr(monitored, "mr_reason", None)
         _sc_buy = getattr(monitored, "mr_score_buy", 0.0) or 0.0
         _g_buy = getattr(monitored, "mr_grade_buy", "NEUTRAL")
-        _sc_sell = getattr(monitored, "mr_score_sell", 0.0) or 0.0
-        _g_sell = getattr(monitored, "mr_grade_sell", "NEUTRAL")
-        # 표시 조건: sigB/sigS 발화 OR buy/sell 등급 != NEUTRAL
-        if _mrb or _mrs or _g_buy != "NEUTRAL" or _g_sell != "NEUTRAL":
-            def _emoji(g):
-                return {"STRONG": "🟢", "WATCH": "🟡"}.get(g, "⚫")
-            line_parts = []
-            line_parts.append(f"단저 {_emoji(_g_buy)}{_g_buy} {_sc_buy:.2f}")
-            line_parts.append(f"단고 {_emoji(_g_sell)}{_g_sell} {_sc_sell:.2f}")
-            sig_marks = []
-            if _mrb: sig_marks.append("🟢 단저↑")
-            if _mrs: sig_marks.append("🔴 단고↑")
-            if sig_marks:
-                line_parts.append(" ".join(sig_marks))
-            lines.append(" / ".join(line_parts) + (f" — {_mrr}" if _mrr else ""))
+        _exit = getattr(monitored, "exit_signal", False)
+        sig_parts = []
+        if _mrb and _g_buy == "STRONG":
+            sig_parts.append(f"🟢 STRONG 단저 (강망치 진폭 {_sc_buy:.2f}%)")
+        if _exit:
+            sig_parts.append("🔴 청산 시그널 (trailing)")
+        if sig_parts:
+            tail = f" — {_mrr}" if (_mrr and _mrb and _g_buy == "STRONG") else ""
+            lines.append(" / ".join(sig_parts) + tail)
 
     # a1 카드일 때 TRANSITION/GRACE 부상 후보 표시 (round 19 — 카드 통합)
     if transition_info is not None:
@@ -493,28 +486,28 @@ def render_monitor_message(
                 f"/ 프로그램 {_fmt_signed_shares(program_q)}{_paren(dp_q, _fmt_signed_shares)}"
             )
 
-    # v11.3 종목별 손절가 (2026-05-29) — 보유 모드 = 실제 손절가 / 감시 모드 = 예상.
-    _stop_pct = getattr(monitored, "stop_loss_pct", None)
+    # trailing 손절가 (v4, 2026-05-30) — 보유 = 보유중 고점 대비 trailing / 감시 = 진입 후 예상.
+    _stop_pct = getattr(monitored, "stop_loss_pct", None)  # trailing 폭 (-1%)
     if _stop_pct is not None:
         if is_holding and holding is not None:
-            entry_p = getattr(holding, "entry_price", None) or 0
-            stop_p = int(entry_p * (1 + _stop_pct / 100))
-            lines.append(f"💥 손절가: {stop_p:,}원 ({_stop_pct:+.1f}%, 매수가 대비)")
+            _peak = getattr(monitored, "holding_peak", None)
+            base = _peak if _peak else (getattr(holding, "entry_price", None) or 0)
+            stop_p = int(base * (1 + _stop_pct / 100))
+            lines.append(f"💥 trailing 손절가: {stop_p:,}원 (고점 대비 {_stop_pct:+.1f}%)")
         else:
-            # 감시 모드 — 진입 시 예상 손절 임계만
-            lines.append(f"💥 진입 시 손절: {_stop_pct:+.1f}% (종목별 v11.3)")
+            lines.append(f"💥 진입 후 trailing {_stop_pct:+.1f}%")
 
-    # 단저단고 히스토리 (2026-05-29) — 옛 Exit.Triggers 청산 시그널 자리.
-    # 시그널 발화 시점 최대 3개 (최신순). 사용자가 잠깐 놓치는 시점 대비.
+    # 단저/청산 히스토리 (v4, 2026-05-30) — STRONG 단저(강망치) + 청산(trailing) 발화 이력.
+    # 최대 3개 (최신순). 사용자가 잠깐 놓치는 시점 대비.
     _mr_history = getattr(monitored, "mr_history", None) or []
     if _mr_history:
-        lines.append("─ 단저단고 히스토리 ─")
+        lines.append("─ 단저/청산 히스토리 ─")
         for entry in _mr_history[:3]:
             try:
                 ts_label = entry.ts.strftime("%H:%M:%S")
             except (AttributeError, ValueError):
                 ts_label = "--:--:--"
-            kind_emoji = "🟢" if entry.kind == "단저" else "🔴"
+            kind_emoji = "🟢" if entry.kind == "STRONG단저" else "🔴"
             reason_short = (entry.reason or "—")
             if len(reason_short) > 60:
                 reason_short = reason_short[:60] + "…"
@@ -728,22 +721,19 @@ def build_monitor_payload(
     # trigger_lines / trigger_states 키는 호환성을 위해 빈 list/None 유지.
     trigger_lines: list[str] = []
 
-    # 단저단고 v11 (2026-05-29) — score_buy/sell 분리.
+    # 강망치 단저 + 청산 (v4, 2026-05-30) — 단고 폐기. STRONG 단저 발화 또는 청산 시그널만.
     g_buy = getattr(monitored, "mr_grade_buy", "NEUTRAL")
-    g_sell = getattr(monitored, "mr_grade_sell", "NEUTRAL")
     mr_sigB = bool(getattr(monitored, "mr_sigB", False))
-    mr_sigS = bool(getattr(monitored, "mr_sigS", False))
+    exit_signal = bool(getattr(monitored, "exit_signal", False))
     mean_reversion_block: dict[str, Any] | None = None
-    if g_buy != "NEUTRAL" or g_sell != "NEUTRAL" or mr_sigB or mr_sigS:
+    if (mr_sigB and g_buy == "STRONG") or exit_signal:
         mean_reversion_block = {
             "grade_buy": g_buy,
-            "grade_sell": g_sell,
             "score_buy": _clean(getattr(monitored, "mr_score_buy", 0.0)),
-            "score_sell": _clean(getattr(monitored, "mr_score_sell", 0.0)),
             "sigB": mr_sigB,
-            "sigS": mr_sigS,
+            "exit_signal": exit_signal,
             "reason": getattr(monitored, "mr_reason", None),
-            # v10b 호환 (옛 frontend 위해)
+            # 호환 (옛 frontend)
             "grade": g_buy,
             "score": _clean(getattr(monitored, "mr_score_buy", 0.0)),
         }
@@ -790,6 +780,7 @@ def build_monitor_payload(
         "mean_reversion": mean_reversion_block,
         "mr_history": mr_history_block,
         "stop_loss_pct": _clean(getattr(monitored, "stop_loss_pct", None)),
+        "holding_peak": _clean(getattr(monitored, "holding_peak", None)),
         "grace_remaining_sec": grace_remaining_seconds,
         "trigger_states": dict(trigger_states) if trigger_states else None,
         "trigger_lines": trigger_lines,

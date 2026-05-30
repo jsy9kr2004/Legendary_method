@@ -503,10 +503,13 @@ def _make_stock(code: str = "100001") -> MonitoredStock:
 def test_push_mr_event_appends_new_kind():
     m = _make_stock()
     t0 = datetime(2026, 5, 29, 9, 30)
-    m.push_mr_event(t0, "단저", 2.3, "STOCH=30")
+    m.push_mr_event(t0, "STRONG단저", 1.59, "강망치 진폭 1.59%")
     assert len(m.mr_history) == 1
-    assert m.mr_history[0].kind == "단저"
-    assert m.mr_history[0].score == 2.3
+    assert m.mr_history[0].kind == "STRONG단저"
+    assert m.mr_history[0].score == 1.59
+    # 폐기된 kind 는 무시
+    m.push_mr_event(t0, "단고", 1.0, "x")
+    assert len(m.mr_history) == 1
 
 
 def test_push_mr_event_same_kind_updates_in_place():
@@ -514,10 +517,10 @@ def test_push_mr_event_same_kind_updates_in_place():
     m = _make_stock()
     t0 = datetime(2026, 5, 29, 9, 30, 0)
     t1 = datetime(2026, 5, 29, 9, 30, 3)
-    m.push_mr_event(t0, "단저", 2.0, "STOCH=30")
-    m.push_mr_event(t1, "단저", 2.5, "STOCH=25")
+    m.push_mr_event(t0, "STRONG단저", 1.0, "진폭 1.0%")
+    m.push_mr_event(t1, "STRONG단저", 1.5, "진폭 1.5%")
     assert len(m.mr_history) == 1
-    assert m.mr_history[0].score == 2.5
+    assert m.mr_history[0].score == 1.5
     assert m.mr_history[0].ts == t1
 
 
@@ -525,23 +528,23 @@ def test_push_mr_event_kind_change_prepends():
     m = _make_stock()
     t0 = datetime(2026, 5, 29, 9, 30, 0)
     t1 = datetime(2026, 5, 29, 9, 31, 0)
-    m.push_mr_event(t0, "단저", 2.0, "STOCH=30")
-    m.push_mr_event(t1, "단고", 2.5, "STOCH=72")
+    m.push_mr_event(t0, "STRONG단저", 1.5, "진폭 1.5%")
+    m.push_mr_event(t1, "청산", 1.0, "trailing -1.0%")
     assert len(m.mr_history) == 2
-    assert m.mr_history[0].kind == "단고"   # 최신
-    assert m.mr_history[1].kind == "단저"
+    assert m.mr_history[0].kind == "청산"      # 최신
+    assert m.mr_history[1].kind == "STRONG단저"
 
 
 def test_push_mr_event_fifo_max_three():
     m = _make_stock()
     for i in range(5):
-        kind = "단저" if i % 2 == 0 else "단고"
+        kind = "STRONG단저" if i % 2 == 0 else "청산"
         m.push_mr_event(
             datetime(2026, 5, 29, 9, 30 + i),
             kind, float(i), f"score{i}",
         )
     assert len(m.mr_history) == 3
-    # 가장 최신 (i=4, kind="단저", score=4.0) 이 [0]
+    # 가장 최신 (i=4, kind="STRONG단저", score=4.0) 이 [0]
     assert m.mr_history[0].score == 4.0
     assert m.mr_history[2].score == 2.0
 

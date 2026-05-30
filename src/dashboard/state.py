@@ -66,13 +66,14 @@ class LeaderState(str, Enum):
 
 @dataclass
 class MrHistoryEntry:
-    """단저단고 시그널 발화 이력 한 건 (카드 히스토리 섹션용).
+    """히스토리 한 건 — STRONG 단저(강망치 매수신호) / 청산(trailing) 시그널.
 
-    매 tick 에서 mr_sigB OR mr_sigS 발화 시 MonitoredStock.push_mr_event() 가 prepend.
-    최대 3개 FIFO. 같은 kind 연속 발화는 score/reason 만 갱신 (중복 노이즈 회피).
+    매 tick 에서 STRONG 단저 발화 또는 청산 시그널(trailing -1% 도달) 시
+    MonitoredStock.push_mr_event() 가 prepend. 최대 3개 FIFO. 같은 kind 연속
+    발화는 score/reason 만 갱신 (중복 노이즈 회피).
     """
     ts: datetime
-    kind: str              # "단저" (sigB) | "단고" (sigS)
+    kind: str              # "STRONG단저" (강망치 매수신호) | "청산" (trailing -1% 도달)
     score: float
     reason: str | None = None
 
@@ -106,30 +107,30 @@ class MonitoredStock:
     setup_score_breakout: float | None = None
     setup_score_pullback: float | None = None
     setup_chase_warning: bool = False
-    # 단저단고 시그널 v11 (2026-05-29 — score_buy / score_sell 분리).
-    # v10b score (매수 한정 weight) 의 결함 — 단저/단고 별 weight 정통 분리.
-    # 7일 검증 AUC: 단저 0.879 / 단고 0.887.
+    # 단저 시그널 (v4 강망치, 2026-05-30) — sigB = 강망치 swing 저점 매수신호.
     mr_sigB: bool = False
+    mr_reason: str | None = None  # 발화 사유 (강망치 진폭)
+    mr_score: float = 0.0          # = mr_score_buy (호환)
+    mr_grade: str = "NEUTRAL"      # = mr_grade_buy (호환)
+    mr_score_buy: float = 0.0      # 강망치 swing 진폭(%)
+    mr_grade_buy: str = "NEUTRAL"  # 강망치 발화 시 STRONG
+    # (단고 폐기 2026-05-30 — 미사용. tick_log 컬럼 호환 위해 필드만 유지, worker 안 채움.)
     mr_sigS: bool = False
-    mr_reason: str | None = None  # 발화 사유 + score breakdown
-    # v11 score (0~1) 별도, v10b mr_score 는 호환성 위해 mr_score_buy 와 동일하게 유지.
-    mr_score: float = 0.0          # = mr_score_buy (v10b 호환)
-    mr_grade: str = "NEUTRAL"      # = mr_grade_buy (v10b 호환)
-    mr_score_buy: float = 0.0      # v11 단저 score (≥0.745 = STRONG)
-    mr_grade_buy: str = "NEUTRAL"
-    mr_score_sell: float = 0.0     # v11 단고 score (≥0.666 = STRONG)
+    mr_score_sell: float = 0.0
     mr_grade_sell: str = "NEUTRAL"
-    # 종목별 손절 임계 (v11.3, 2026-05-29) — per-stock 학습 시 다양함 (-1% ~ -7%).
-    # cold-start = JSON default (~-4%). 카드/PWA 에 표시 + 사용자 매매 참고.
-    stop_loss_pct: float = -2.0    # 기본 -2% (Buy.Score 호환). _load 시 갱신
+    # 청산 시그널 (v4, 2026-05-30) — 추적 고점 대비 trailing -1% 도달 (보유/감시 무관 표시).
+    holding_peak: float | None = None   # 추적 고점 (보유=max(매수가,현재가)/감시=현재가 시작)
+    exit_signal: bool = False           # 청산 시그널 발화 (trailing -1% 도달, 매 tick). 푸시는 보유만
+    # trailing 손절가 (v4) — 보유: max(매수가, 보유고점)×(1+MR_TRAIL_PCT). 카드/PWA 표시.
+    stop_loss_pct: float = -1.0    # trailing 폭 (MR_TRAIL_PCT, 기본 -1%)
     # 단저단고 surface 룰 (2026-05-29). 자동 surface 종목의 역할 + 소속 섹터.
     sector_role: str | None = None          # "leader" | "candidate" | None
     sector_rank: int | None = None          # 1=주도섹터 / 2=2위 / 3=3위 (카드 라벨 분기)
     surface_sector_name: str | None = None  # 첫 출현 주도섹터명 (카드 테마 라인용)
     # 단저단고 발화 이력 (최대 3개 FIFO, prepend = 최신이 [0]).
     mr_history: list[MrHistoryEntry] = field(default_factory=list)
-    # 단저단고 STRONG 푸시 알림 추적 — 마지막 push 한 kind ("단저" / "단고" / None).
-    # 같은 kind 연속 발화 시 중복 push 방지. STRONG 영역 벗어나면 None 으로 reset.
+    # 푸시 알림 추적 — 마지막 push 한 kind ("STRONG단저" / "청산" / None).
+    # 같은 kind 연속 발화 시 중복 push 방지. 발화 영역 벗어나면 None 으로 reset.
     mr_alert_kind: str | None = None
     # 시장 폭(breadth) — 국면 게이지 (P2-7). tick 마다 동일값 (시장 레벨).
     market_breadth_up_frac: float | None = None
@@ -165,7 +166,7 @@ class MonitoredStock:
         같은 kind 가 직전에 연속 발화한 경우 새 entry 추가 X, score/reason 만 갱신.
         kind 가 바뀐 첫 발화일 때만 prepend. 결과: 히스토리는 항상 최신순.
         """
-        if kind not in ("단저", "단고"):
+        if kind not in ("STRONG단저", "청산"):
             return
         if self.mr_history and self.mr_history[0].kind == kind:
             # 연속 발화 — score/reason 만 갱신 (시각도 최신으로)

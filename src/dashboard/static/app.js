@@ -169,30 +169,32 @@
 
     const actions = buildActionButtons(payload);
 
-    // v11.3 종목별 손절가 표시 (2026-05-29) — 보유 모드는 실제 손절가, 감시 모드는 진입 시 예상 손절.
+    // trailing 손절가 (v4, 2026-05-30) — 보유 = 보유중 고점 대비 trailing / 감시 = 진입 후 예상.
     let stopLossLine = "";
     const stopPct = payload.stop_loss_pct;
     if (typeof stopPct === "number") {
       if (holding && typeof holding.entry_price === "number") {
-        const stopPrice = Math.floor(holding.entry_price * (1 + stopPct / 100));
-        stopLossLine = `<div class="text-rose-300">💥 손절가: <span class="font-semibold">${fmtNum(stopPrice)}</span>원 (${stopPct.toFixed(1)}%, 매수가 대비)</div>`;
+        const base = (typeof payload.holding_peak === "number" && payload.holding_peak)
+          ? payload.holding_peak : holding.entry_price;
+        const stopPrice = Math.floor(base * (1 + stopPct / 100));
+        stopLossLine = `<div class="text-rose-300">💥 trailing 손절가: <span class="font-semibold">${fmtNum(stopPrice)}</span>원 (고점 대비 ${stopPct.toFixed(1)}%)</div>`;
       } else {
-        stopLossLine = `<div class="text-slate-400">💥 진입 시 손절: <span class="text-rose-300 font-semibold">${stopPct.toFixed(1)}%</span> <span class="text-[10px]">(종목별 v11.3)</span></div>`;
+        stopLossLine = `<div class="text-slate-400">💥 진입 후 trailing <span class="text-rose-300 font-semibold">${stopPct.toFixed(1)}%</span></div>`;
       }
     }
 
-    // 단저단고 히스토리 (옛 Exit.Triggers 자리) — 최대 3개 최신순.
+    // 단저/청산 히스토리 (v4, 2026-05-30) — STRONG 단저 + 청산 발화 이력. 최대 3개 최신순.
     let historyBlock = "";
     if (mrHistory.length) {
       const html = mrHistory.map((h) => {
         const tsLabel = h.ts ? new Date(h.ts).toLocaleTimeString("ko-KR", { hour12: false }) : "--:--:--";
-        const emoji = h.kind === "단저" ? "🟢" : "🔴";
-        const cls = h.kind === "단저" ? "text-emerald-300" : "text-rose-300";
+        const emoji = h.kind === "STRONG단저" ? "🟢" : "🔴";
+        const cls = h.kind === "STRONG단저" ? "text-emerald-300" : "text-rose-300";
         const score = (typeof h.score === "number") ? h.score.toFixed(1) : "—";
         const reason = h.reason ? escapeHtml(h.reason).slice(0, 60) : "—";
-        return `<div class="${cls}">${tsLabel} ${emoji} ${h.kind} <span class="font-semibold">score ${score}</span> <span class="text-slate-400">${reason}</span></div>`;
+        return `<div class="${cls}">${tsLabel} ${emoji} ${h.kind} <span class="font-semibold">${score}</span> <span class="text-slate-400">${reason}</span></div>`;
       }).join("");
-      historyBlock = `<div class="mt-1 pt-1 border-t border-slate-700"><div class="text-slate-500 text-[10px]">─ 단저단고 히스토리 ─</div>${html}</div>`;
+      historyBlock = `<div class="mt-1 pt-1 border-t border-slate-700"><div class="text-slate-500 text-[10px]">─ 단저/청산 히스토리 ─</div>${html}</div>`;
     }
 
     // Transition (a1 카드에 a2 부상 후보 표시)
@@ -259,31 +261,23 @@
       return `<div class="text-slate-400">수급${headerSuffix}: 외인 ${fmtSignedBillion(fv)}${paren(dfv, fmtSignedBillion)} / 기관 ${fmtSignedBillion(iv)}${paren(div_, fmtSignedBillion)} / 프로그램 ${fmtSignedShares(pq)}${paren(dpq, fmtSignedShares)}</div>`;
     })();
 
-    // 단저단고 v11 (2026-05-29) — score_buy/sell 분리. 양쪽 모두 표시.
+    // 강망치 단저 + 청산 (v4, 2026-05-30) — 단고 폐기. STRONG 단저 발화 또는 청산만 표시.
     const mrLine = (() => {
       if (!mr) return "";
-      // 단저
       const gBuy = mr.grade_buy || mr.grade || "NEUTRAL";
-      const scBuy = (typeof mr.score_buy === "number") ? mr.score_buy.toFixed(2)
-                  : ((typeof mr.score === "number") ? mr.score.toFixed(2) : "—");
-      const emBuy = gBuy === "STRONG" ? "🟢" : gBuy === "WATCH" ? "🟡" : "⚫";
-      const clsBuy = gradeClass(gBuy);
-      // 단고
-      const gSell = mr.grade_sell || "NEUTRAL";
-      const scSell = (typeof mr.score_sell === "number") ? mr.score_sell.toFixed(2) : "—";
-      const emSell = gSell === "STRONG" ? "🟢" : gSell === "WATCH" ? "🟡" : "⚫";
-      const clsSell = gradeClass(gSell);
-      // 발화 마크
-      let sig = "";
-      if (mr.sigB) sig += ' <span class="text-emerald-300 font-bold">🟢 단저↑</span>';
-      if (mr.sigS) sig += ' <span class="text-rose-300 font-bold">🔴 단고↑</span>';
-      const reason = mr.reason ? `<div class="text-slate-400 text-[10px]">— ${escapeHtml(mr.reason)}</div>` : "";
-      return `<div>
-        <span class="text-slate-400">단저</span> <span class="${clsBuy} font-semibold">${emBuy}${gBuy} ${scBuy}</span>
-        <span class="text-slate-500 mx-1">/</span>
-        <span class="text-slate-400">단고</span> <span class="${clsSell} font-semibold">${emSell}${gSell} ${scSell}</span>
-        ${sig}
-      </div>${reason}`;
+      const parts = [];
+      if (mr.sigB && gBuy === "STRONG") {
+        const sc = (typeof mr.score_buy === "number") ? mr.score_buy.toFixed(2)
+                 : ((typeof mr.score === "number") ? mr.score.toFixed(2) : "—");
+        parts.push(`<span class="text-emerald-300 font-bold">🟢 STRONG 단저 (강망치 진폭 ${sc}%)</span>`);
+      }
+      if (mr.exit_signal) {
+        parts.push('<span class="text-rose-300 font-bold">🔴 청산 시그널 (trailing)</span>');
+      }
+      if (!parts.length) return "";
+      const reason = (mr.reason && mr.sigB && gBuy === "STRONG")
+        ? `<div class="text-slate-400 text-[10px]">— ${escapeHtml(mr.reason)}</div>` : "";
+      return `<div>${parts.join(' <span class="text-slate-500 mx-1">/</span> ')}</div>${reason}`;
     })();
 
     el.innerHTML = `

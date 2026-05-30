@@ -361,24 +361,25 @@ def _maybe_push_mr_strong_alert(
     now: datetime,
     token: str,
     chat_id: str,
+    is_held: bool = False,
 ) -> None:
-    """단저단고 STRONG 푸시 알림 — kind 변경/재진입 시 1회 send (2026-05-29).
+    """푸시 알림 — STRONG 단저(강망치 매수신호) + 청산 시그널 (v4, 2026-05-30).
 
-    v11 (2026-05-29) — score_buy/sell 분리 후 정통 가드 적용:
-        - 단저: mr_grade_buy == "STRONG" AND mr_sigB
-        - 단고: mr_grade_sell == "STRONG" AND mr_sigS
+    가드:
+        - 청산: exit_signal AND is_held (보유 종목 trailing 도달만 push). 우선.
+          감시 모드 청산은 카드에만 표시, push X (노이즈/폭주 방지).
+        - STRONG 단저: mr_grade_buy == "STRONG" AND mr_sigB (강망치 매수신호).
 
     동일 kind 연속은 1회만 (mr_alert_kind 추적). kind 가 바뀌었거나 발화 영역에서
-    벗어났다 재진입 시 재 push. /on /off 무관 (paused 일 때도 push).
+    벗어났다 재진입 시 재 push. /on /off 무관 (paused 일 때도 push). 단고 폐기.
     """
     g_buy = getattr(monitored, "mr_grade_buy", "NEUTRAL")
-    g_sell = getattr(monitored, "mr_grade_sell", "NEUTRAL")
-    if monitored.mr_sigS and g_sell == "STRONG":
-        new_kind = "단고"
+    if is_held and getattr(monitored, "exit_signal", False):
+        new_kind = "청산"
     elif monitored.mr_sigB and g_buy == "STRONG":
-        new_kind = "단저"
+        new_kind = "STRONG단저"
     else:
-        # 발화 X 또는 STRONG 미달 — alert 추적 reset (재진입 시 push 가능)
+        # 발화 X — alert 추적 reset (재진입 시 push 가능)
         monitored.mr_alert_kind = None
         return
 
@@ -398,25 +399,29 @@ def _maybe_push_mr_strong_alert(
     else:
         source_label = "💎 보유"
     sector_str = monitored.surface_sector_name or " / ".join(monitored.themes) or "—"
-    kind_emoji = "🟢" if new_kind == "단저" else "🔴"
     reason = monitored.mr_reason or "—"
     ts_label = now.strftime("%H:%M:%S")
-    # v11 — kind 별 score 표시
-    if new_kind == "단저":
-        score_val = getattr(monitored, "mr_score_buy", 0.0)
+    if new_kind == "청산":
+        _peak = int(getattr(monitored, "holding_peak", 0) or 0)
+        text = (
+            f"🚨 청산 시그널 — {source_label}\n"
+            f"{name} ({monitored.code})\n"
+            f"🔴 trailing 도달 (고점 {_peak:,}원 대비 하락)\n"
+            f"테마: {sector_str} | {ts_label}"
+        )
     else:
-        score_val = getattr(monitored, "mr_score_sell", 0.0)
-    text = (
-        f"🚨 단저단고 STRONG — {source_label}\n"
-        f"{name} ({monitored.code})\n"
-        f"{kind_emoji} {new_kind} score {score_val:.2f} — {reason}\n"
-        f"테마: {sector_str} | {ts_label}"
-    )
+        score_val = getattr(monitored, "mr_score_buy", 0.0)
+        text = (
+            f"🚨 STRONG 단저 매수신호 — {source_label}\n"
+            f"{name} ({monitored.code})\n"
+            f"🟢 강망치 swing 저점 진폭 {score_val:.2f}% — {reason}\n"
+            f"테마: {sector_str} | {ts_label}"
+        )
     try:
         send_message_single(token, chat_id, text, parse_mode=None)
         monitored.mr_alert_kind = new_kind
     except Exception as e:
-        logger.warning(f"{monitored.code} 단저단고 STRONG push 실패: {e}")
+        logger.warning(f"{monitored.code} 푸시 실패: {e}")
 
 
 def dashboard_tick(
@@ -985,31 +990,49 @@ def dashboard_tick(
             mr_b, mr_s, mr_r, sc_buy, g_buy, sc_sell, g_sell = (
                 False, False, None, 0.0, "NEUTRAL", 0.0, "NEUTRAL"
             )
+        # 강망치 단저 (v4, 2026-05-30) — sigB 발화 = STRONG 매수신호. 단고 폐기.
         monitored.mr_sigB = mr_b
-        monitored.mr_sigS = mr_s
         monitored.mr_reason = mr_r
         monitored.mr_score_buy = sc_buy
         monitored.mr_grade_buy = g_buy
-        monitored.mr_score_sell = sc_sell
-        monitored.mr_grade_sell = g_sell
-        # v10b 호환 (legacy)
         monitored.mr_score = sc_buy
         monitored.mr_grade = g_buy
-        # v11.3 (2026-05-29) — 종목별 손절 임계 (카드/PWA 표시 + 매매 참고)
-        from src.scalping.signals.weighted_score import get_stop_loss_pct
-        monitored.stop_loss_pct = get_stop_loss_pct(code)
-        # 단저단고 히스토리 (2026-05-29) — sigB/sigS 발화 시 카드 히스토리 섹션용 push.
-        # 연속 동일 kind 는 score/reason 만 갱신 (FIFO 3 max).
-        if mr_b:
-            monitored.push_mr_event(now, "단저", float(mr_score), mr_r)
-        if mr_s:
-            monitored.push_mr_event(now, "단고", float(mr_score), mr_r)
+        # (mr_sigS / mr_grade_sell 은 default False/NEUTRAL 유지 — 단고 폐기, tick_log 호환)
 
-        # 단저단고 STRONG 푸시 알림 (2026-05-29) — /on/off 와 무관, 자동 6종+수동+보유만.
-        # 같은 kind 연속 발화는 1회만 push. STRONG 벗어났다 재진입 시 재 push.
-        # MR_STRONG_ALERT=0 으로 끌 수 있음 (default ON).
+        # 청산 시그널 (v4) — 추적 고점 대비 trailing -MR_TRAIL_PCT% 도달.
+        # 보유/감시 무관 추적 (감시 모드도 "고점 꺾임=청산 타이밍" 참고용 표시).
+        # holding_peak = 보유면 max(매수가, 현재가) 시작 / 감시면 현재가 시작, 이후 max.
+        from src.scalping.signals.mean_reversion import MR_TRAIL_PCT
+        monitored.stop_loss_pct = -abs(MR_TRAIL_PCT)  # 카드/PWA 손절 표시 (trailing 폭)
+        _price = snap_row.get("price") if snap_row else None
+        if _price:
+            cur = float(_price)
+            entry_px = float(getattr(holding, "entry_price", 0) or 0) if holding is not None else 0.0
+            base = max(entry_px, cur)
+            monitored.holding_peak = base if monitored.holding_peak is None \
+                else max(monitored.holding_peak, cur)
+            trail_stop = monitored.holding_peak * (1 - abs(MR_TRAIL_PCT) / 100)
+            monitored.exit_signal = cur <= trail_stop
+        else:
+            monitored.holding_peak = None
+            monitored.exit_signal = False
+
+        # 히스토리 (FIFO 3) — STRONG 단저(강망치 매수신호) + 청산(trailing) 시그널.
+        if mr_b and g_buy == "STRONG":
+            monitored.push_mr_event(now, "STRONG단저", float(sc_buy), mr_r)
+        if monitored.exit_signal:
+            _peak = int(monitored.holding_peak or 0)
+            monitored.push_mr_event(
+                now, "청산", abs(MR_TRAIL_PCT),
+                f"trailing -{abs(MR_TRAIL_PCT):.1f}% (고점 {_peak:,}원)",
+            )
+
+        # 푸시 알림 — STRONG 단저 + 청산 시그널 (단고 폐기). /on/off 무관.
+        # 같은 kind 연속 발화는 1회만. MR_STRONG_ALERT=0 으로 끌 수 있음 (default ON).
         if os.getenv("MR_STRONG_ALERT", "1") == "1" and token and chat_id:
-            _maybe_push_mr_strong_alert(monitored, now, token, chat_id)
+            _maybe_push_mr_strong_alert(
+                monitored, now, token, chat_id, is_held=(holding is not None),
+            )
 
         if tick_breadth:
             monitored.market_breadth_up_frac = tick_breadth["breadth_up_frac"]

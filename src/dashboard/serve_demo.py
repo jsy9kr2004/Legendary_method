@@ -112,26 +112,33 @@ def _build_demo_payload(monitored: MonitoredStock, holding: Any = None) -> dict:
         "elapsed_sec": random.randint(15, 280),
     }
 
-    # 단저단고 v10b mock — 운영 worker.analyze_minute_bars 가 채우는 필드.
-    # build_monitor_payload 가 monitored.mr_* 를 읽으므로 여기서 세팅.
-    mr_score = round(random.uniform(-1.0, 3.0), 1)
-    if mr_score >= 2.0:
-        monitored.mr_grade = "STRONG"
-    elif mr_score >= 1.0:
-        monitored.mr_grade = "WATCH"
-    else:
-        monitored.mr_grade = "NEUTRAL"
-    monitored.mr_score = mr_score
-    sig_b = (mr_score >= 2.0 and random.random() < 0.3)
-    sig_s = (mr_score < 0 and random.random() < 0.2)
+    # 강망치 단저 + 청산 mock (v4, 2026-05-30) — 운영 worker 가 채우는 필드.
+    # build_monitor_payload 가 monitored.mr_* 를 읽으므로 여기서 세팅 (동일 path).
+    amp = round(random.uniform(0.5, 2.5), 2)
+    sig_b = random.random() < 0.25  # 강망치 STRONG 단저 발화
     monitored.mr_sigB = sig_b
-    monitored.mr_sigS = sig_s
-    monitored.mr_reason = "atr_low +1.0 / at_support +0.6 / touch_high +0.4" if mr_score >= 1.0 else None
-    # 단저단고 히스토리 mock — sigB/sigS 발화 시 push.
+    monitored.mr_grade_buy = "STRONG" if sig_b else "NEUTRAL"
+    monitored.mr_grade = monitored.mr_grade_buy
+    monitored.mr_score_buy = amp if sig_b else 0.0
+    monitored.mr_score = monitored.mr_score_buy
+    monitored.mr_reason = (
+        f"강망치 단저 swing-low 진폭 {amp:.2f}% (STRONG)" if sig_b else None
+    )
+    monitored.stop_loss_pct = -1.0  # trailing 폭 (운영 = -abs(MR_TRAIL_PCT))
+    # 청산 시그널 mock — 일부 종목 trailing 도달 (보유 가정)
+    exit_sig = random.random() < 0.15
+    monitored.exit_signal = exit_sig
+    if exit_sig:
+        _px = snapshot_row.get("price", 0) or 0
+        monitored.holding_peak = int(_px * 1.012)  # 고점이 현재가보다 위 → 하락 = 청산
+    # 히스토리 mock — STRONG 단저 / 청산 발화 시 push.
     if sig_b:
-        monitored.push_mr_event(now_kst(), "단저", mr_score, monitored.mr_reason)
-    if sig_s:
-        monitored.push_mr_event(now_kst(), "단고", mr_score, monitored.mr_reason)
+        monitored.push_mr_event(now_kst(), "STRONG단저", amp, monitored.mr_reason)
+    if exit_sig:
+        monitored.push_mr_event(
+            now_kst(), "청산", 1.0,
+            f"trailing -1.0% (고점 {monitored.holding_peak:,}원)",
+        )
 
     return build_monitor_payload(
         monitored=monitored,
