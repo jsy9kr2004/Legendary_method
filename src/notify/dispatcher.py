@@ -44,22 +44,39 @@ class Dispatcher:
         self,
         text: str,
         parse_mode: str | None = "Markdown",
+        chat_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """텔레그램 메시지 발송.
+
+        chat_id 미지정 시 알림 방(telegram_chat_id)으로. 정기 스케줄 레포트는
+        send_morning/periodic/decision/afterhours 가 _report_target() 을 넘겨
+        레포트 방으로 보낸다.
 
         DRY_RUN이면 로그만 출력.
         """
         if self._s.dry_run:
             logger.info(f"[DRY_RUN] 텔레그램 발송 스킵 ({len(text)}자):\n{text[:200]}...")
             return [{"ok": True, "dry_run": True}]
-        # 종배 레포트는 전용 그룹(telegram_eod_chat_id)으로 — 비면 개인 DM fallback.
-        # 단타 M6 카드(worker 직접 발송)/봇 명령/에러알림은 telegram_chat_id 유지.
-        target = self._s.telegram_eod_chat_id or self._s.telegram_chat_id
+        # 기본 대상 = 알림 방(telegram_chat_id). 즉시 이벤트(상한가/청산지원/막판점검)/
+        # 봇 명령/에러알림. 단타 M6 카드 + STRONG 푸시는 worker 가 telegram_chat_id 로 직접 발송.
+        target = chat_id or self._s.telegram_chat_id
         return send_message(
             self._s.telegram_bot_token,
             target,
             text,
             parse_mode=parse_mode,
+        )
+
+    def _report_target(self) -> str:
+        """정기 스케줄 레포트(모닝/정기/결정/사후) 발송 대상.
+
+        레포트 방(telegram_report_chat_id) 우선 → (하위호환) 종배 그룹
+        (telegram_eod_chat_id) → 알림 방(telegram_chat_id). 모두 비면 한 방으로.
+        """
+        return (
+            self._s.telegram_report_chat_id
+            or self._s.telegram_eod_chat_id
+            or self._s.telegram_chat_id
         )
 
     def telegram_error(self, error_msg: str, context: str = "") -> dict[str, Any]:
@@ -106,29 +123,30 @@ class Dispatcher:
     # ── 레포트별 발송 편의 메서드 ───────────────────────────────────────────
 
     def send_morning(self, report: str) -> None:
-        """모닝 레포트 발송 (텔레그램)."""
-        results = self.telegram(report)
+        """모닝 레포트 발송 (텔레그램, 레포트 방)."""
+        results = self.telegram(report, chat_id=self._report_target())
         _log_results("모닝", results)
 
     def send_periodic(self, report: str, label: str = "추적") -> None:
-        """정기 추적 레포트 발송 (텔레그램)."""
-        results = self.telegram(report)
+        """정기 추적 레포트 발송 (텔레그램, 레포트 방)."""
+        results = self.telegram(report, chat_id=self._report_target())
         _log_results(label, results)
 
     def send_decision(self, report_parts: list[str]) -> None:
-        """결정 레포트 발송 (텔레그램, 여러 메시지 가능)."""
+        """결정 레포트 발송 (텔레그램, 레포트 방, 여러 메시지 가능)."""
+        target = self._report_target()
         for i, part in enumerate(report_parts, 1):
-            results = self.telegram(part)
+            results = self.telegram(part, chat_id=target)
             _log_results(f"결정({i}/{len(report_parts)})", results)
 
     def send_limit_up_event(self, alert: str) -> None:
-        """상한가 이벤트 알림 발송 (텔레그램)."""
+        """상한가 이벤트 알림 발송 (텔레그램, 알림 방 — 즉시 이벤트)."""
         results = self.telegram(alert)
         _log_results("상한가", results)
 
     def send_afterhours(self, report: str) -> None:
-        """사후 레포트 발송 (텔레그램, 4096자 초과 시 자동 분할)."""
-        results = self.telegram(report)
+        """사후 레포트 발송 (텔레그램, 레포트 방, 4096자 초과 시 자동 분할)."""
+        results = self.telegram(report, chat_id=self._report_target())
         _log_results("사후", results)
 
     def send_eod_entry(self, report: str) -> None:

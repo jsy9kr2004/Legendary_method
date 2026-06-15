@@ -88,6 +88,14 @@ class Settings:
     # 단타 M6 카드 + 봇 명령 + 에러알림은 telegram_chat_id(개인 DM) 유지 → 단타 미노출.
     telegram_eod_chat_id: str = ""
 
+    # 레포트 방 / 알림 방 분리 (2026-06-15). 비면 telegram_eod_chat_id → telegram_chat_id 로
+    # fallback. 설정 시 **정기 스케줄 레포트만** (모닝 09:30 / 정기추적 11·13·14 / 결정
+    # 14:50 / 사후 16:00) 이 방으로 간다. 즉시 이벤트성 알림 — 상한가 진입 / 단저단고
+    # STRONG 푸시(worker 직접 발송) / 종배 청산지원·막판점검 / 에러알림 / 봇 명령 응답 —
+    # 은 telegram_chat_id(알림 방) 유지. 사용자가 "읽을거리 레포트" 와 "즉시 행동 알림"
+    # 을 다른 방에서 보고 싶을 때.
+    telegram_report_chat_id: str = ""
+
     # M6 모니터링 카드 텔레그램 발송 토글. False 면 dashboard_tick 의 카드 send/
     # edit/delete 만 skip — PWA 페이로드 / KIS fetch / 명령 응답 / 09:30 모닝 /
     # 11~14:00 periodic / 14:50 결정 / 16:00 사후 / 상한가 이벤트 / 09:01 시초
@@ -173,6 +181,7 @@ def load_settings() -> Settings:
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
         telegram_eod_chat_id=os.getenv("TELEGRAM_EOD_CHAT_ID", ""),
+        telegram_report_chat_id=os.getenv("TELEGRAM_REPORT_CHAT_ID", ""),
         monitoring_telegram_cards_enabled=_bool_env(
             "MONITORING_TELEGRAM_CARDS_ENABLED", default=True,
         ),

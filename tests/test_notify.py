@@ -64,6 +64,53 @@ def test_dispatcher_falls_back_to_main_when_no_eod(tmp_path):
     assert m.call_args.args[1] == "12345"
 
 
+def test_dispatcher_reports_go_to_report_chat(tmp_path):
+    """telegram_report_chat_id 설정 시 정기 레포트(모닝/정기/결정/사후)는 레포트 방으로."""
+    import dataclasses
+    s = dataclasses.replace(_settings(tmp_path), telegram_report_chat_id="REPORT")
+    d = Dispatcher(s)
+    for send in (
+        lambda: d.send_morning("m"),
+        lambda: d.send_periodic("p"),
+        lambda: d.send_decision(["d"]),
+        lambda: d.send_afterhours("a"),
+    ):
+        with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
+            send()
+        assert m.call_args.args[1] == "REPORT"
+
+
+def test_dispatcher_events_stay_on_alert_chat(tmp_path):
+    """레포트 방을 설정해도 즉시 이벤트성(상한가/청산지원/막판점검)은 알림 방 유지."""
+    import dataclasses
+    s = dataclasses.replace(
+        _settings(tmp_path), telegram_report_chat_id="REPORT", telegram_eod_chat_id="EOD",
+    )
+    d = Dispatcher(s)
+    for send in (
+        lambda: d.send_limit_up_event("lu"),
+        lambda: d.send_eod_entry("ee"),
+        lambda: d.send_jongbae_open_exit("oe"),
+    ):
+        with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
+            send()
+        assert m.call_args.args[1] == "12345"  # 알림 방 (telegram_chat_id)
+
+
+def test_dispatcher_report_chat_falls_back_to_eod_then_main(tmp_path):
+    """레포트 방 미설정 시 종배 그룹(하위호환) → 개인 DM 순으로 fallback."""
+    import dataclasses
+    # report 미설정 + eod 설정 → eod
+    s = dataclasses.replace(_settings(tmp_path), telegram_eod_chat_id="EOD")
+    with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
+        Dispatcher(s).send_morning("m")
+    assert m.call_args.args[1] == "EOD"
+    # 둘 다 미설정 → 개인 DM
+    with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
+        Dispatcher(_settings(tmp_path)).send_morning("m")
+    assert m.call_args.args[1] == "12345"
+
+
 def test_dispatcher_error_alert_uses_main_chat(tmp_path):
     """에러 알림은 그룹이 아니라 개인 DM(운영자) 으로."""
     import dataclasses
