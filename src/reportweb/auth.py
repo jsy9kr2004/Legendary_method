@@ -1,68 +1,67 @@
-"""HTTP Basic auth 미들웨어 — 종배 동료 공유용 공유 비밀번호.
+"""쿠키 기반 비번-only 인증 — 종배 동료 공유용.
 
-- 공유 비번 1개 (env REPORTWEB_PASSWORD). **아이디는 무시** — 동료는 브라우저 인증창의
-  아이디 칸에 아무거나(또는 공백) 넣고 비번만 입력하면 됨 (REPORTWEB_USER 는 미사용).
-- 비번 미설정이면 앱이 기동 거부 (create_app 에서 raise) — 공개 사이트가 인증 없이
-  뜨는 사고 방지 (fail-loud, CLAUDE.md).
-- /healthz, /static 은 인증 제외 (민감 데이터 없음 — 헬스체크/CSS·JS).
-- URL 비밀이 아니라 비번이 자물쇠 (Funnel 호스트네임은 CT 로그로 발견 가능).
+- 입력은 **비밀번호 한 칸** (아이디 없음). `/login` 페이지에서 비번 입력 → 검증되면
+  쿠키 발급 → 이후 자동 통과. 동료는 비번만 알면 됨.
+- 비번 미설정이면 앱이 기동 거부 (create_app 에서 raise) — 인증 없이 공개 방지
+  (fail-loud, CLAUDE.md).
+- /healthz, /static, /login 은 인증 제외. /api/* 는 미인증 시 401(JSON),
+  그 외 페이지는 /login 으로 redirect.
+- 쿠키 값 = sha256(password 파생 토큰) — 평문 비번 미저장. HTTPS(Funnel) + HttpOnly.
 """
 from __future__ import annotations
 
-import base64
-import binascii
+import hashlib
 import os
 import secrets
+from urllib.parse import quote
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse
 
-_EXEMPT_PREFIXES = ("/healthz", "/static")
-_REALM = "Jongbae Reports"
+_EXEMPT_PREFIXES = ("/healthz", "/static", "/login")
+COOKIE_NAME = "rw_auth"
+COOKIE_MAX_AGE = 30 * 24 * 3600  # 30일 — 동료 재로그인 빈도 최소화
 
 
-def get_credentials() -> tuple[str, str]:
-    """(user, password). 비번 미설정 시 ValueError — 호출자(create_app)가 기동 차단."""
+def get_password() -> str:
+    """REPORTWEB_PASSWORD. 미설정 시 ValueError — 호출자(create_app)가 기동 차단."""
     password = os.getenv("REPORTWEB_PASSWORD", "").strip()
     if not password:
         raise ValueError(
             "REPORTWEB_PASSWORD 미설정 — 인증 없이 공개될 수 없음. "
             ".env 에 REPORTWEB_PASSWORD 를 설정하세요."
         )
-    user = os.getenv("REPORTWEB_USER", "jongbae").strip() or "jongbae"
-    return user, password
+    return password
 
 
-class BasicAuthMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, user: str, password: str) -> None:
+def token_for(password: str) -> str:
+    """비번 → 쿠키 토큰 (평문 비번을 쿠키에 담지 않기 위한 파생값)."""
+    return hashlib.sha256(("rw1:" + password).encode("utf-8")).hexdigest()
+
+
+def check_password(candidate: str, password: str) -> bool:
+    """타이밍 안전 비번 비교."""
+    return secrets.compare_digest(candidate, password)
+
+
+class CookieAuthMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, password: str) -> None:
         super().__init__(app)
-        self._user = user
-        self._password = password
-
-    def _unauthorized(self) -> Response:
-        return PlainTextResponse(
-            "인증 필요",
-            status_code=401,
-            headers={"WWW-Authenticate": f'Basic realm="{_REALM}", charset="UTF-8"'},
-        )
+        self._token = token_for(password)
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path.startswith(_EXEMPT_PREFIXES):
             return await call_next(request)
 
-        header = request.headers.get("Authorization", "")
-        if not header.startswith("Basic "):
-            return self._unauthorized()
-        try:
-            decoded = base64.b64decode(header[6:]).decode("utf-8")
-            user, _, password = decoded.partition(":")
-        except (binascii.Error, UnicodeDecodeError):
-            return self._unauthorized()
+        cookie = request.cookies.get(COOKIE_NAME, "")
+        if cookie and secrets.compare_digest(cookie, self._token):
+            return await call_next(request)
 
-        # 비번만 검증 (아이디는 무시 — 동료는 아이디 칸에 아무거나 넣고 비번만 공유).
-        # user 변수는 파싱만 하고 사용 X.
-        if not secrets.compare_digest(password, self._password):
-            return self._unauthorized()
-
-        return await call_next(request)
+        # 미인증 — API 는 401, 페이지는 로그인으로 redirect (원래 경로 보존).
+        if request.url.path.startswith("/api/"):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        nxt = request.url.path
+        if request.url.query:
+            nxt += "?" + request.url.query
+        return RedirectResponse(url=f"/login?next={quote(nxt, safe='')}", status_code=302)

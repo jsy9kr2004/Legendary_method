@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}로그인 · 종배 레포트{% endblock %}
+
+{% block content %}
+<section class="login">
+  <h1>종배 레포트</h1>
+  <p class="muted">비밀번호를 입력하세요</p>
+  <form method="post" action="/login" autocomplete="on">
+    <input type="hidden" name="next" value="{{ next }}">
+    <input type="password" name="password" placeholder="비밀번호"
+           autofocus autocomplete="current-password" aria-label="비밀번호">
+    <button type="submit">들어가기</button>
+    {% if error %}<p class="login-err">비밀번호가 틀렸습니다.</p>{% endif %}
+  </form>
+</section>
+{% endblock %}

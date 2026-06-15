@@ -19,7 +19,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from src.reportweb import data as D
-from src.reportweb.auth import BasicAuthMiddleware, get_credentials
+from src.reportweb.auth import (
+    COOKIE_MAX_AGE,
+    COOKIE_NAME,
+    CookieAuthMiddleware,
+    check_password,
+    get_password,
+    token_for,
+)
 from src.reportweb.render import build_decision_context, md_to_html
 
 _HERE = Path(__file__).resolve().parent
@@ -29,12 +36,16 @@ _STATIC = _HERE / "static"
 
 def create_app(data_dir: Path) -> FastAPI:
     """레포트 웹 앱 생성. REPORTWEB_PASSWORD 미설정 시 ValueError (기동 차단)."""
-    user, password = get_credentials()  # fail-loud
+    password = get_password()  # fail-loud
 
     app = FastAPI(title="종배 레포트", docs_url=None, redoc_url=None)
-    app.add_middleware(BasicAuthMiddleware, user=user, password=password)
+    app.add_middleware(CookieAuthMiddleware, password=password)
     app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
     templates = Jinja2Templates(directory=str(_TEMPLATES))
+
+    def _safe_next(nxt: str) -> str:
+        """오픈 redirect 방지 — 사이트 내부 경로만 허용."""
+        return nxt if (nxt.startswith("/") and not nxt.startswith("//")) else "/"
 
     def _not_found(request: Request, msg: str) -> HTMLResponse:
         return templates.TemplateResponse(
@@ -46,6 +57,30 @@ def create_app(data_dir: Path) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> JSONResponse:
         return JSONResponse({"ok": True})
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request, next: str = "/"):
+        return templates.TemplateResponse(
+            request, "login.html", {"next": _safe_next(next), "error": False}
+        )
+
+    @app.post("/login")
+    async def login_submit(request: Request):
+        # urlencoded 바디 직접 파싱 (python-multipart 의존성 회피).
+        from urllib.parse import parse_qs
+        body = (await request.body()).decode("utf-8")
+        form = parse_qs(body)
+        nxt = _safe_next(form.get("next", ["/"])[0])
+        if check_password(form.get("password", [""])[0], password):
+            resp = RedirectResponse(url=nxt, status_code=302)
+            resp.set_cookie(
+                COOKIE_NAME, token_for(password),
+                max_age=COOKIE_MAX_AGE, httponly=True, samesite="lax", path="/",
+            )
+            return resp
+        return templates.TemplateResponse(
+            request, "login.html", {"next": nxt, "error": True}, status_code=401
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request):

@@ -1,7 +1,6 @@
 """종배 레포트 웹사이트 테스트. 실제 파일 I/O 는 tmp_path, 외부 네트워크 없음."""
 from __future__ import annotations
 
-import base64
 import json
 from datetime import datetime
 
@@ -136,17 +135,28 @@ def test_md_to_html_tables():
 
 # ── app (라우트 + 인증) ──────────────────────────────────────────────────────
 
+def _make_app(data_dir):
+    from src.reportweb.app import create_app
+    return create_app(data_dir)
+
+
+@pytest.fixture
+def anon(data_dir, monkeypatch):
+    """미인증 클라이언트 (쿠키 없음)."""
+    monkeypatch.setenv("REPORTWEB_PASSWORD", "secret")
+    from fastapi.testclient import TestClient
+    return TestClient(_make_app(data_dir))
+
+
 @pytest.fixture
 def client(data_dir, monkeypatch):
+    """인증 쿠키가 세팅된 클라이언트."""
     monkeypatch.setenv("REPORTWEB_PASSWORD", "secret")
-    monkeypatch.setenv("REPORTWEB_USER", "jongbae")
     from fastapi.testclient import TestClient
-    from src.reportweb.app import create_app
-    return TestClient(create_app(data_dir))
-
-
-def _auth(user="jongbae", pw="secret"):
-    return {"Authorization": "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()}
+    from src.reportweb.auth import COOKIE_NAME, token_for
+    c = TestClient(_make_app(data_dir))
+    c.cookies.set(COOKIE_NAME, token_for("secret"))
+    return c
 
 
 def test_create_app_requires_password(data_dir, monkeypatch):
@@ -156,39 +166,55 @@ def test_create_app_requires_password(data_dir, monkeypatch):
         create_app(data_dir)
 
 
-def test_auth_required(client):
-    assert client.get("/d/2026-06-15/decision").status_code == 401
-    assert client.get("/d/2026-06-15/decision", headers=_auth(pw="wrong")).status_code == 401
-    assert client.get("/healthz").status_code == 200  # 인증 제외
+def test_unauthed_redirects_to_login(anon):
+    # 페이지는 /login 으로 redirect, API 는 401, 제외 경로는 통과.
+    r = anon.get("/d/2026-06-15/decision", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"].startswith("/login")
+    assert anon.get("/api/d/2026-06-15/status", follow_redirects=False).status_code == 401
+    assert anon.get("/healthz").status_code == 200
+    assert anon.get("/login").status_code == 200  # 로그인 페이지 자체는 접근 가능
 
 
-def test_auth_password_only_ignores_username(client):
-    """아이디는 무시 — 비번만 맞으면 통과 (아이디 임의/공백)."""
-    assert client.get("/d/2026-06-15/decision", headers=_auth(user="아무거나")).status_code == 200
-    assert client.get("/d/2026-06-15/decision", headers=_auth(user="")).status_code == 200
-    # 비번 틀리면 아이디 맞아도 거부
-    assert client.get("/d/2026-06-15/decision", headers=_auth(user="jongbae", pw="x")).status_code == 401
+def test_login_flow(anon):
+    # 비번 틀리면 401 + 에러 메시지, 맞으면 302 + 쿠키 발급 → 이후 접근 가능.
+    bad = anon.post("/login", data={"password": "wrong", "next": "/"}, follow_redirects=False)
+    assert bad.status_code == 401 and "틀렸" in bad.text
+
+    ok = anon.post("/login", data={"password": "secret", "next": "/d/2026-06-15/decision"},
+                   follow_redirects=False)
+    assert ok.status_code == 302 and ok.headers["location"] == "/d/2026-06-15/decision"
+    from src.reportweb.auth import COOKIE_NAME
+    assert COOKIE_NAME in ok.cookies  # Set-Cookie 발급
+    # 쿠키 보유 상태(anon 클라이언트가 자동 보관)로 보호 페이지 접근 OK
+    assert anon.get("/d/2026-06-15/decision").status_code == 200
+
+
+def test_login_only_password_field(anon):
+    """로그인 페이지는 비번 입력 1개 — 아이디 필드 없음."""
+    html = anon.get("/login").text
+    assert html.count('type="password"') == 1
+    assert 'name="username"' not in html and 'type="text"' not in html
 
 
 def test_decision_page(client):
-    r = client.get("/d/2026-06-15/decision", headers=_auth())
+    r = client.get("/d/2026-06-15/decision")
     assert r.status_code == 200
     for n in ["제룡전기", "종배 후보", "Kelly", "강세장", "전력설비", "TOP3", "전체 레포트 원문"]:
         assert n in r.text
 
 
 def test_afterhours_page_and_missing(client):
-    assert client.get("/d/2026-06-15/afterhours", headers=_auth()).status_code == 200
-    assert client.get("/d/2026-06-14/afterhours", headers=_auth()).status_code == 404  # 사후 없음
+    assert client.get("/d/2026-06-15/afterhours").status_code == 200
+    assert client.get("/d/2026-06-14/afterhours").status_code == 404  # 사후 없음
 
 
 def test_status_and_archive_and_index(client):
-    st = client.get("/api/d/2026-06-15/status", headers=_auth()).json()
+    st = client.get("/api/d/2026-06-15/status").json()
     assert st["decision"] is not None and st["afterhours"] is not None
-    assert client.get("/archive", headers=_auth()).status_code == 200
-    ix = client.get("/", headers=_auth(), follow_redirects=False)
+    assert client.get("/archive").status_code == 200
+    ix = client.get("/", follow_redirects=False)
     assert ix.status_code in (302, 307) and ix.headers["location"] == "/d/2026-06-15"
 
 
 def test_bad_date_404(client):
-    assert client.get("/d/not-a-date/decision", headers=_auth()).status_code == 404
+    assert client.get("/d/not-a-date/decision").status_code == 404
