@@ -123,29 +123,44 @@ class Dispatcher:
     # ── 레포트별 발송 편의 메서드 ───────────────────────────────────────────
 
     def send_morning(self, report: str) -> None:
-        """모닝 레포트 발송 (텔레그램, 레포트 방)."""
+        """모닝 레포트 발송 (텔레그램, 레포트 방). report_send_morning OFF 면 skip."""
+        if not self._s.report_send_morning:
+            logger.info("[모닝] 텔레그램 발송 OFF (REPORT_SEND_MORNING) — skip")
+            return
         results = self.telegram(report, chat_id=self._report_target())
         _log_results("모닝", results)
 
     def send_periodic(self, report: str, label: str = "추적") -> None:
-        """정기 추적 레포트 발송 (텔레그램, 레포트 방)."""
+        """정기 추적 레포트 발송 (텔레그램, 레포트 방). report_send_periodic OFF 면 skip."""
+        if not self._s.report_send_periodic:
+            logger.info(f"[{label}] 텔레그램 발송 OFF (REPORT_SEND_PERIODIC) — skip")
+            return
         results = self.telegram(report, chat_id=self._report_target())
         _log_results(label, results)
 
     def send_decision(self, report_parts: list[str]) -> None:
-        """결정 레포트 발송 (텔레그램, 레포트 방, 여러 메시지 가능)."""
+        """결정 레포트 발송 (텔레그램, 레포트 방, 여러 메시지 가능). report_send_decision OFF 면 skip."""
+        if not self._s.report_send_decision:
+            logger.info("[결정] 텔레그램 발송 OFF (REPORT_SEND_DECISION) — skip")
+            return
         target = self._report_target()
         for i, part in enumerate(report_parts, 1):
             results = self.telegram(part, chat_id=target)
             _log_results(f"결정({i}/{len(report_parts)})", results)
 
     def send_limit_up_event(self, alert: str) -> None:
-        """상한가 이벤트 알림 발송 (텔레그램, 알림 방 — 즉시 이벤트)."""
+        """상한가 이벤트 알림 발송 (텔레그램, 알림 방 — 즉시 이벤트). report_send_limit_up OFF 면 skip."""
+        if not self._s.report_send_limit_up:
+            logger.info("[상한가] 텔레그램 발송 OFF (REPORT_SEND_LIMIT_UP) — skip")
+            return
         results = self.telegram(alert)
         _log_results("상한가", results)
 
     def send_afterhours(self, report: str) -> None:
-        """사후 레포트 발송 (텔레그램, 레포트 방, 4096자 초과 시 자동 분할)."""
+        """사후 레포트 발송 (텔레그램, 레포트 방, 4096자 초과 시 자동 분할). report_send_afterhours OFF 면 skip."""
+        if not self._s.report_send_afterhours:
+            logger.info("[사후] 텔레그램 발송 OFF (REPORT_SEND_AFTERHOURS) — skip")
+            return
         results = self.telegram(report, chat_id=self._report_target())
         _log_results("사후", results)
 

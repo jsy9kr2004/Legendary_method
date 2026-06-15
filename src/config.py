@@ -96,6 +96,16 @@ class Settings:
     # 을 다른 방에서 보고 싶을 때.
     telegram_report_chat_id: str = ""
 
+    # 레포트별 텔레그램 발송 토글 (2026-06-16). 각 레포트의 텔레그램 send 만 on/off.
+    # OFF 여도 레포트 생성/파일 저장/상태 갱신(주도테마 추적 등)/forward 로깅은 그대로
+    # 동작 — 텔레그램 메시지만 skip 한다. default = 결정 레포트(14:50)만 ON, 나머지 OFF.
+    # env: REPORT_SEND_MORNING / _PERIODIC / _DECISION / _AFTERHOURS / _LIMIT_UP.
+    report_send_morning: bool = False
+    report_send_periodic: bool = False
+    report_send_decision: bool = True
+    report_send_afterhours: bool = False
+    report_send_limit_up: bool = False
+
     # M6 모니터링 카드 텔레그램 발송 토글. False 면 dashboard_tick 의 카드 send/
     # edit/delete 만 skip — PWA 페이로드 / KIS fetch / 명령 응답 / 09:30 모닝 /
     # 11~14:00 periodic / 14:50 결정 / 16:00 사후 / 상한가 이벤트 / 09:01 시초
@@ -182,6 +192,11 @@ def load_settings() -> Settings:
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
         telegram_eod_chat_id=os.getenv("TELEGRAM_EOD_CHAT_ID", ""),
         telegram_report_chat_id=os.getenv("TELEGRAM_REPORT_CHAT_ID", ""),
+        report_send_morning=_bool_env("REPORT_SEND_MORNING", default=False),
+        report_send_periodic=_bool_env("REPORT_SEND_PERIODIC", default=False),
+        report_send_decision=_bool_env("REPORT_SEND_DECISION", default=True),
+        report_send_afterhours=_bool_env("REPORT_SEND_AFTERHOURS", default=False),
+        report_send_limit_up=_bool_env("REPORT_SEND_LIMIT_UP", default=False),
         monitoring_telegram_cards_enabled=_bool_env(
             "MONITORING_TELEGRAM_CARDS_ENABLED", default=True,
         ),

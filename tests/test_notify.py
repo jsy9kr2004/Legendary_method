@@ -58,7 +58,8 @@ def test_dispatcher_routes_eod_reports_to_group(tmp_path):
 
 def test_dispatcher_falls_back_to_main_when_no_eod(tmp_path):
     """telegram_eod_chat_id 비면 개인 DM(telegram_chat_id) 사용."""
-    d = Dispatcher(_settings(tmp_path))  # eod 기본 ""
+    import dataclasses
+    d = Dispatcher(dataclasses.replace(_settings(tmp_path), report_send_morning=True))  # eod 기본 ""
     with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
         d.send_morning("morning")
     assert m.call_args.args[1] == "12345"
@@ -67,7 +68,10 @@ def test_dispatcher_falls_back_to_main_when_no_eod(tmp_path):
 def test_dispatcher_reports_go_to_report_chat(tmp_path):
     """telegram_report_chat_id 설정 시 정기 레포트(모닝/정기/결정/사후)는 레포트 방으로."""
     import dataclasses
-    s = dataclasses.replace(_settings(tmp_path), telegram_report_chat_id="REPORT")
+    s = dataclasses.replace(
+        _settings(tmp_path), telegram_report_chat_id="REPORT",
+        report_send_morning=True, report_send_periodic=True, report_send_afterhours=True,
+    )
     d = Dispatcher(s)
     for send in (
         lambda: d.send_morning("m"),
@@ -85,6 +89,7 @@ def test_dispatcher_events_stay_on_alert_chat(tmp_path):
     import dataclasses
     s = dataclasses.replace(
         _settings(tmp_path), telegram_report_chat_id="REPORT", telegram_eod_chat_id="EOD",
+        report_send_limit_up=True,
     )
     d = Dispatcher(s)
     for send in (
@@ -101,14 +106,71 @@ def test_dispatcher_report_chat_falls_back_to_eod_then_main(tmp_path):
     """레포트 방 미설정 시 종배 그룹(하위호환) → 개인 DM 순으로 fallback."""
     import dataclasses
     # report 미설정 + eod 설정 → eod
-    s = dataclasses.replace(_settings(tmp_path), telegram_eod_chat_id="EOD")
+    s = dataclasses.replace(
+        _settings(tmp_path), telegram_eod_chat_id="EOD", report_send_morning=True,
+    )
     with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
         Dispatcher(s).send_morning("m")
     assert m.call_args.args[1] == "EOD"
     # 둘 다 미설정 → 개인 DM
+    s2 = dataclasses.replace(_settings(tmp_path), report_send_morning=True)
     with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
-        Dispatcher(_settings(tmp_path)).send_morning("m")
+        Dispatcher(s2).send_morning("m")
     assert m.call_args.args[1] == "12345"
+
+
+def test_report_toggles_default_only_decision(tmp_path):
+    """default — 결정만 발송, 모닝/정기/사후/상한가는 skip."""
+    import dataclasses
+    # 발송 방 존재해야 skip 여부가 명확 (chat_id 있음)
+    base = dataclasses.replace(_settings(tmp_path), telegram_report_chat_id="REPORT")
+    d = Dispatcher(base)
+    # 결정 — 발송됨
+    with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
+        d.send_decision(["d"])
+    assert m.call_count == 1 and m.call_args.args[1] == "REPORT"
+    # 모닝/정기/사후/상한가 — default OFF → send_message 호출 안 됨
+    for send in (
+        lambda: d.send_morning("m"),
+        lambda: d.send_periodic("p"),
+        lambda: d.send_afterhours("a"),
+        lambda: d.send_limit_up_event("lu"),
+    ):
+        with patch("src.notify.dispatcher.send_message") as m:
+            send()
+        m.assert_not_called()
+
+
+def test_report_toggles_can_enable_each(tmp_path):
+    """각 토글 ON 시 해당 레포트 발송됨."""
+    import dataclasses
+    s = dataclasses.replace(
+        _settings(tmp_path),
+        report_send_morning=True,
+        report_send_periodic=True,
+        report_send_afterhours=True,
+        report_send_limit_up=True,
+    )
+    d = Dispatcher(s)
+    for send in (
+        lambda: d.send_morning("m"),
+        lambda: d.send_periodic("p"),
+        lambda: d.send_afterhours("a"),
+        lambda: d.send_limit_up_event("lu"),
+    ):
+        with patch("src.notify.dispatcher.send_message", return_value=[{"ok": True}]) as m:
+            send()
+        m.assert_called_once()
+
+
+def test_report_toggle_decision_off_skips(tmp_path):
+    """결정 토글 OFF 면 결정도 skip."""
+    import dataclasses
+    s = dataclasses.replace(_settings(tmp_path), report_send_decision=False)
+    d = Dispatcher(s)
+    with patch("src.notify.dispatcher.send_message") as m:
+        d.send_decision(["d"])
+    m.assert_not_called()
 
 
 def test_dispatcher_error_alert_uses_main_chat(tmp_path):
