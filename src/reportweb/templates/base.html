@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>{% block title %}종배 레포트{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">종배 레포트</a>
+    {% block topbar_right %}{% endblock %}
+  </header>
+
+  {% block nav %}{% endblock %}
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="foot">
+    <a href="/archive">📚 전체 보관함</a>
+    <span class="muted">자동 매매 없음 · 표시 전용</span>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

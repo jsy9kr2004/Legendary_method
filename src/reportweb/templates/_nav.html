@@ -1,0 +1,15 @@
+{# 날짜 헤더 + 레포트 탭. page_date / active / labels 필요 #}
+<div class="datebar">
+  <span class="date">{{ page_date }}</span>
+  {% if live %}<span class="live-dot" id="liveDot" title="장중 자동 갱신">● LIVE</span>{% endif %}
+</div>
+<nav class="tabs">
+  {% for l in labels %}
+    {% if l.enabled %}
+      <a class="tab {% if l.key == active %}on{% endif %}" href="/d/{{ page_date }}/{{ l.key }}">{{ l.name }}</a>
+    {% else %}
+      <span class="tab off" title="이 날짜엔 없음">{{ l.name }}</span>
+    {% endif %}
+  {% endfor %}
+</nav>
+<div class="reload-pill" id="reloadPill" hidden>새 데이터 도착 — 탭하여 새로고침</div>

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}결정 {{ page_date }} · 종배 레포트{% endblock %}
+{% block nav %}{% include "_nav.html" %}{% endblock %}
+
+{% block content %}
+<section class="hero-head">
+  <div class="hero-title">
+    <h1>14:50 결정 레포트</h1>
+    {% if ctx.report_time %}<span class="muted">{{ ctx.report_time }} 기준</span>{% endif %}
+  </div>
+  {% if ctx.regime %}
+    <div class="regime {{ ctx.regime.cls }}">{{ ctx.regime.label }}</div>
+  {% endif %}
+</section>
+
+{% if ctx.leading_themes %}
+<section class="themes">
+  <h2 class="sec">주도테마</h2>
+  <div class="chips">
+    {% for t in ctx.leading_themes %}
+      <span class="chip">{{ t.theme }}{% if t.count %} <b>{{ t.count }}</b>{% endif %}</span>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="cands">
+  <h2 class="sec">종배 후보 <span class="count">{{ ctx.n_candidates }}</span></h2>
+
+  {% if not ctx.cards %}
+    <p class="empty">구조화 후보 데이터가 없습니다. 아래 원문 레포트를 확인하세요.</p>
+  {% endif %}
+
+  {% for c in ctx.cards %}
+  <article class="card {% if c.top3 %}top3{% endif %}">
+    <div class="card-top">
+      <span class="rk">#{{ c.rank }}</span>
+      <span class="nm">{{ c.name }}</span>
+      <span class="cd">{{ c.code }}</span>
+      {% if c.top3 %}<span class="badge top">TOP3</span>{% endif %}
+      {% if c.limit_up %}<span class="badge lim">상한가</span>{% endif %}
+    </div>
+
+    {% if c.themes %}
+    <div class="card-themes">
+      {% for t in c.themes %}<span class="tchip">{{ t }}</span>{% endfor %}
+      {% if c.themes_more %}<span class="tchip more">+{{ c.themes_more }}</span>{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="card-price">
+      <span class="ret {% if c.ret_pos %}up{% else %}down{% endif %}">{{ c.ret_str }}</span>
+      <span class="px">{{ c.price_str }}원</span>
+    </div>
+
+    <div class="kv">
+      <div><span class="k">거래대금</span><span class="v">{{ c.value_str }}{% if c.value_rank %} <em>{{ c.value_rank }}위</em>{% endif %}</span></div>
+      <div><span class="k">회전율</span><span class="v">{{ c.turnover_str }}{% if c.turnover_rank %} <em>{{ c.turnover_rank }}위</em>{% endif %}</span></div>
+    </div>
+
+    <div class="gap">
+      <span class="k">갭상 확률</span>
+      <span class="gp">{{ c.gap_p }}</span>
+      <span class="ge">E {{ c.gap_e }}</span>
+      <span class="gn">{{ c.gap_layer }} · n={{ c.gap_n }}</span>
+      {% if not c.sample_ok %}<span class="warn" title="표본 부족 (n&lt;5)">표본↓</span>{% endif %}
+    </div>
+
+    <div class="sizing">
+      <div class="sz"><span class="k">Kelly</span><span class="v big">{{ c.kelly }}</span></div>
+      <div class="sz"><span class="k">Sharpe</span><span class="v">{{ c.sharpe }}</span></div>
+      <div class="sz"><span class="k">Equal</span><span class="v">{{ c.equal }}</span></div>
+      <div class="sz"><span class="k">버킷K</span><span class="v">{{ c.kelly_bucket }}</span></div>
+    </div>
+
+    <details class="more">
+      <summary>상세 보기</summary>
+      <div class="detail">
+        <div class="drow"><span class="k">사이징 버킷</span><span>{{ c.bucket_name }}</span></div>
+        <div class="drow"><span class="k">1년 ret10→갭상</span><span>{{ c.aux_gap }}/{{ c.aux_n10 }} ({{ c.aux_ratio }})</span></div>
+        {% if c.nxt is not none %}<div class="drow"><span class="k">NXT</span><span>{{ "가능" if c.nxt else "불가/추정" }}</span></div>{% endif %}
+        {% if c.trend_value %}
+        <div class="drow"><span class="k">거래대금 3일</span><span class="trend">
+          {% for v in c.trend_value %}<i>{{ v }}</i>{% endfor %}
+        </span></div>
+        {% endif %}
+      </div>
+    </details>
+  </article>
+  {% endfor %}
+</section>
+
+{% if raw_html %}
+<details class="rawreport">
+  <summary>📄 전체 레포트 원문 (국면 · 주도테마 · 사이징 footer 포함)</summary>
+  <div class="md">{{ raw_html | safe }}</div>
+</details>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if live %}<script src="/static/app.js" data-date="{{ page_date }}" data-label="decision"></script>{% endif %}
+{% endblock %}

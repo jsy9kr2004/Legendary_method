@@ -534,6 +534,9 @@ def _send_afterhours(settings: Settings, dispatcher: Dispatcher,
         report_dt=dt,
         market_stats=market_stats,
     )
+    # 디스크 영속화 (레포트 웹사이트가 읽음) — 텔레그램 발송 토글과 무관하게 항상 저장.
+    from src.report.afterhours import save_afterhours_report
+    save_afterhours_report(report, settings.data_dir, dt)
     dispatcher.send_afterhours(report)
 
 
@@ -971,7 +974,10 @@ def _send_decision_report(
         market_summaries=market_summaries or None,
     )
     save_decision_report(report, settings.data_dir, dt)
-    save_decision_candidates(candidates_with_stats, settings.data_dir, dt)
+    save_decision_candidates(
+        candidates_with_stats, settings.data_dir, dt,
+        market_stats=market_stats, leading_themes=leading,
+    )
     parts = split_messages(report)
     dispatcher.send_decision(parts)
 
@@ -1344,6 +1350,51 @@ def run() -> None:
             logger.error(f"[M7] PWA 시작 실패 — fallback 텔레그램 단독 운영: {e}")
             pwa_server = None
 
+    # ── 종배 레포트 웹사이트 (옵션) ──────────────────────────────────────────
+    # REPORTWEB_PASSWORD 설정 시 별도 daemon thread (포트 8001 기본). 읽기 전용
+    # 결정/사후 레포트 페이지 — 종배 동료 공유용. 단타 PWA(8000)와 다른 앱/포트라
+    # Tailscale Funnel 은 8001 만 공개 (docs/dashboard-pwa.md §2.4). 비번 미설정 시
+    # skip (인증 없이 공개 방지 — create_app 도 fail-loud).
+    reportweb_server = None
+    reportweb_thread = None
+    if os.environ.get("REPORTWEB_PASSWORD", "").strip():
+        try:
+            import uvicorn  # noqa: WPS433
+
+            from src.reportweb.app import create_app as _create_reportweb_app
+
+            rw_host = os.environ.get("REPORTWEB_HOST", "127.0.0.1")
+            rw_port = int(os.environ.get("REPORTWEB_PORT", "8001"))
+            rw_app = _create_reportweb_app(settings.data_dir)
+            rw_config = uvicorn.Config(
+                rw_app, host=rw_host, port=rw_port,
+                log_level="info", access_log=False,
+            )
+            reportweb_server = uvicorn.Server(rw_config)
+
+            def _run_reportweb() -> None:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(reportweb_server.serve())
+                finally:
+                    loop.close()
+
+            reportweb_thread = threading.Thread(
+                target=_run_reportweb, name="reportweb-uvicorn", daemon=True,
+            )
+            reportweb_thread.start()
+            logger.info(
+                f"[레포트웹] 종배 레포트 사이트 시작 — http://{rw_host}:{rw_port}/ "
+                "(종배 동료 공유 — Basic auth + Tailscale Funnel)"
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[레포트웹] 시작 실패 — 스케줄러는 계속 운영: {e}")
+            reportweb_server = None
+    else:
+        logger.info("[레포트웹] REPORTWEB_PASSWORD 미설정 — 레포트 사이트 skip")
+
     def _shutdown(signum, frame):
         logger.info("종료 시그널 수신 — 스케줄러 셧다운")
         scheduler.shutdown(wait=False)
@@ -1353,6 +1404,10 @@ def run() -> None:
             pwa_server.should_exit = True  # uvicorn graceful stop
             if pwa_thread is not None and pwa_thread.is_alive():
                 pwa_thread.join(timeout=3.0)  # WS 클라이언트 graceful close 대기
+        if reportweb_server is not None:
+            reportweb_server.should_exit = True
+            if reportweb_thread is not None and reportweb_thread.is_alive():
+                reportweb_thread.join(timeout=3.0)
         if settings.telegram_bot_token and settings.telegram_chat_id:
             try:
                 from src.dashboard.worker import cleanup_messages

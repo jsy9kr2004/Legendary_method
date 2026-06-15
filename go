@@ -54,6 +54,18 @@ pwa_url() {
     echo "http://${host}:${port}"
 }
 
+reportweb_enabled() {
+    [[ -n "$(env_get REPORTWEB_PASSWORD)" ]]
+}
+
+reportweb_url() {
+    local host port
+    host="$(env_get REPORTWEB_HOST)"; host="${host:-127.0.0.1}"
+    port="$(env_get REPORTWEB_PORT)"; port="${port:-8001}"
+    [[ "$host" == "0.0.0.0" ]] && host="127.0.0.1"
+    echo "http://${host}:${port}"
+}
+
 # ──────────────────── venv / 의존성 ────────────────────
 
 ensure_venv() {
@@ -143,6 +155,18 @@ cmd_status() {
             fi
         else
             echo "[go] PWA  DISABLED  (.env 의 DASHBOARD_PWA_ENABLED=1 로 켜기)"
+        fi
+        if reportweb_enabled; then
+            local rurl rhealth
+            rurl="$(reportweb_url)"
+            rhealth="$(curl -fsS --max-time 2 "$rurl/healthz" 2>/dev/null || echo '')"
+            if [[ -n "$rhealth" ]]; then
+                echo "[go] 레포트웹 ENABLED → $rurl/  (health: $rhealth)"
+            else
+                echo "[go] 레포트웹 ENABLED → $rurl/  (health 응답 없음 — 워밍업 중일 수 있음)"
+            fi
+        else
+            echo "[go] 레포트웹 DISABLED  (.env 의 REPORTWEB_PASSWORD 설정 시 ./go start 가 같이 띄움)"
         fi
         if is_alive "$DEMO_PID_FILE"; then
             echo "[go] DEMO 별도 실행 중 (PID=$(cat "$DEMO_PID_FILE")) — ./go demo stop 으로 종료"
@@ -280,6 +304,11 @@ cmd_start() {
             echo "[go] PWA 대시보드 → $(pwa_url)/  (텔레그램과 동일 데이터, 카드 그리드)"
         else
             echo "[go] PWA 대시보드 OFF — .env 에 DASHBOARD_PWA_ENABLED=1 추가 후 재시작 시 자동 기동"
+        fi
+        if reportweb_enabled; then
+            echo "[go] 레포트웹 → $(reportweb_url)/  (종배 동료 공유 — Basic auth + Tailscale Funnel)"
+        else
+            echo "[go] 레포트웹 OFF — .env 에 REPORTWEB_PASSWORD 설정 후 재시작 시 자동 기동"
         fi
         echo "[go] 상태: ./go status   |   로그: ./go logs   |   중지: ./go stop"
     else

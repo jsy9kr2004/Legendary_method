@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}보관함 · 종배 레포트{% endblock %}
+
+{% block content %}
+<section class="hero-head"><div class="hero-title"><h1>전체 보관함</h1></div></section>
+{% if not items %}
+  <p class="empty">저장된 레포트가 없습니다.</p>
+{% else %}
+<ul class="archive">
+  {% for it in items %}
+  <li>
+    <a class="adate" href="/d/{{ it.date }}">{{ it.date }}</a>
+    <span class="alabels">
+      {% for l in it.labels %}<a class="albl" href="/d/{{ it.date }}/{{ l.key }}">{{ l.name }}</a>{% endfor %}
+    </span>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

@@ -701,16 +701,30 @@ def save_decision_candidates(
     candidates: list[dict[str, Any]],
     data_dir,
     dt: datetime,
+    *,
+    market_stats: dict[str, Any] | None = None,
+    leading_themes: list[dict[str, Any]] | None = None,
 ) -> Path:
-    """결정 레포트의 후보 리스트를 JSON으로 영속화 (사후 레포트가 16:00에 재로딩).
+    """결정 레포트의 후보 리스트를 JSON으로 영속화 (사후 레포트가 16:00에 재로딩 +
+    레포트 웹사이트가 구조화 렌더).
 
     경로: {DATA_DIR}/decisions/YYYY-MM-DD.json
+
+    market_stats / leading_themes 는 웹 페이지 헤더(국면 배너 + 주도테마 chips)용으로
+    선택 저장 (2026-06-16). 미전달 시 None — 과거 JSON 과 하위호환. 후보 reload 는
+    load_decision_candidates 가 .candidates 만 읽으므로 영향 없음.
     """
     path = _decision_candidates_path(data_dir, dt.date())
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "report_date": dt.date().isoformat(),
         "report_time": dt.strftime("%H:%M:%S"),
+        "market": _to_serializable(market_stats) if market_stats else None,
+        "leading_themes": [
+            {"theme": str(t.get("theme", "")), "count": t.get("count")}
+            for t in (leading_themes or [])
+            if t.get("theme")
+        ],
         "candidates": [_to_serializable(c) for c in candidates],
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

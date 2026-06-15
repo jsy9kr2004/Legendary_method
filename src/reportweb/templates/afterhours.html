@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}사후 {{ page_date }} · 종배 레포트{% endblock %}
+{% block nav %}{% include "_nav.html" %}{% endblock %}
+
+{% block content %}
+<section class="hero-head">
+  <div class="hero-title"><h1>16:00 사후 레포트</h1></div>
+</section>
+<article class="md">{{ raw_html | safe }}</article>
+{% endblock %}
+
+{% block scripts %}
+{% if live %}<script src="/static/app.js" data-date="{{ page_date }}" data-label="afterhours"></script>{% endif %}
+{% endblock %}

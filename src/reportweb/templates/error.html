@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}없음 · 종배 레포트{% endblock %}
+
+{% block content %}
+<section class="hero-head"><div class="hero-title"><h1>레포트 없음</h1></div></section>
+<p class="empty">{{ message }}</p>
+{% if dates %}
+<p class="muted">최근 레포트:</p>
+<ul class="archive">
+  {% for d in dates[:10] %}<li><a class="adate" href="/d/{{ d.isoformat() }}">{{ d.isoformat() }}</a></li>{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

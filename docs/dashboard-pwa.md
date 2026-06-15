@@ -53,10 +53,27 @@
 - 도메인 / Cloudflare Access SSO 불필요
 - HTTPS: Tailscale MagicDNS or `tailscale serve` TLS
 
-### 2.3 인증
+### 2.3 인증 (단타 모니터링 PWA)
 
 - Tailscale 자체 인증으로 충분 (디바이스 한정)
 - 별도 토큰/Basic auth 불필요. 단 FastAPI 는 `localhost` + Tailscale 인터페이스에만 bind (`0.0.0.0` 금지)
+
+### 2.4 종배 레포트 웹사이트 (동료 공유, 2026-06-16) ★
+
+§2.2 의 "공개 터널 미도입" 정책은 **본인 디바이스 한정** 모니터링 PWA 에 한한다.
+종배 동료(3명) 와 레포트를 공유하는 새 요구사항이 생겨, **읽기 전용 레포트 사이트에
+한해** 인증 걸고 공개한다 (단타 PWA 와 트러스트 경계 분리).
+
+- **별도 앱/프로세스 분리**: `src/reportweb/` (FastAPI + Jinja2), 포트 8001 (PWA 8000 과 분리).
+  KIS 키·라이브 시세·상태 변경 핸들러 없음 — 저장된 결정/사후 레포트 파일만 read-only 렌더.
+- **인증 = HTTP Basic (공유 비번)**: env `REPORTWEB_PASSWORD`. 미설정 시 기동 거부
+  (인증 없이 공개 방지, fail-loud). 동료 N명은 같은 비번 공유 (사람별 분리 필요 시 추후 per-account).
+- **전송 = Tailscale Funnel**: `tailscale funnel 8001` → 고정 공개 URL `https://<머신>.<tailnet>.ts.net`
+  + TLS. 본인 공인 IP 비노출 (Tailscale 인그레스 뒤). ngrok 미사용 (무료 회전 URL/중복 인프라).
+  URL 은 비밀이 아님(CT 로그 노출 가능) → **비번이 자물쇠**.
+- **단타 PWA(8000) 는 Funnel 안 켬** — `tailscale serve`(tailnet 내부 전용) 유지. 공개 surface 는 8001 만.
+- **노출 레포트**: 결정(14:50) + 사후(16:00). 모닝/정기는 추후 탭 추가. 단타 모니터링 카드는 미노출.
+- 실행: `./go start` 가 스케줄러 프로세스 내 daemon thread 로 8001 자동 기동 (REPORTWEB_PASSWORD 설정 시).
 
 ---
 
