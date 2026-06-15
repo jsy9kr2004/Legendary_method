@@ -36,15 +36,41 @@ def _write_fixture(root):
         "candidates": [{
             "code": "033100", "name": "제룡전기", "rank_in_report": 1, "rank": 3,
             "is_top3": True, "is_limit_up": True, "themes": ["전력설비", "전선"],
-            "daily_return": 29.9, "price": 91300, "trading_value": 125_000_000_000,
+            "daily_return": 29.9, "price": 91300, "prev_close": 70200,
+            "intraday_high": 91300, "intraday_high_pct": 30.0, "intraday_low": 72000,
+            "market_cap": 8500, "trading_value": 125_000_000_000, "volume": 1_400_000,
             "volume_rank": 3, "turnover": 0.41, "turnover_rank": 7,
             "sizing_layer": "layer2",
-            "layers": {"layer2": {"n": 42, "p": 0.67, "avg_gap": 2.1}},
-            "sizing": {"kelly": 0.12, "sharpe": 0.09, "equal": 0.20, "kelly_bucket": 0.08},
+            "layers": {"layer2": {"n": 42, "p": 0.67, "avg_gap": 2.1, "median_gap": 1.8}},
+            "sizing": {"kelly": 0.12, "sharpe": 0.09, "equal": 0.20,
+                       "kelly_bucket": 0.08, "kelly_bucket_rel": 0.04},
             "sizing_bucket": "1~10위", "sample_sufficient": True,
             "historical_aux": {"n_ret10": 10, "n_gap_up": 6, "ratio": 0.6},
+            "historical_aux_matrix": {
+                "('year', 0)": {"n": 150, "n_gap_up": 83, "ratio": 0.553},
+                "('month', 0)": {"n": 13, "n_gap_up": 7, "ratio": 0.583},
+            },
+            "candle_aux": {"consec_up_days": 2, "big_candle_count": 1,
+                           "big_threshold": 10.0, "today_is_nth_big": 1},
+            "r4v2_check": {"close_within_10pct_high": True, "is_52w_high": True},
+            "intraday_signals": {
+                "ccnl_strength": {"ccnl_strength": 120.44, "buy_ratio": None},
+                "asking_price": {"bid_ask_ratio": 1.72, "bid1_price": 91200,
+                                 "bid1_volume": 620, "ask1_price": 91300, "ask1_volume": 1315,
+                                 "bid_total_volume": 12127, "ask_total_volume": 7035},
+                "investor_flow": {"foreign_net_buy": 43000, "foreign_net_buy_value": 9_810_000_000,
+                                  "institution_net_buy": 331000, "institution_net_buy_value": 75_000_000_000,
+                                  "program_net_buy": 162458, "program_net_buy_value": 37_000_000_000},
+                "investor_nday_avg": {"n_days": 7, "foreign_net_buy_avg": -289571,
+                                      "institution_net_buy_avg": 296714, "program_net_buy_avg": -198731},
+            },
             "nxt_tradable": True,
-            "trends": {"trading_value": [{"date": "2026-06-13", "value": 100_000_000_000}]},
+            "trends": {
+                "trading_value": [{"date": "2026-06-13", "value": 100_000_000_000, "rank": 5},
+                                  {"date": "2026-06-15", "value": 125_000_000_000, "rank": 3}],
+                "turnover": [{"date": "2026-06-15", "value": 0.41, "rank": 7}],
+                "supply": [{"date": "2026-06-15", "foreign": 43000, "institution": 331000, "program": 162458}],
+            },
         }],
     }
     (root / "decisions" / "2026-06-15.json").write_text(
@@ -102,21 +128,28 @@ def test_candidate_card_formatting():
         "sample_sufficient": True, "historical_aux": {"n_ret10": 10, "n_gap_up": 6, "ratio": 0.6},
     }
     v = candidate_card(c)
+    # 요약 5필드
     assert v["ret_str"] == "+29.90%" and v["ret_pos"] is True
-    assert v["price_str"] == "91,300"
-    assert v["gap_p"] == "67%"
-    assert v["gap_layer"] == "L2 상한가"
-    assert v["kelly"] == "12.0%" and v["equal"] == "20.0%"
-    assert v["themes"] == ["a", "b", "c"] and v["themes_more"] == 1
-    assert v["aux_ratio"] == "60%"
+    assert v["value_str"] == "1,250억"
+    assert v["top3"] is True and v["limit_up"] is True
+    # 상세
+    d = v["d"]
+    assert d["price_str"] == "91,300"
+    assert d["kelly"] == "12.0%" and d["equal"] == "20.0%"
+    assert d["sizing_layer"] == "L2 상한가"
+    assert d["aux_ratio"] == "60%"
+    assert d["themes"] == ["a", "b", "c", "d"]  # 상세에선 전체 노출
+    picked = [l for l in d["layers"] if l["picked"]]
+    assert picked and picked[0]["label"] == "L2 상한가" and picked[0]["p"] == "67%"
 
 
 def test_candidate_card_missing_fields_safe():
     """필드 누락/None 이어도 죽지 않고 — 표시로 폴백."""
     v = candidate_card({"code": "000000"})
-    assert v["gap_p"] == "N/A"
-    assert v["kelly"] == "—"
     assert v["ret_str"] == "—"
+    d = v["d"]
+    assert d["kelly"] == "—"
+    assert d["layers"] == [] and d["matrix"] is None
 
 
 def test_build_decision_context_regime():
@@ -199,8 +232,10 @@ def test_login_only_password_field(anon):
 def test_decision_page(client):
     r = client.get("/d/2026-06-15/decision")
     assert r.status_code == 200
-    for n in ["제룡전기", "종배 후보", "Kelly", "강세장", "전력설비", "TOP3", "전체 레포트 원문"]:
+    for n in ["제룡전기", "종배 후보", "Kelly", "강세장", "전력설비", "전체 레포트 원문",
+              "상세 보기", "갭상 매트릭스", "체결강도"]:
         assert n in r.text
+    assert "TOP3" not in r.text  # 배지 제거 (노란 테두리로 대체)
 
 
 def test_afterhours_page_and_missing(client):

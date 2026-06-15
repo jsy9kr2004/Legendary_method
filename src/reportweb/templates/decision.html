@@ -32,58 +32,102 @@
   {% endif %}
 
   {% for c in ctx.cards %}
+  {% set d = c.d %}
   <article class="card {% if c.top3 %}top3{% endif %}">
     <div class="card-top">
       <span class="rk">#{{ c.rank }}</span>
       <span class="nm">{{ c.name }}</span>
       <span class="cd">{{ c.code }}</span>
-      {% if c.top3 %}<span class="badge top">TOP3</span>{% endif %}
+      <span class="ret {% if c.ret_pos %}up{% else %}down{% endif %}">{{ c.ret_str }}</span>
       {% if c.limit_up %}<span class="badge lim">상한가</span>{% endif %}
     </div>
-
-    {% if c.themes %}
-    <div class="card-themes">
-      {% for t in c.themes %}<span class="tchip">{{ t }}</span>{% endfor %}
-      {% if c.themes_more %}<span class="tchip more">+{{ c.themes_more }}</span>{% endif %}
-    </div>
-    {% endif %}
-
-    <div class="card-price">
-      <span class="ret {% if c.ret_pos %}up{% else %}down{% endif %}">{{ c.ret_str }}</span>
-      <span class="px">{{ c.price_str }}원</span>
-    </div>
-
-    <div class="kv">
-      <div><span class="k">거래대금</span><span class="v">{{ c.value_str }}{% if c.value_rank %} <em>{{ c.value_rank }}위</em>{% endif %}</span></div>
-      <div><span class="k">회전율</span><span class="v">{{ c.turnover_str }}{% if c.turnover_rank %} <em>{{ c.turnover_rank }}위</em>{% endif %}</span></div>
-    </div>
-
-    <div class="gap">
-      <span class="k">갭상 확률</span>
-      <span class="gp">{{ c.gap_p }}</span>
-      <span class="ge">E {{ c.gap_e }}</span>
-      <span class="gn">{{ c.gap_layer }} · n={{ c.gap_n }}</span>
-      {% if not c.sample_ok %}<span class="warn" title="표본 부족 (n&lt;5)">표본↓</span>{% endif %}
-    </div>
-
-    <div class="sizing">
-      <div class="sz"><span class="k">Kelly</span><span class="v big">{{ c.kelly }}</span></div>
-      <div class="sz"><span class="k">Sharpe</span><span class="v">{{ c.sharpe }}</span></div>
-      <div class="sz"><span class="k">Equal</span><span class="v">{{ c.equal }}</span></div>
-      <div class="sz"><span class="k">버킷K</span><span class="v">{{ c.kelly_bucket }}</span></div>
+    <div class="card-sub">
+      거래대금 <b>{{ c.value_str }}</b>{% if c.value_rank %} <em>{{ c.value_rank }}위</em>{% endif %}
     </div>
 
     <details class="more">
       <summary>상세 보기</summary>
       <div class="detail">
-        <div class="drow"><span class="k">사이징 버킷</span><span>{{ c.bucket_name }}</span></div>
-        <div class="drow"><span class="k">1년 ret10→갭상</span><span>{{ c.aux_gap }}/{{ c.aux_n10 }} ({{ c.aux_ratio }})</span></div>
-        {% if c.nxt is not none %}<div class="drow"><span class="k">NXT</span><span>{{ "가능" if c.nxt else "불가/추정" }}</span></div>{% endif %}
-        {% if c.trend_value %}
-        <div class="drow"><span class="k">거래대금 3일</span><span class="trend">
-          {% for v in c.trend_value %}<i>{{ v }}</i>{% endfor %}
-        </span></div>
+
+        <h4 class="dsec">가격 · 위치</h4>
+        <div class="drow"><span class="k">현재가</span><span>{{ d.price_str }}원</span></div>
+        <div class="drow"><span class="k">전일종가</span><span>{{ d.prev_str }}원</span></div>
+        <div class="drow"><span class="k">당일고가</span><span>{{ d.high_str }}원{% if d.high_pct %} ({{ d.high_pct }}){% endif %}</span></div>
+        <div class="drow"><span class="k">당일저가</span><span>{{ d.low_str }}원</span></div>
+        <div class="drow"><span class="k">시가총액</span><span>{{ d.mcap_str }}</span></div>
+
+        <h4 class="dsec">거래</h4>
+        <div class="drow"><span class="k">거래량</span><span>{{ d.volume_str }}{% if d.volume_rank %} ({{ d.volume_rank }}위){% endif %}</span></div>
+        <div class="drow"><span class="k">회전율</span><span>{{ d.turnover_str }}{% if d.turnover_rank %} ({{ d.turnover_rank }}위){% endif %}</span></div>
+
+        {% if d.themes %}
+        <h4 class="dsec">테마</h4>
+        <div class="card-themes">{% for t in d.themes %}<span class="tchip">{{ t }}</span>{% endfor %}</div>
         {% endif %}
+
+        <h4 class="dsec">사이징 {% if not d.sample_ok %}<span class="warn">표본 부족(n&lt;5)</span>{% endif %}</h4>
+        <div class="sizing">
+          <div class="sz"><span class="k">Kelly</span><span class="v big">{{ d.kelly }}</span></div>
+          <div class="sz"><span class="k">Sharpe</span><span class="v">{{ d.sharpe }}</span></div>
+          <div class="sz"><span class="k">Equal</span><span class="v">{{ d.equal }}</span></div>
+          <div class="sz"><span class="k">버킷K</span><span class="v">{{ d.kelly_bucket }}</span></div>
+        </div>
+        <div class="drow"><span class="k">버킷 / 상대</span><span>{{ d.bucket_name }} · rel {{ d.kelly_bucket_rel }}</span></div>
+        <div class="drow"><span class="k">사이징 layer</span><span>{{ d.sizing_layer }}</span></div>
+
+        <h4 class="dsec">갭상 통계 (4-Layer)</h4>
+        {% if d.layers %}
+        {% for l in d.layers %}
+        <div class="drow"><span class="k">{{ l.label }}{% if l.picked %} ★{% endif %}</span><span>n={{ l.n }} · P={{ l.p }} · E={{ l.gap }} · 중앙={{ l.median }}</span></div>
+        {% endfor %}
+        {% else %}<p class="dnote">갭상 사례 없음 (데이터 적재 중)</p>{% endif %}
+
+        {% if d.matrix %}
+        <h4 class="dsec">갭상 매트릭스 (기간 × 상승률)</h4>
+        <table class="mtx">
+          <tr><th></th>{% for th in d.matrix.th_labels %}<th>{{ th }}</th>{% endfor %}</tr>
+          {% for row in d.matrix.rows %}
+          <tr><th>{{ row.label }}</th>{% for col in row.cols %}<td>{{ col.ratio }}<small>n{{ col.n }}</small></td>{% endfor %}</tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+
+        <h4 class="dsec">보조 통계</h4>
+        <div class="drow"><span class="k">1년 ret10→갭상</span><span>{{ d.aux_gap }}/{{ d.aux_n10 }} ({{ d.aux_ratio }})</span></div>
+        {% if d.candle %}
+        <div class="drow"><span class="k">연속 양봉</span><span>{{ d.candle.consec_up }}일</span></div>
+        <div class="drow"><span class="k">장대양봉(≥{{ d.candle.big_th }}%)</span><span>{{ d.candle.big_count }}회{% if d.candle.nth_big %} · 오늘 {{ d.candle.nth_big }}번째{% endif %}</span></div>
+        {% endif %}
+
+        {% if d.asking or d.ccnl or d.investor %}
+        <h4 class="dsec">장중 시그널 (14:50)</h4>
+        {% if d.ccnl %}<div class="drow"><span class="k">체결강도</span><span>{{ d.ccnl.strength }}{% if d.ccnl.buy_ratio != '—' %} · 매수비 {{ d.ccnl.buy_ratio }}{% endif %}</span></div>{% endif %}
+        {% if d.asking %}
+        <div class="drow"><span class="k">매수/매도 잔량비</span><span>{{ d.asking.ratio }}</span></div>
+        <div class="drow"><span class="k">매수1호가</span><span>{{ d.asking.bid1 }}</span></div>
+        <div class="drow"><span class="k">매도1호가</span><span>{{ d.asking.ask1 }}</span></div>
+        {% endif %}
+        {% if d.investor %}
+        <div class="drow"><span class="k">외인 순매수</span><span>{{ d.investor.foreign }}{% if d.investor.foreign_val %} ({{ d.investor.foreign_val }}){% endif %}</span></div>
+        <div class="drow"><span class="k">기관 순매수</span><span>{{ d.investor.inst }}{% if d.investor.inst_val %} ({{ d.investor.inst_val }}){% endif %}</span></div>
+        <div class="drow"><span class="k">프로그램</span><span>{{ d.investor.prog }}{% if d.investor.prog_val %} ({{ d.investor.prog_val }}){% endif %}</span></div>
+        {% endif %}
+        {% if d.investor_avg %}
+        <div class="drow"><span class="k">수급 {{ d.investor_avg.n_days }}일평균</span><span>외 {{ d.investor_avg.foreign }} / 기 {{ d.investor_avg.inst }} / 프 {{ d.investor_avg.prog }}</span></div>
+        {% endif %}
+        {% endif %}
+
+        {% if d.trends.value or d.trends.supply %}
+        <h4 class="dsec">3거래일 추이</h4>
+        {% for x in d.trends.value %}<div class="drow"><span class="k">거래대금 {{ x.date }}</span><span>{{ x.v }}{% if x.rank %} ({{ x.rank }}위){% endif %}</span></div>{% endfor %}
+        {% for x in d.trends.turnover %}<div class="drow"><span class="k">회전율 {{ x.date }}</span><span>{{ x.v }}{% if x.rank %} ({{ x.rank }}위){% endif %}</span></div>{% endfor %}
+        {% for x in d.trends.supply %}<div class="drow"><span class="k">수급 {{ x.date }}</span><span>외 {{ x.f }} / 기 {{ x.i }} / 프 {{ x.p }}</span></div>{% endfor %}
+        {% endif %}
+
+        <h4 class="dsec">기타</h4>
+        {% if d.nxt is not none %}<div class="drow"><span class="k">NXT 거래</span><span>{{ "가능" if d.nxt else "불가/추정" }}</span></div>{% endif %}
+        <div class="drow"><span class="k">종가 고가-10% 이내</span><span>{{ "예" if d.within10 else "아니오" }}</span></div>
+        <div class="drow"><span class="k">52주 신고가</span><span>{{ "예" if d.is_52w else "아니오" }}</span></div>
       </div>
     </details>
   </article>
