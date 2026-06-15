@@ -1,6 +1,7 @@
 """HTTP Basic auth 미들웨어 — 종배 동료 공유용 공유 비밀번호.
 
-- 공유 비번 1개 (env REPORTWEB_PASSWORD). 사용자명은 REPORTWEB_USER (기본 jongbae).
+- 공유 비번 1개 (env REPORTWEB_PASSWORD). **아이디는 무시** — 동료는 브라우저 인증창의
+  아이디 칸에 아무거나(또는 공백) 넣고 비번만 입력하면 됨 (REPORTWEB_USER 는 미사용).
 - 비번 미설정이면 앱이 기동 거부 (create_app 에서 raise) — 공개 사이트가 인증 없이
   뜨는 사고 방지 (fail-loud, CLAUDE.md).
 - /healthz, /static 은 인증 제외 (민감 데이터 없음 — 헬스체크/CSS·JS).
@@ -59,10 +60,9 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         except (binascii.Error, UnicodeDecodeError):
             return self._unauthorized()
 
-        # 타이밍 공격 회피 — 두 비교 모두 항상 수행.
-        ok_user = secrets.compare_digest(user, self._user)
-        ok_pw = secrets.compare_digest(password, self._password)
-        if not (ok_user and ok_pw):
+        # 비번만 검증 (아이디는 무시 — 동료는 아이디 칸에 아무거나 넣고 비번만 공유).
+        # user 변수는 파싱만 하고 사용 X.
+        if not secrets.compare_digest(password, self._password):
             return self._unauthorized()
 
         return await call_next(request)

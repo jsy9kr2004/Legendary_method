@@ -162,6 +162,14 @@ def test_auth_required(client):
     assert client.get("/healthz").status_code == 200  # 인증 제외
 
 
+def test_auth_password_only_ignores_username(client):
+    """아이디는 무시 — 비번만 맞으면 통과 (아이디 임의/공백)."""
+    assert client.get("/d/2026-06-15/decision", headers=_auth(user="아무거나")).status_code == 200
+    assert client.get("/d/2026-06-15/decision", headers=_auth(user="")).status_code == 200
+    # 비번 틀리면 아이디 맞아도 거부
+    assert client.get("/d/2026-06-15/decision", headers=_auth(user="jongbae", pw="x")).status_code == 401
+
+
 def test_decision_page(client):
     r = client.get("/d/2026-06-15/decision", headers=_auth())
     assert r.status_code == 200
